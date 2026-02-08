@@ -148,20 +148,20 @@ const Toast = ({ message, type, onClose }) => {
   const isSuccess = type === 'success';
 
   return createPortal(
-    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top-2 fade-in duration-300 pointer-events-none">
-       <div className={`pointer-events-auto flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border ${
+    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top-2 fade-in duration-300 pointer-events-none w-full flex justify-center px-4">
+       <div className={`pointer-events-auto flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border min-w-[280px] max-w-md w-auto ${
          isSuccess ? 'bg-white border-emerald-100 text-slate-800' : 'bg-white border-rose-100 text-slate-800'
        }`}>
           <div className={`p-2 rounded-full shrink-0 ${isSuccess ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
             {isSuccess ? <CheckCircle className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
           </div>
-          <div className="flex flex-col">
-             <span className={`font-bold text-sm ${isSuccess ? 'text-emerald-700' : 'text-rose-700'}`}>
+          <div className="flex flex-col flex-1 min-w-0">
+             <span className={`font-bold text-sm whitespace-nowrap ${isSuccess ? 'text-emerald-700' : 'text-rose-700'}`}>
                {isSuccess ? 'สำเร็จ' : 'แจ้งเตือน'}
              </span>
-             <span className="text-sm font-medium text-slate-600">{message}</span>
+             <span className="text-sm font-medium text-slate-600 whitespace-nowrap overflow-hidden text-ellipsis">{message}</span>
           </div>
-          <button onClick={onClose} className="ml-2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg transition">
+          <button onClick={onClose} className="ml-2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg transition shrink-0">
              <X className="w-4 h-4" />
           </button>
        </div>
@@ -1579,6 +1579,9 @@ const App = () => {
                   username: foundUser.username // Store username for reference
               });
 
+              // Reset Tab to Overview
+              setActiveTab('Overview'); 
+
               if (remember) {
                   localStorage.setItem('nexus_auth', 'true');
                   localStorage.setItem('nexus_profile', JSON.stringify({
@@ -1601,6 +1604,7 @@ const App = () => {
   const handleLogout = () => {
       setIsLoggedIn(false);
       setUserProfile(null);
+      setActiveTab('Overview'); // Reset Tab to Overview
       localStorage.removeItem('nexus_auth');
       localStorage.removeItem('nexus_profile');
       showToast("ออกจากระบบแล้ว");
@@ -2281,7 +2285,7 @@ const App = () => {
                         <div className="flex flex-col gap-0.5">
                             <div className="flex items-start gap-1.5 text-slate-700 text-sm font-bold">
                                 <Clock className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0" /> 
-                                <div>{renderDeliveryTime(item)}</div>
+                                <div className="whitespace-nowrap">{renderDeliveryTime(item)}</div>
                             </div>
                             
                             {/* Location: ยอมให้ขึ้นบรรทัดใหม่ได้ไม่เกิน 2 บรรทัด */}
@@ -3421,35 +3425,69 @@ const App = () => {
       {/* ------------------------------- */}
 
       {isLoggedIn && (
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-slate-200 z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] safe-area-bottom">
-            <div className="grid grid-cols-4 p-2 gap-1">
-            {navItems.map((item) => {
-                const isActive = activeTab === item.name;
-                return (
-                <button
-                    key={item.name}
-                    onClick={() => setActiveTab(item.name)}
-                    className="relative flex items-center justify-center h-14 rounded-2xl group cursor-pointer"
-                >
-                    {/* Background Animation */}
-                    <div className={`absolute inset-0 bg-indigo-50 rounded-2xl transition-all duration-300 ease-out ${
-                        isActive ? 'opacity-100 scale-100' : 'opacity-0 scale-75'
-                    }`} />
-                    
-                    {/* Icon Animation */}
-                    <div className={`relative z-10 transition-all duration-300 ${
-                        isActive ? 'text-indigo-600 -translate-y-1' : 'text-slate-400 group-hover:text-slate-600'
-                    }`}>
-                        <item.icon className={`w-7 h-7 ${isActive ? 'fill-indigo-600/20' : ''}`} />
-                    </div>
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-200 z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] safe-area-bottom pb-safe">
+            <div className="relative grid grid-cols-5 h-16 items-center">
+                {/* Sliding Background Indicator (วงกลมวิ่งตาม - จัดกึ่งกลางด้วย translate) */}
+                <div 
+                    className="absolute top-2 bottom-2 bg-indigo-50 rounded-full transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1)"
+                    style={{ 
+                        // คำนวณตำแหน่ง: 
+                        // ใช้ transform: translateX(-50%) เพื่อจัดกึ่งกลางจุด anchor
+                        // จุด anchor แต่ละช่องคือ 10%, 30%, 50%, 70%, 90%
+                        left: `${(navItems.findIndex(i => i.name === activeTab) < 2 
+                            ? (navItems.findIndex(i => i.name === activeTab) * 20) + 10 
+                            : ((navItems.findIndex(i => i.name === activeTab) + 1) * 20) + 10 // +1 ข้ามช่องกลาง
+                        )}%`, 
+                        width: '48px', // Fix width เพื่อความสวยงาม (ประมาณ 12-14% ของจอ)
+                        transform: 'translateX(-50%)'
+                    }}
+                />
 
-                    {/* Dot Indicator */}
-                    <div className={`absolute bottom-3 w-1.5 h-1.5 bg-indigo-600 rounded-full transition-all duration-300 delay-75 ${
-                        isActive ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-0 translate-y-2'
-                    }`} />
-                </button>
-                );
-            })}
+                {/* เมนูฝั่งซ้าย (2 อันแรก) */}
+                {navItems.slice(0, 2).map((item) => {
+                    const isActive = activeTab === item.name;
+                    return (
+                        <button
+                            key={item.name}
+                            onClick={() => setActiveTab(item.name)}
+                            className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10"
+                        >
+                            <div className={`transition-all duration-300 ${
+                                isActive ? 'text-indigo-600 scale-110' : 'text-slate-400'
+                            }`}>
+                                <item.icon className={`w-6 h-6 ${isActive ? 'fill-indigo-600/20' : ''}`} strokeWidth={isActive ? 2.5 : 2} />
+                            </div>
+                        </button>
+                    );
+                })}
+
+                {/* ปุ่มเพิ่มโครงการ (ตรงกลาง) */}
+                <div className="relative -top-6 flex justify-center z-20 pointer-events-none">
+                     <button
+                        onClick={() => openModal()}
+                        className="w-14 h-14 bg-indigo-600 rounded-full text-white shadow-lg shadow-indigo-200 flex items-center justify-center transform active:scale-95 transition-all border-4 border-[#F8FAFC] pointer-events-auto"
+                     >
+                        <Plus className="w-7 h-7" />
+                     </button>
+                </div>
+
+                {/* เมนูฝั่งขวา (2 อันหลัง) */}
+                {navItems.slice(2, 4).map((item) => {
+                    const isActive = activeTab === item.name;
+                    return (
+                        <button
+                            key={item.name}
+                            onClick={() => setActiveTab(item.name)}
+                            className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10"
+                        >
+                            <div className={`transition-all duration-300 ${
+                                isActive ? 'text-indigo-600 scale-110' : 'text-slate-400'
+                            }`}>
+                                <item.icon className={`w-6 h-6 ${isActive ? 'fill-indigo-600/20' : ''}`} strokeWidth={isActive ? 2.5 : 2} />
+                            </div>
+                        </button>
+                    );
+                })}
             </div>
         </nav>
       )}
@@ -3463,14 +3501,14 @@ const App = () => {
                 </h1>
             </div>
 
-            <div>
+            {/* ซ่อนปุ่มเพิ่มบน Header ในโหมดมือถือ (hidden md:flex) */}
+            <div className="hidden md:flex">
                 <button
                 onClick={() => openModal()}
                 className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-200 hover:-translate-y-0.5 transition-all flex items-center gap-2"
                 >
                 <Plus className="w-5 h-5" />
-                <span className="hidden sm:inline">เพิ่มรายการ</span>
-                <span className="sm:hidden">เพิ่ม</span>
+                <span>เพิ่มรายการ</span>
                 </button>
             </div>
             </header>
