@@ -304,8 +304,6 @@ const LoginScreen = ({ onLogin, isLoading, loginError }) => {
   );
 };
 
-// ... (ModernDateTimePicker, ListManager, AdvancedListManager components remain largely the same, but ListManagers need update to save settings) ...
-
 const ViewOnlyField = ({ value, type, icon: Icon }) => {
     if (!value) {
         return (
@@ -318,7 +316,7 @@ const ViewOnlyField = ({ value, type, icon: Icon }) => {
   
     let content = <span className="text-slate-700 font-medium truncate block">{value}</span>;
     let Wrapper = 'div';
-    let wrapperProps = { className: "w-full overflow-hidden" }; // Default wrapper props with overflow protection
+    let wrapperProps = { className: "w-full overflow-hidden" };
   
     if (type === 'tel') {
         Wrapper = 'a';
@@ -348,7 +346,6 @@ const ViewOnlyField = ({ value, type, icon: Icon }) => {
             </div>
         );
     } else {
-        // Default view only text
         return (
             <div className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 font-medium flex items-center gap-2 overflow-hidden">
                 {Icon && <Icon className="w-4 h-4 text-slate-400 shrink-0" />}
@@ -360,11 +357,9 @@ const ViewOnlyField = ({ value, type, icon: Icon }) => {
     return <Wrapper {...wrapperProps}>{content}</Wrapper>;
 };
 
-// ... (ModernDateTimePicker) ...
 const ModernDateTimePicker = ({ value, onChange, placeholder, hasTime = true, minDate, className, compact = false, disabled = false, pickerType = 'date' }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [viewDate, setViewDate] = useState(new Date());
-  // Determine initial view mode based on pickerType
   const [viewMode, setViewMode] = useState(pickerType === 'year' ? 'years' : pickerType === 'month' ? 'months' : 'days'); 
   const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 });
   const wrapperRef = useRef(null);
@@ -382,7 +377,6 @@ const ModernDateTimePicker = ({ value, onChange, placeholder, hasTime = true, mi
     }
   }, [value, isOpen]);
 
-  // Reset view mode when reopening based on picker type
   useEffect(() => {
     if (isOpen) {
         if (pickerType === 'year') setViewMode('years');
@@ -453,10 +447,8 @@ const ModernDateTimePicker = ({ value, onChange, placeholder, hasTime = true, mi
   const handleDateClick = (day) => {
     const newDate = new Date(viewDate.getFullYear(), viewDate.getMonth(), day);
     
-    // Logic for Week Picker
     if (pickerType === 'week') {
-       // Find Sunday (Start of Week)
-       const dayOfWeek = newDate.getDay(); // 0 is Sunday
+       const dayOfWeek = newDate.getDay(); 
        const diff = newDate.getDate() - dayOfWeek;
        const sunday = new Date(newDate.setDate(diff));
        
@@ -523,7 +515,6 @@ const ModernDateTimePicker = ({ value, onChange, placeholder, hasTime = true, mi
       const checkDate = new Date(viewDate.getFullYear(), viewDate.getMonth(), day);
       
       if (pickerType === 'week') {
-          // Check if day falls within the selected week
           const weekStart = new Date(currentValDate);
           weekStart.setHours(0,0,0,0);
           const weekEnd = new Date(weekStart);
@@ -669,7 +660,6 @@ const ModernDateTimePicker = ({ value, onChange, placeholder, hasTime = true, mi
                   const active = isSelected(day);
                   const isToday = new Date().getDate() === day && new Date().getMonth() === new Date().getMonth() && new Date().getFullYear() === new Date().getFullYear();
                   
-                  // Highlight week logic
                   let weekClass = '';
                   if (pickerType === 'week' && active) {
                       weekClass = 'bg-indigo-100 text-indigo-700 rounded-none first:rounded-l-lg last:rounded-r-lg';
@@ -1114,7 +1104,6 @@ const AdvancedListManager = ({ title, items, onUpdate, placeholder, icon: Icon, 
   );
 };
 
-// ... (DateFilterControl and SortableHeader remain the same) ...
 const DateFilterControl = ({ mode, setMode, date, setDate, range, setRange }) => {
   return (
       <div className="flex bg-white border border-slate-200 rounded-2xl overflow-hidden h-full shadow-sm hover:border-indigo-300 transition-colors w-full md:w-auto">
@@ -1231,7 +1220,7 @@ const SortableHeader = ({ label, sortKey, sortConfig, handleSort, alignRight = f
 const App = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
-  // --- Persist Sidebar State (Modified) ---
+  // --- Persist Sidebar State ---
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('nexus_sidebar_collapsed');
     return saved === 'true';
@@ -1240,11 +1229,9 @@ const App = () => {
   useEffect(() => {
     localStorage.setItem('nexus_sidebar_collapsed', String(isSidebarCollapsed));
   }, [isSidebarCollapsed]);
-  // ----------------------------------------
 
   const [activeTab, setActiveTab] = useState('Overview');
 
-  // --- เพิ่มส่วนเปลี่ยนชื่อเว็บตามหน้า (Tab) ---
   useEffect(() => {
     const currentTab = navItems.find(item => item.name === activeTab);
     if (currentTab) {
@@ -1253,28 +1240,25 @@ const App = () => {
       document.title = "NexusPlan Dashboard";
     }
   }, [activeTab]);
-  // ----------------------------------------
 
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [isSaving, setIsSaving] = useState(false); 
 
-  // --- เพิ่ม State สำหรับ Infinite Scroll ---
+  // --- Infinite Scroll State ---
   const [visibleCount, setVisibleCount] = useState(20);
-  // ----------------------------------------
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   // --- Animation State ---
   const [animateCharts, setAnimateCharts] = useState(false);
 
   useEffect(() => {
      setAnimateCharts(false);
-     const timer = setTimeout(() => setAnimateCharts(true), 300); // Delay เล็กน้อยให้แท็บโหลดเสร็จ
+     const timer = setTimeout(() => setAnimateCharts(true), 300);
      return () => clearTimeout(timer);
   }, [activeTab]);
-  // -----------------------
 
   // --- Login State ---
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  // Default authorized users (fallback)
   const [authorizedUsers, setAuthorizedUsers] = useState([
     {
       username: 'admin',
@@ -1294,8 +1278,7 @@ const App = () => {
     }
   ]);
   const [loginError, setLoginError] = useState('');
-
-  const [userProfile, setUserProfile] = useState(null); // Will set after login
+  const [userProfile, setUserProfile] = useState(null);
 
   // --- New User State for Settings ---
   const [newUser, setNewUser] = useState({ username: '', password: '', name: '', role: '', email: '', phone: '' });
@@ -1306,7 +1289,6 @@ const App = () => {
   const [dealStatuses, setDealStatuses] = useState([]);
   const [transportStatuses, setTransportStatuses] = useState([]);
 
-  // ... (Other state variables remain the same) ...
   const [isScrolled, setIsScrolled] = useState(false);
   const mainRef = useRef(null);
   const tabScrollPositions = useRef({});
@@ -1333,11 +1315,10 @@ const App = () => {
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterTransport, setFilterTransport] = useState('all');
 
-  // --- เพิ่ม useEffect สำหรับรีเซ็ตจำนวนการแสดงผลเมื่อเปลี่ยน Filter หรือ Tab ---
   useEffect(() => {
     setVisibleCount(20);
+    setIsLoadingMore(false);
   }, [activeTab, searchTerm, dateFilterMode, filterDate, filterDateRange, filterCategory, filterStatus, filterTransport, sortConfig]);
-  // -------------------------------------------------------------------------
 
   // Autocomplete Data
   const [savedArtists, setSavedArtists] = useState([]);
@@ -1376,7 +1357,6 @@ const App = () => {
   const [allActivities, setAllActivities] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // --- Auth Check on Mount ---
   useEffect(() => {
     const auth = localStorage.getItem('nexus_auth');
     const savedProfile = localStorage.getItem('nexus_profile');
@@ -1386,7 +1366,6 @@ const App = () => {
     }
   }, []);
 
-  // --- Fetch Logic ---
   const fetchSettings = async () => {
     if (!GOOGLE_SCRIPT_URL) return;
     try {
@@ -1402,10 +1381,8 @@ const App = () => {
             if (data.deal_statuses) setDealStatuses(data.deal_statuses);
             if (data.transport_statuses) setTransportStatuses(data.transport_statuses);
             
-            // Handle App Credentials (can be object or array)
             if (data.app_credentials) {
                 let creds = data.app_credentials;
-                // If legacy single object format, convert to array with default admin profile
                 if (!Array.isArray(creds)) {
                     creds = [{
                         username: creds.username,
@@ -1424,7 +1401,6 @@ const App = () => {
     }
   };
 
-  // เพิ่ม: ดึงค่าการตั้งค่า (รวมถึงรายชื่อ User) ทันทีที่เปิดหน้าเว็บ
   useEffect(() => {
     fetchSettings();
   }, []);
@@ -1433,7 +1409,6 @@ const App = () => {
     if (!GOOGLE_SCRIPT_URL) return;
     setIsLoading(true);
     try {
-      // Fetch both projects and settings
       const response = await fetch(GOOGLE_SCRIPT_URL, {
           method: 'POST',
           body: JSON.stringify({ action: 'read' })
@@ -1441,7 +1416,6 @@ const App = () => {
       const result = await response.json();
       
       if (result.status === 'success') {
-        // Fix for duplicate keys: Deduplicate items by ID
         const uniqueItems = Array.from(
             result.data.reduce((map, item) => {
                 if (item.id) map.set(item.id, item);
@@ -1451,12 +1425,9 @@ const App = () => {
 
         setAllActivities(uniqueItems);
         
-        // --- Process Autocomplete Data ---
-        // Extract unique artists
         const artists = [...new Set(uniqueItems.map(item => item.artist).filter(Boolean))].sort();
         setSavedArtists(artists);
 
-        // Extract unique customers
         const customersMap = new Map();
         uniqueItems.forEach(item => {
             if (item.customer && !customersMap.has(item.customer)) {
@@ -1471,7 +1442,6 @@ const App = () => {
         });
         setSavedCustomers(Array.from(customersMap.values()));
 
-        // Extract unique recipients
         const recipientsMap = new Map();
         uniqueItems.forEach(item => {
             if (item.recipient && !recipientsMap.has(item.recipient)) {
@@ -1483,8 +1453,6 @@ const App = () => {
         });
         setSavedRecipients(Array.from(recipientsMap.values()));
       }
-      
-      // Fetch settings in parallel
       await fetchSettings();
 
     } catch (error) {
@@ -1501,7 +1469,6 @@ const App = () => {
     }
   }, [isLoggedIn]);
 
-  // --- Save Settings Logic ---
   const saveSystemSettings = async (key, value) => {
       if (!GOOGLE_SCRIPT_URL) return;
       try {
@@ -1512,7 +1479,6 @@ const App = () => {
                   data: { [key]: value }
               })
           });
-          // Also update local state for users immediately if that's what we saved
           if (key === 'app_credentials') {
               setAuthorizedUsers(value);
           }
@@ -1522,13 +1488,11 @@ const App = () => {
       }
   };
 
-  // --- User Management Logic ---
   const handleAddUser = () => {
       if (!newUser.username || !newUser.password || !newUser.name) {
           showToast("กรุณากรอก Username, Password และชื่อ", "error");
           return;
       }
-      // Check duplicate username
       if (authorizedUsers.some(u => u.username.toLowerCase() === newUser.username.toLowerCase())) {
           showToast("ชื่อผู้ใช้นี้มีอยู่แล้ว", "error");
           return;
@@ -1547,9 +1511,6 @@ const App = () => {
           showToast("ไม่สามารถลบผู้ใช้งานคนสุดท้ายได้", "error");
           return;
       }
-      if (usernameToDelete === userProfile?.username) { // Prevent self-delete safety check (optional)
-         // Allow for now but warn
-      }
       
       const updatedUsers = authorizedUsers.filter(u => u.username !== usernameToDelete);
       saveSystemSettings('app_credentials', updatedUsers);
@@ -1557,14 +1518,11 @@ const App = () => {
       showToast("ลบผู้ใช้งานเรียบร้อยแล้ว");
   };
 
-  // --- Login Handler ---
   const handleLogin = (user, pass, remember) => {
       setIsLoading(true);
       setLoginError('');
       
-      // Simulate network delay for UX
       setTimeout(() => {
-          // Find matching user
           const foundUser = authorizedUsers.find(u => 
               u.username.toLowerCase() === user.toLowerCase() && u.password === pass
           );
@@ -1576,10 +1534,9 @@ const App = () => {
                   role: foundUser.role,
                   email: foundUser.email,
                   phone: foundUser.phone,
-                  username: foundUser.username // Store username for reference
+                  username: foundUser.username
               });
 
-              // Reset Tab to Overview
               setActiveTab('Overview'); 
 
               if (remember) {
@@ -1604,7 +1561,7 @@ const App = () => {
   const handleLogout = () => {
       setIsLoggedIn(false);
       setUserProfile(null);
-      setActiveTab('Overview'); // Reset Tab to Overview
+      setActiveTab('Overview');
       localStorage.removeItem('nexus_auth');
       localStorage.removeItem('nexus_profile');
       showToast("ออกจากระบบแล้ว");
@@ -1623,7 +1580,6 @@ const App = () => {
     return tab ? tab.label : 'ProjectPlan';
   };
 
-  // ... (calculations and helpers remain same) ...
   const totalExpenses = expenses.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0);
   const profit = (parseFloat(wage) || 0) - totalExpenses;
   const totalSupport = customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0);
@@ -1649,18 +1605,17 @@ const App = () => {
     tabScrollPositions.current[activeTab] = scrollTop;
     setIsScrolled(scrollTop > 0);
 
-    // --- ส่วนที่แก้ไข: Infinite Scroll Logic ---
-    // ทำงานเฉพาะในหน้าที่แสดงรายการทั้งหมด (Plans หรือ Analytics)
     if (activeTab === 'Plans' || activeTab === 'Analytics') {
-      // ตรวจสอบว่าเลื่อนลงมาเกือบสุดหรือยัง (เหลือพื้นที่ 100px)
       if (scrollTop + clientHeight >= scrollHeight - 100) {
-        // ถ้าจำนวนที่แสดงอยู่ น้อยกว่า จำนวนทั้งหมด ให้โหลดเพิ่ม
-        if (visibleCount < filteredAndSortedActivities.length) {
-           setVisibleCount(prev => prev + 15);
+        if (visibleCount < filteredAndSortedActivities.length && !isLoadingMore) {
+           setIsLoadingMore(true);
+           setTimeout(() => {
+              setVisibleCount(prev => prev + 15);
+              setIsLoadingMore(false);
+           }, 1000);
         }
       }
     }
-    // -------------------------------------------
   };
 
   useEffect(() => {
@@ -1897,10 +1852,9 @@ const App = () => {
         const maxId = Math.max(...ids);
         if (maxId > 0) nextIdNumber = maxId + 1;
       }
-      // จัดรูปแบบเป็น P-0001
       setCurrentId(`P-${String(nextIdNumber).padStart(4, '0')}`);
       setProjectName('');
-      setProjectCategory(projectCategories[0] || ''); // Use first category if available or empty string
+      setProjectCategory(projectCategories[0] || '');
       const now = new Date();
       const localIsoString = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
       setProjectDateTime(localIsoString);
@@ -1928,7 +1882,6 @@ const App = () => {
 
   const handleSaveProject = async () => {
     setIsSaving(true); 
-    // Autocomplete list update is now handled in fetchProjects response logic
     
     if (customerName) {
       const newCustomerData = {
@@ -1938,7 +1891,6 @@ const App = () => {
         phone: customerPhone,
         email: customerEmail
       };
-      // Optimistic Update
       const existingCustomerIndex = savedCustomers.findIndex(c => c.name === customerName);
       if (existingCustomerIndex === -1) {
         setSavedCustomers([...savedCustomers, newCustomerData]);
@@ -1988,9 +1940,6 @@ const App = () => {
         });
         const result = await response.json();
         if (result.status === 'success') {
-          // --- แก้ไขตรงนี้: อัปเดตข้อมูลหน้าจอทันที ไม่ต้องรอโหลดใหม่ ---
-          
-          // 1. อัปเดต State ภายในเครื่องทันที (Optimistic Update)
           setAllActivities(prev => {
              const exists = prev.some(item => item.id === activityData.id);
              if (exists) {
@@ -2000,15 +1949,11 @@ const App = () => {
              }
           });
 
-          // 2. ปิด Loading และ Modal ทันทีเพื่อให้ผู้ใช้รู้สึกเร็ว
           setIsSaving(false);
           closeModal();
           showToast("บันทึกข้อมูลสำเร็จเรียบร้อย", 'success');
-
-          // 3. โหลดข้อมูลล่าสุดจาก Server แบบ Background (ผู้ใช้ไม่ต้องรอหมุน)
           fetchProjects(); 
           return;
-          // -------------------------------------------------------
         } else {
           showToast("ไม่สามารถบันทึกข้อมูลได้: " + result.message, 'error');
         }
@@ -2016,7 +1961,6 @@ const App = () => {
         showToast("เกิดข้อผิดพลาดในการเชื่อมต่อ: " + error.message, 'error');
       }
     } else {
-      // Fallback for no API
       if (editingId) {
         setAllActivities(allActivities.map(item => item.id === editingId ? activityData : item));
       } else {
@@ -2025,7 +1969,7 @@ const App = () => {
       closeModal();
       showToast("บันทึกข้อมูลสำเร็จ (โหมดออฟไลน์)", 'success');
     }
-    setIsSaving(false); // ปิด Overlay
+    setIsSaving(false);
   };
 
   const handleDeleteProject = () => {
@@ -2041,7 +1985,7 @@ const App = () => {
 
   const executeDelete = async () => {
     if (deleteConfirm.id) {
-      setIsSaving(true); // แสดง Overlay ขณะลบ
+      setIsSaving(true);
       if (GOOGLE_SCRIPT_URL) {
          try {
            const response = await fetch(GOOGLE_SCRIPT_URL, {
@@ -2067,7 +2011,7 @@ const App = () => {
       if (deleteConfirm.fromModal) {
         closeModal();
       }
-      setIsSaving(false); // ปิด Overlay
+      setIsSaving(false);
     }
   };
 
@@ -2106,58 +2050,34 @@ const App = () => {
     setCustomerSupportItems(newItems);
   };
 
-  // ... (DonutChart, renderTable, renderFilterCard remain same) ...
   const DonutChart = ({ data }) => {
     const total = data.reduce((sum, item) => sum + item.count, 0);
-    const radius = 35; // ขนาดรัศมีของวงกลม
-    const circumference = 2 * Math.PI * radius; // เส้นรอบวง
+    const radius = 35;
+    const circumference = 2 * Math.PI * radius;
     let cumulativePercent = 0;
     
-    // State สำหรับ Animation ตอนโหลด
     const [isLoaded, setIsLoaded] = useState(false);
     
     useEffect(() => {
-        // Trigger animation หลังจาก Component mount เล็กน้อย
         const timer = setTimeout(() => setIsLoaded(true), 100);
         return () => clearTimeout(timer);
     }, []);
 
-    // ชุดสี Modern Palette
     const colors = [
-        '#6366f1', // Indigo
-        '#10b981', // Emerald
-        '#f59e0b', // Amber
-        '#f43f5e', // Rose
-        '#8b5cf6', // Violet
-        '#3b82f6', // Blue
-        '#ec4899', // Pink
-        '#64748b'  // Slate
+        '#6366f1', '#10b981', '#f59e0b', '#f43f5e', '#8b5cf6', '#3b82f6', '#ec4899', '#64748b'
     ];
 
-    // เรียงลำดับข้อมูลจากมากไปน้อย
     const sortedData = [...data].sort((a, b) => b.count - a.count);
 
     return (
        <div className="flex flex-col items-center gap-6 py-2 w-full">
          <div className="relative w-56 h-56 flex items-center justify-center shrink-0">
-            {/* SVG Chart */}
             <svg viewBox="0 0 100 100" className="w-full h-full absolute inset-0 -rotate-90">
-               {/* Track Circle (Background) */}
-               <circle
-                  cx="50"
-                  cy="50"
-                  r={radius}
-                  fill="transparent"
-                  stroke="#f1f5f9" // Slate-100
-                  strokeWidth="10"
-               />
-               
-               {/* Data Segments */}
+               <circle cx="50" cy="50" r={radius} fill="transparent" stroke="#f1f5f9" strokeWidth="10" />
                {sortedData.map((item, i) => {
                   const percent = total > 0 ? item.count / total : 0;
                   const strokeLength = circumference * percent;
                   const strokeDasharray = `${strokeLength} ${circumference}`;
-                  // คำนวณจุดเริ่มต้นของเส้น (Offset)
                   const strokeDashoffset = -1 * circumference * cumulativePercent;
                   cumulativePercent += percent;
 
@@ -2174,30 +2094,21 @@ const App = () => {
                       strokeDashoffset={strokeDashoffset}
                       strokeLinecap="butt"
                       className="transition-all duration-1000 ease-out"
-                      style={{ transitionDelay: `${i * 50}ms` }} // Stagger animation
+                      style={{ transitionDelay: `${i * 50}ms` }}
                     />
                   );
                })}
             </svg>
-            
-            {/* Center Text with Fade-in Animation */}
             <div className={`flex flex-col items-center justify-center transition-all duration-700 delay-300 ${isLoaded ? 'scale-100 opacity-100' : 'scale-50 opacity-0'}`}>
-                 <span className="text-4xl font-black text-slate-800 leading-none">
-                    {total}
-                 </span>
+                 <span className="text-4xl font-black text-slate-800 leading-none">{total}</span>
                  <span className="text-sm font-bold text-slate-400 mt-1">โครงการ</span>
             </div>
          </div>
-         
-         {/* Custom Legend Grid */}
          <div className="grid grid-cols-2 gap-x-6 gap-y-3 w-full px-2">
             {sortedData.map((item, i) => (
               <div key={i} className="flex items-center justify-between group hover:bg-slate-50 p-1.5 rounded-lg transition-colors">
                  <div className="flex items-center gap-2.5 min-w-0">
-                   <div 
-                     className={`w-3 h-3 rounded-full shrink-0 transition-transform group-hover:scale-125 shadow-sm`} 
-                     style={{ backgroundColor: colors[i % colors.length] }}
-                   ></div>
+                   <div className={`w-3 h-3 rounded-full shrink-0 transition-transform group-hover:scale-125 shadow-sm`} style={{ backgroundColor: colors[i % colors.length] }}></div>
                    <span className="text-xs font-bold text-slate-600 truncate">{item.name}</span>
                  </div>
                  <span className="text-xs font-black text-slate-800 bg-white border border-slate-100 px-2 py-0.5 rounded-md shadow-sm">{item.count}</span>
@@ -2213,18 +2124,13 @@ const App = () => {
 
   const renderTable = (limit = 0, customData = null) => {
     const sourceData = limit > 0 ? (customData || sortedActivitiesForOverview) : (customData || filteredAndSortedActivities);
-    
-    // --- ส่วนที่แก้ไข: การตัดข้อมูลตาม visibleCount ---
-    // ถ้า limit > 0 (เช่นในหน้า Overview ที่ระบุ 5) ให้ใช้ limit
-    // ถ้า limit == 0 (หน้า Plans/Analytics) ให้ใช้ visibleCount เพื่อทำ Infinite Scroll
     const displayLimit = limit > 0 ? limit : visibleCount;
     const items = sourceData.slice(0, displayLimit);
-    // ------------------------------------------------
 
     return (
       <div className="w-full">
         <div className="md:hidden flex flex-col gap-4 p-2">
-          {items.map((item) => {
+          {items.map((item, i) => {
             const itemExpenses = item.expenses ? item.expenses.reduce((sum, ex) => sum + (parseFloat(ex.price) || 0), 0) : 0;
             const itemProfit = (item.wage || 0) - itemExpenses;
             const itemSupport = item.customerSupport ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0) : 0;
@@ -2232,18 +2138,18 @@ const App = () => {
 
             const dealStatusInfo = getDealStatusInfo(item.dealStatus);
             const transportStatusInfo = getTransportStatusInfo(item.transportStatus);
+            const animDelay = (i % 20) * 80;
 
             return (
               <div 
                 key={item.id} 
                 onClick={() => openModal(item, true)}
-                className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col gap-4 relative overflow-hidden"
+                className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col gap-4 relative overflow-hidden space-row-animation"
+                style={{ animationDelay: `${animDelay}ms` }}
               >
                 <div className="flex justify-between items-start">
                    <div className="flex flex-col gap-2">
-                      {/* ID: เพิ่มขนาดและปรับดีไซน์ */}
                       <span className="font-black text-indigo-600 bg-indigo-50 px-2.5 py-1.5 rounded-lg text-sm w-fit shadow-sm border border-indigo-100">{item.id}</span>
-                      {/* Date: บังคับให้อยู่บรรทัดเดียวกัน (whitespace-nowrap) */}
                       <div className="flex items-center gap-1.5 text-slate-500 text-xs font-bold whitespace-nowrap">
                         <Clock className="w-3.5 h-3.5" /> {item.date}
                       </div>
@@ -2259,16 +2165,13 @@ const App = () => {
                         </span>
                    </div>
                 </div>
-
                 <div className="h-px bg-slate-100 w-full" />
-
                 <div className="flex flex-col gap-1 mb-2">
                     <h3 className="text-xl font-black text-slate-800 leading-tight">{item.name}</h3>
                     <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md text-xs font-bold border border-slate-200 w-fit flex items-center gap-1">
                         <Tag className="w-3 h-3" /> {item.category}
                     </span>
                 </div>
-
                 <div className="grid grid-cols-2 gap-x-4 gap-y-4">
                     <div className="flex flex-col gap-2">
                         <div className="flex flex-col gap-0.5">
@@ -2280,15 +2183,12 @@ const App = () => {
                             </div>
                         </div>
                     </div>
-
                     <div className="flex flex-col gap-2">
                         <div className="flex flex-col gap-0.5">
                             <div className="flex items-start gap-1.5 text-slate-700 text-sm font-bold">
                                 <Clock className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0" /> 
                                 <div className="whitespace-nowrap">{renderDeliveryTime(item)}</div>
                             </div>
-                            
-                            {/* Location: ยอมให้ขึ้นบรรทัดใหม่ได้ไม่เกิน 2 บรรทัด */}
                             <div className="flex items-start gap-1.5 text-slate-500 text-xs pl-0.5">
                                 <MapPin className="w-3.5 h-3.5 shrink-0 mt-0.5 text-slate-400" /> 
                                 {item.mapLink ? (
@@ -2308,8 +2208,6 @@ const App = () => {
                         </div>
                     </div>
                 </div>
-
-                {/* Recipient: ปรับขนาด และจัดวางเบอร์โทรชิดขวา */}
                 {(item.recipient || item.recipientPhone) && (
                     <div className="flex justify-between items-start gap-3 text-sm text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-100">
                         <div className="flex flex-col min-w-0">
@@ -2332,7 +2230,6 @@ const App = () => {
                         )}
                     </div>
                 )}
-
                 <div className="bg-slate-50 rounded-xl p-3">
                    <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-200">
                       <span className="text-xs text-slate-700 font-bold flex items-center gap-1">
@@ -2340,19 +2237,16 @@ const App = () => {
                       </span>
                       <span className="text-sm text-indigo-700 font-black">฿{itemReceivable.toLocaleString()}</span>
                    </div>
-
                    <div className="flex justify-between items-center mb-1">
                       <span className="text-xs text-slate-500">ค่าจ้าง</span>
                       <span className="text-xs text-emerald-600 font-bold flex items-center gap-1"><ArrowUpRight className="w-3 h-3" /> {item.wage.toLocaleString()}</span>
                    </div>
-                   
                    {itemSupport > 0 && (
                        <div className="flex justify-between items-center mb-1">
                           <span className="text-xs text-slate-500">ลูกค้าสนับสนุน</span>
                           <span className="text-xs text-blue-600 font-bold flex items-center gap-1">+ {itemSupport.toLocaleString()}</span>
                        </div>
                    )}
-
                    <div className="flex justify-between items-center mb-2 border-b border-slate-200 pb-2">
                       <span className="text-xs text-slate-500">รายจ่าย</span>
                       <span className="text-xs text-rose-500 font-bold flex items-center gap-1"><TrendingDown className="w-3 h-3" /> {itemExpenses.toLocaleString()}</span>
@@ -2364,13 +2258,11 @@ const App = () => {
                       </span>
                    </div>
                 </div>
-
                 {item.note && (
                   <div className="text-xs text-slate-500 bg-yellow-50/50 p-2 rounded-lg border border-yellow-100">
                     <span className="font-bold text-yellow-600 mr-1">หมายเหตุ:</span> {item.note}
                   </div>
                 )}
-
                 <div className="grid grid-cols-2 gap-3 mt-2">
                     <button 
                         onClick={(e) => handleEditFromTable(e, item)} 
@@ -2389,168 +2281,189 @@ const App = () => {
               </div>
             );
           })}
+          {limit === 0 && isLoadingMore && (
+             <div className="flex flex-col items-center justify-center py-8 gap-3 opacity-100 transition-opacity duration-300">
+                 <div className="p-3 bg-white rounded-full shadow-md border border-slate-100 animate-bounce">
+                    <Loader2 className="w-6 h-6 text-indigo-600 animate-spin" />
+                 </div>
+                 <span className="text-xs text-slate-500 font-bold animate-pulse">กำลังโหลดข้อมูลเพิ่มเติม...</span>
+             </div>
+          )}
         </div>
 
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="text-slate-400 text-sm font-semibold border-b border-slate-50">
-                <SortableHeader label="รหัส / วันที่บันทึก" sortKey="id" sortConfig={sortConfig} handleSort={handleSort} />
-                <SortableHeader label="โครงการ / หมวดหมู่" sortKey="name" sortConfig={sortConfig} handleSort={handleSort} />
-                <SortableHeader label="ศิลปิน / ลูกค้า" sortKey="artist" sortConfig={sortConfig} handleSort={handleSort} />
-                <SortableHeader label="ผู้รับ / เบอร์โทร" sortKey="recipient" sortConfig={sortConfig} handleSort={handleSort} />
-                <SortableHeader label="กำหนดส่ง / สถานที่" sortKey="rawDeliveryDateTime" sortConfig={sortConfig} handleSort={handleSort} />
-                <SortableHeader label="สถานะ (ดีล / ขนส่ง)" sortKey="dealStatus" sortConfig={sortConfig} handleSort={handleSort} />
-                <SortableHeader label="การเงิน (บาท)" sortKey="wage" alignRight sortConfig={sortConfig} handleSort={handleSort} />
-                <SortableHeader label="หมายเหตุ" sortKey="note" sortConfig={sortConfig} handleSort={handleSort} />
-                <th className="px-6 py-4 font-medium text-right whitespace-nowrap">ดำเนินการ</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {items.map((item, i) => {
-                const itemExpenses = item.expenses ? item.expenses.reduce((sum, ex) => sum + (parseFloat(ex.price) || 0), 0) : 0;
-                const itemProfit = (item.wage || 0) - itemExpenses;
-                const itemSupport = item.customerSupport ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0) : 0;
-                const itemReceivable = (item.wage || 0) + itemSupport;
-
-                const dealStatusInfo = getDealStatusInfo(item.dealStatus);
-                const transportStatusInfo = getTransportStatusInfo(item.transportStatus);
-
-                return (
-                  <tr
-                    key={item.id}
-                    onClick={() => openModal(item, true)}
-                    className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
-                  >
-                    <td className="px-6 py-4 align-top">
-                      <div className="flex flex-col gap-1">
-                        <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit">{item.id}</span>
-                        <div className="flex items-center gap-1.5 text-slate-500 text-xs mt-1">
-                          <Clock className="w-3 h-3" />
-                          {item.date}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 align-top">
-                      <div className="flex flex-col gap-1 min-w-[140px]">
-                        <span className="font-bold text-slate-800 text-sm">{item.name}</span>
-                        <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                          <Tag className="w-3 h-3" />
-                          {item.category}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 align-top">
-                      <div className="flex flex-col gap-1.5 min-w-[140px]">
-                        <div className="flex items-center gap-2">
-                          <User className="w-3 h-3 text-indigo-500" />
-                          <span className="text-sm font-semibold text-slate-700">{item.artist}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-slate-500">
-                          <Briefcase className="w-3 h-3" />
-                          {item.customer}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 align-top">
-                      <div className="flex flex-col gap-1 min-w-[140px]">
-                        <div className="text-sm font-medium text-slate-700">{item.recipient || '-'}</div>
-                        {item.recipientPhone && (
-                          <a 
-                            href={`tel:${item.recipientPhone}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="flex items-center gap-1 text-xs text-slate-500 hover:text-indigo-600 hover:underline transition-colors w-fit"
-                          >
-                            <Phone className="w-3 h-3" />
-                            {item.recipientPhone}
-                          </a>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 align-top">
-                      <div className="flex flex-col gap-1 min-w-[160px]">
-                        <div className="flex items-center gap-1.5 text-slate-700 text-sm font-medium">
-                          <Clock className="w-3 h-3 text-indigo-500" />
-                          <div>{renderDeliveryTime(item)}</div>
-                        </div>
-                        <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                          <MapPin className="w-3 h-3 shrink-0" />
-                          {item.mapLink ? (
-                            <a 
-                              href={item.mapLink} 
-                              target="_blank" 
-                              rel="noreferrer" 
-                              onClick={(e) => e.stopPropagation()} 
-                              className="text-blue-600 hover:underline truncate max-w-[140px]"
-                              title="เปิดแผนที่"
-                            >
-                              {item.location || '-'}
-                            </a>
-                          ) : (
-                            <span className="truncate max-w-[140px]">{item.location || '-'}</span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 align-top">
-                      <div className="flex flex-col gap-2 items-start">
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${dealStatusInfo.color}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${dealStatusInfo.value === 'confirmed' ? 'bg-emerald-500' : dealStatusInfo.value === 'pending' ? 'bg-amber-500' : dealStatusInfo.value === 'declined' ? 'bg-gray-400' : 'bg-rose-500'}`}></span>
-                          {dealStatusInfo.label}
-                        </span>
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${transportStatusInfo.color}`}>
-                          <Truck className="w-3 h-3" />
-                          {transportStatusInfo.label}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 align-top text-right">
-                        <div className="flex flex-col gap-1 items-end min-w-[120px]">
-                          <span className="text-sm font-black text-slate-800" title="ยอดเรียกเก็บสุทธิ">
-                             ฿{itemReceivable.toLocaleString()}
-                          </span>
-                          
-                          <div className="text-xs text-slate-400 flex gap-1 items-center justify-end">
-                              <span className="text-emerald-600" title="ค่าจ้าง">{item.wage.toLocaleString()}</span>
-                              {itemSupport > 0 && <span className="text-blue-500" title="สนับสนุน">+{itemSupport.toLocaleString()}</span>}
-                          </div>
-
-                          <span className="text-xs text-rose-500 font-medium flex items-center gap-1" title="รายจ่าย">
-                            <TrendingDown className="w-3 h-3" /> -{itemExpenses.toLocaleString()}
-                          </span>
-                          <span className={`text-xs font-bold ${itemProfit >= 0 ? 'text-indigo-600' : 'text-rose-600'} border-t border-slate-100 pt-1 mt-1 w-full text-right`} title="กำไรสุทธิ">
-                            {itemProfit >= 0 ? '+' : ''}{itemProfit.toLocaleString()}
-                          </span>
-                        </div>
-                    </td>
-                    <td className="px-6 py-4 align-top">
-                        <div className="text-sm text-slate-600 max-w-[120px] whitespace-normal break-words" title={item.note}>
-                          {item.note || '-'}
-                        </div>
-                    </td>
-                    <td className="px-6 py-4 align-top text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={(e) => handleEditFromTable(e, item)}
-                          className="p-2 bg-white border border-slate-200 text-indigo-600 hover:bg-indigo-50 rounded-lg transition shadow-sm"
-                          title="แก้ไข"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={(e) => handleDeleteFromTable(e, item.id)}
-                          className="p-2 bg-white border border-slate-200 text-rose-500 hover:bg-rose-50 rounded-lg transition shadow-sm"
-                          title="ลบรายการ"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
+        <div className="hidden md:block">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-slate-400 text-sm font-semibold border-b border-slate-50">
+                    <SortableHeader label="รหัส / วันที่บันทึก" sortKey="id" sortConfig={sortConfig} handleSort={handleSort} />
+                    <SortableHeader label="โครงการ / หมวดหมู่" sortKey="name" sortConfig={sortConfig} handleSort={handleSort} />
+                    <SortableHeader label="ศิลปิน / ลูกค้า" sortKey="artist" sortConfig={sortConfig} handleSort={handleSort} />
+                    <SortableHeader label="ผู้รับ / เบอร์โทร" sortKey="recipient" sortConfig={sortConfig} handleSort={handleSort} />
+                    <SortableHeader label="กำหนดส่ง / สถานที่" sortKey="rawDeliveryDateTime" sortConfig={sortConfig} handleSort={handleSort} />
+                    <SortableHeader label="สถานะ (ดีล / ขนส่ง)" sortKey="dealStatus" sortConfig={sortConfig} handleSort={handleSort} />
+                    <SortableHeader label="การเงิน (บาท)" sortKey="wage" alignRight sortConfig={sortConfig} handleSort={handleSort} />
+                    <SortableHeader label="หมายเหตุ" sortKey="note" sortConfig={sortConfig} handleSort={handleSort} />
+                    <th className="px-6 py-4 font-medium text-right whitespace-nowrap">ดำเนินการ</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {items.map((item, i) => {
+                    const itemExpenses = item.expenses ? item.expenses.reduce((sum, ex) => sum + (parseFloat(ex.price) || 0), 0) : 0;
+                    const itemProfit = (item.wage || 0) - itemExpenses;
+                    const itemSupport = item.customerSupport ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0) : 0;
+                    const itemReceivable = (item.wage || 0) + itemSupport;
+
+                    const dealStatusInfo = getDealStatusInfo(item.dealStatus);
+                    const transportStatusInfo = getTransportStatusInfo(item.transportStatus);
+                    const animDelay = (i % 20) * 50; 
+
+                    return (
+                      <tr
+                        key={item.id}
+                        onClick={() => openModal(item, true)}
+                        className="hover:bg-slate-50/80 transition-colors group cursor-pointer space-row-animation"
+                        style={{ animationDelay: `${animDelay}ms` }}
+                      >
+                        <td className="px-6 py-4 align-top">
+                          <div className="flex flex-col gap-1">
+                            <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit">{item.id}</span>
+                            <div className="flex items-center gap-1.5 text-slate-500 text-xs mt-1">
+                              <Clock className="w-3 h-3" />
+                              {item.date}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 align-top">
+                          <div className="flex flex-col gap-1 min-w-[140px]">
+                            <span className="font-bold text-slate-800 text-sm">{item.name}</span>
+                            <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                              <Tag className="w-3 h-3" />
+                              {item.category}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 align-top">
+                          <div className="flex flex-col gap-1.5 min-w-[140px]">
+                            <div className="flex items-center gap-2">
+                              <User className="w-3 h-3 text-indigo-500" />
+                              <span className="text-sm font-semibold text-slate-700">{item.artist}</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                              <Briefcase className="w-3 h-3" />
+                              {item.customer}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 align-top">
+                          <div className="flex flex-col gap-1 min-w-[140px]">
+                            <div className="text-sm font-medium text-slate-700">{item.recipient || '-'}</div>
+                            {item.recipientPhone && (
+                              <a 
+                                href={`tel:${item.recipientPhone}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="flex items-center gap-1 text-xs text-slate-500 hover:text-indigo-600 hover:underline transition-colors w-fit"
+                              >
+                                <Phone className="w-3 h-3" />
+                                {item.recipientPhone}
+                              </a>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 align-top">
+                          <div className="flex flex-col gap-1 min-w-[160px]">
+                            <div className="flex items-center gap-1.5 text-slate-700 text-sm font-medium">
+                              <Clock className="w-3 h-3 text-indigo-500" />
+                              <div>{renderDeliveryTime(item)}</div>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                              <MapPin className="w-3 h-3 shrink-0" />
+                              {item.mapLink ? (
+                                <a 
+                                  href={item.mapLink} 
+                                  target="_blank" 
+                                  rel="noreferrer" 
+                                  onClick={(e) => e.stopPropagation()} 
+                                  className="text-blue-600 hover:underline truncate max-w-[140px]"
+                                  title="เปิดแผนที่"
+                                >
+                                  {item.location || '-'}
+                                </a>
+                              ) : (
+                                <span className="truncate max-w-[140px]">{item.location || '-'}</span>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 align-top">
+                          <div className="flex flex-col gap-2 items-start">
+                            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${dealStatusInfo.color}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${dealStatusInfo.value === 'confirmed' ? 'bg-emerald-500' : dealStatusInfo.value === 'pending' ? 'bg-amber-500' : dealStatusInfo.value === 'declined' ? 'bg-gray-400' : 'bg-rose-500'}`}></span>
+                              {dealStatusInfo.label}
+                            </span>
+                            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${transportStatusInfo.color}`}>
+                              <Truck className="w-3 h-3" />
+                              {transportStatusInfo.label}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 align-top text-right">
+                            <div className="flex flex-col gap-1 items-end min-w-[120px]">
+                              <span className="text-sm font-black text-slate-800" title="ยอดเรียกเก็บสุทธิ">
+                                 ฿{itemReceivable.toLocaleString()}
+                              </span>
+                              <div className="text-xs text-slate-400 flex gap-1 items-center justify-end">
+                                  <span className="text-emerald-600" title="ค่าจ้าง">{item.wage.toLocaleString()}</span>
+                                  {itemSupport > 0 && <span className="text-blue-500" title="สนับสนุน">+{itemSupport.toLocaleString()}</span>}
+                              </div>
+                              <span className="text-xs text-rose-500 font-medium flex items-center gap-1" title="รายจ่าย">
+                                <TrendingDown className="w-3 h-3" /> -{itemExpenses.toLocaleString()}
+                              </span>
+                              <span className={`text-xs font-bold ${itemProfit >= 0 ? 'text-indigo-600' : 'text-rose-600'} border-t border-slate-100 pt-1 mt-1 w-full text-right`} title="กำไรสุทธิ">
+                                {itemProfit >= 0 ? '+' : ''}{itemProfit.toLocaleString()}
+                              </span>
+                            </div>
+                        </td>
+                        <td className="px-6 py-4 align-top">
+                            <div className="text-sm text-slate-600 max-w-[120px] whitespace-normal break-words" title={item.note}>
+                              {item.note || '-'}
+                            </div>
+                        </td>
+                        <td className="px-6 py-4 align-top text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={(e) => handleEditFromTable(e, item)}
+                              className="p-2 bg-white border border-slate-200 text-indigo-600 hover:bg-indigo-50 rounded-lg transition shadow-sm"
+                              title="แก้ไข"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={(e) => handleDeleteFromTable(e, item.id)}
+                              className="p-2 bg-white border border-slate-200 text-rose-500 hover:bg-rose-50 rounded-lg transition shadow-sm"
+                              title="ลบรายการ"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            
+            {limit === 0 && isLoadingMore && (
+               <div className="w-full py-8 text-center border-t border-slate-50 bg-slate-50/30 animate-in fade-in slide-in-from-bottom-2">
+                   <div className="flex flex-col items-center justify-center gap-3">
+                      <div className="p-2 bg-white rounded-full shadow-sm border border-slate-200">
+                          <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+                      </div>
+                      <span className="text-xs text-slate-500 font-bold animate-pulse">กำลังโหลดข้อมูลเพิ่มเติม...</span>
+                   </div>
+               </div>
+            )}
         </div>
       </div>
     );
@@ -2731,12 +2644,10 @@ const App = () => {
   );
 
   const renderContent = () => {
-    // --- If not logged in, show login screen ---
     if (!isLoggedIn) {
         return <LoginScreen onLogin={handleLogin} isLoading={isLoading} loginError={loginError} />;
     }
 
-    // --- Loading State Display (Now handled by LoadingOverlay, but keep basic check for initial load) ---
     if (isLoading && allActivities.length === 0) {
       return (
         <div className="flex flex-col items-center justify-center h-[calc(100vh-80px)] w-full">
@@ -2812,7 +2723,6 @@ const App = () => {
           return sum + (isCancelledOrIssue ? 0 : (item.wage || 0));
         }, 0);
         
-        // คำนวณยอด Support
         const currentSupport = filteredAndSortedActivities.reduce((sum, item) => {
           const itemSupport = item.customerSupport ? item.customerSupport.reduce((s, e) => s + (parseFloat(e.price) || 0), 0) : 0;
           return sum + itemSupport;
@@ -2823,7 +2733,7 @@ const App = () => {
           return sum + itemCost;
         }, 0);
         
-        const currentProfit = currentRevenue - currentCost; // กำไรคิดจาก รายได้ - รายจ่าย (ไม่รวม Support ในสูตรนี้ หรือจะรวมก็ได้แล้วแต่ตกลง แต่ปกติ Profit = Revenue - Cost)
+        const currentProfit = currentRevenue - currentCost; 
 
         const totalProjects = filteredAndSortedActivities.length;
         const completedProjects = filteredAndSortedActivities.filter(a => a.dealStatus === 'confirmed' && a.transportStatus === 'delivered').length;
@@ -2893,9 +2803,7 @@ const App = () => {
           <div className="space-y-8 animate-in fade-in duration-500 flex flex-col min-h-full pb-24 md:pb-6">
              {renderFilterCard()}
              
-             {/* 1. Summary Cards (4 Cards) - Added Hover Animation */}
              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 px-4 sm:px-8 lg:px-10">
-                {/* Revenue */}
                 <div className="bg-emerald-50 p-6 rounded-[2rem] border border-emerald-100 shadow-sm relative overflow-hidden group hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
                    <div className="flex items-center gap-3 mb-2">
                       <div className="p-2 bg-emerald-100 rounded-xl text-emerald-600 group-hover:scale-110 transition-transform">
@@ -2907,7 +2815,6 @@ const App = () => {
                    <p className="text-sm text-emerald-600 mt-1 font-medium">จาก {totalProjects} โครงการ</p>
                 </div>
 
-                {/* Support */}
                 <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
                    <div className="flex items-center gap-3 mb-2">
                       <div className="p-2 bg-slate-200 rounded-xl text-slate-600 group-hover:scale-110 transition-transform">
@@ -2919,7 +2826,6 @@ const App = () => {
                    <p className="text-sm text-slate-600 mt-1 font-medium">ยอดสนับสนุนศิลปิน</p>
                 </div>
 
-                {/* Expense */}
                 <div className="bg-rose-50 p-6 rounded-[2rem] border border-rose-100 shadow-sm relative overflow-hidden group hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
                    <div className="flex items-center gap-3 mb-2">
                       <div className="p-2 bg-rose-100 rounded-xl text-rose-600 group-hover:scale-110 transition-transform">
@@ -2931,7 +2837,6 @@ const App = () => {
                    <p className="text-sm text-rose-600 mt-1 font-medium">ต้นทุนค่าใช้จ่าย</p>
                 </div>
 
-                {/* Profit */}
                 <div className="bg-indigo-50 p-6 rounded-[2rem] border border-indigo-100 shadow-sm relative overflow-hidden group hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
                    <div className="flex items-center gap-3 mb-2">
                       <div className="p-2 bg-indigo-100 rounded-xl text-indigo-600 group-hover:scale-110 transition-transform">
@@ -2946,44 +2851,37 @@ const App = () => {
                 </div>
              </div>
 
-             {/* 2. Project Status Cards (6 Cards) - Added Hover Animation */}
              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 px-4 sm:px-8 lg:px-10">
-                {/* Total */}
                 <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-indigo-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
                      <div className="mb-2 p-2 bg-slate-50 text-slate-500 rounded-full"><Folder className="w-5 h-5" /></div>
                      <div className="text-2xl font-black text-slate-800">{totalProjects}</div>
                      <div className="text-xs font-bold text-slate-500 mt-1">โครงการทั้งหมด</div>
                 </div>
 
-                {/* Completed */}
                 <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-emerald-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
                      <div className="mb-2 p-2 bg-emerald-50 text-emerald-500 rounded-full"><CheckCircle className="w-5 h-5" /></div>
                      <div className="text-2xl font-black text-emerald-600">{completedProjects}</div>
                      <div className="text-xs font-bold text-emerald-500 mt-1">งานเสร็จสิ้น</div>
                 </div>
 
-                {/* Active */}
                 <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-blue-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
                      <div className="mb-2 p-2 bg-blue-50 text-blue-500 rounded-full"><Activity className="w-5 h-5" /></div>
                      <div className="text-2xl font-black text-blue-600">{activeProjects}</div>
                      <div className="text-xs font-bold text-blue-500 mt-1">กำลังดำเนินการ</div>
                 </div>
 
-                 {/* Pending */}
                 <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-amber-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
                      <div className="mb-2 p-2 bg-amber-50 text-amber-500 rounded-full"><Clock className="w-5 h-5" /></div>
                      <div className="text-2xl font-black text-amber-600">{pendingProjects}</div>
                      <div className="text-xs font-bold text-amber-500 mt-1">รอดำเนินการ</div>
                 </div>
 
-                {/* Cancelled/Issue */}
                 <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-rose-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
                      <div className="mb-2 p-2 bg-rose-50 text-rose-500 rounded-full"><AlertTriangle className="w-5 h-5" /></div>
                      <div className="text-2xl font-black text-rose-600">{issueProjects}</div>
                      <div className="text-xs font-bold text-rose-500 mt-1">ยกเลิก/มีปัญหา</div>
                 </div>
 
-                 {/* Declined */}
                  <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-gray-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
                      <div className="mb-2 p-2 bg-gray-50 text-gray-400 rounded-full"><ThumbsDown className="w-5 h-5" /></div>
                      <div className="text-2xl font-black text-gray-500">{declinedProjects}</div>
@@ -3004,7 +2902,6 @@ const App = () => {
                           <span className="text-slate-900">฿{item.amount.toLocaleString()}</span>
                         </div>
                         <div className="w-full h-3 bg-slate-50 rounded-full overflow-hidden">
-                          {/* Animated Progress Bar */}
                           <div 
                               className="h-full bg-indigo-500 rounded-full transition-all duration-1000 ease-out" 
                               style={{ width: animateCharts ? `${(item.amount / maxExpense) * 100}%` : '0%' }}
@@ -3044,7 +2941,6 @@ const App = () => {
                                     <span className="text-emerald-600">฿{item.amount.toLocaleString()}</span>
                                 </div>
                                 <div className="w-full h-2.5 bg-slate-50 rounded-full overflow-hidden">
-                                    {/* Animated Progress Bar */}
                                     <div 
                                         className="h-full bg-emerald-500 rounded-full transition-all duration-1000 ease-out" 
                                         style={{ width: animateCharts ? `${(item.amount / maxPerformerRevenue) * 100}%` : '0%' }}
@@ -3078,7 +2974,6 @@ const App = () => {
                                     <span className="text-indigo-600">฿{item.amount.toLocaleString()}</span>
                                 </div>
                                 <div className="w-full h-2.5 bg-slate-50 rounded-full overflow-hidden">
-                                    {/* Animated Progress Bar */}
                                     <div 
                                         className="h-full bg-indigo-500 rounded-full transition-all duration-1000 ease-out" 
                                         style={{ width: animateCharts ? `${(item.amount / maxCustomerRevenue) * 100}%` : '0%' }}
@@ -3092,7 +2987,6 @@ const App = () => {
                       </div>
                    </div>
 
-                   {/* Top Customers (Project Count) - NEW */}
                    <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col max-h-[400px]">
                       <div className="flex items-center justify-between mb-6 flex-shrink-0">
                          <h3 className="text-xl font-bold text-slate-900">อันดับลูกค้าจ้างงานสูงสุด (Top Customer Performers)</h3>
@@ -3114,7 +3008,6 @@ const App = () => {
                                     <span className="text-purple-600">{item.count} งาน</span>
                                 </div>
                                 <div className="w-full h-2.5 bg-slate-50 rounded-full overflow-hidden">
-                                    {/* Animated Progress Bar */}
                                     <div 
                                         className="h-full bg-purple-500 rounded-full transition-all duration-1000 ease-out" 
                                         style={{ width: animateCharts ? `${(item.count / maxCustomerProjectCount) * 100}%` : '0%' }}
@@ -3172,9 +3065,7 @@ const App = () => {
           <div className="space-y-8 animate-in fade-in duration-500 px-4 sm:px-8 lg:px-10 pt-6 pb-24 md:pb-6">
             <div className="max-w-4xl mx-auto">
               <h2 className="text-3xl font-extrabold text-slate-900 mb-6">ตั้งค่าระบบ</h2>
-              {/* ... User Profile Card (Dynamic) ... */}
               <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden mb-8">
-                {/* ... Profile Cover ... */}
                 <div className="h-48 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 relative">
                   <div className="absolute right-6 top-6">
                      <button className="p-2 bg-white/20 backdrop-blur-md text-white rounded-xl hover:bg-white/30 transition shadow-sm">
@@ -3184,7 +3075,6 @@ const App = () => {
                 </div>
                 <div className="px-8 pb-8">
                    <div className="flex flex-col items-center sm:items-start relative">
-                      {/* Avatar - Positioned to overlap banner cleanly */}
                       <div className="-mt-16 mb-6 relative z-10">
                          <div className="w-32 h-32 bg-white p-1.5 rounded-full shadow-2xl ring-4 ring-white/50">
                             <div className="w-full h-full bg-slate-100 text-slate-600 rounded-full flex items-center justify-center text-4xl font-black border border-slate-200 overflow-hidden">
@@ -3193,7 +3083,6 @@ const App = () => {
                          </div>
                       </div>
                       
-                      {/* User Info - Content Below Banner */}
                       <div className="w-full">
                          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6">
                             <div className="text-center sm:text-left">
@@ -3225,7 +3114,6 @@ const App = () => {
                 </div>
               </div>
 
-              {/* User Management Section */}
               <div className="mb-8">
                   <h3 className="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
                       <Users className="w-5 h-5 text-indigo-600" />
@@ -3263,7 +3151,6 @@ const App = () => {
                           ))}
                       </div>
 
-                      {/* Add User Form */}
                       <div className="mt-6 pt-6 border-t border-slate-100">
                           {!isAddingUser ? (
                               <button 
@@ -3398,7 +3285,6 @@ const App = () => {
     <div className="flex h-screen bg-[#F8FAFC] font-sans text-slate-800 overflow-hidden selection:bg-indigo-100 selection:text-indigo-900">
       
       <style>{`
-        /* ... (styles remain same) ... */
         @keyframes modalEnter {
           0% { opacity: 0; transform: scale(0.95) translateY(10px); filter: blur(2px); }
           100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
@@ -3406,7 +3292,6 @@ const App = () => {
         .modal-animate-in {
           animation: modalEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
-        /* ... */
         .no-scrollbar::-webkit-scrollbar {
           display: none;
         }
@@ -3417,6 +3302,25 @@ const App = () => {
         .safe-area-bottom {
           padding-bottom: env(safe-area-inset-bottom);
         }
+
+        /* --- Space-Themed Staggered Animation (New) --- */
+        @keyframes spaceRowEnter {
+          0% {
+            opacity: 0;
+            transform: translateY(20px); /* เลื่อนขึ้นจากด้านล่าง */
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        
+        .space-row-animation {
+          opacity: 0; /* เริ่มต้นซ่อนไว้เพื่อรอ Animation */
+          animation: spaceRowEnter 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards; /* ปรับจังหวะให้นุ่มนวล */
+          will-change: transform, opacity;
+        }
+        /* ------------------------------------------------ */
       `}</style>
       
       {/* --- Global Feedback Elements --- */}
@@ -3424,6 +3328,62 @@ const App = () => {
       {toast.show && <Toast message={toast.message} type={toast.type} onClose={closeToast} />}
       {/* ------------------------------- */}
 
+      {/* --- Desktop Sidebar (Restored) --- */}
+      {isLoggedIn && (
+        <aside className={`hidden md:flex flex-col ${isSidebarCollapsed ? 'w-20' : 'w-72'} bg-white border-r border-slate-100 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-20 transition-all duration-300 relative`}>
+            <button
+                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 bg-white border border-slate-200 rounded-full shadow-sm text-slate-400 hover:text-indigo-600 transition-colors z-50"
+            >
+                {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+            </button>
+
+            <div className={`p-6 pb-4 flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200 shrink-0">
+                <Clipboard className="w-6 h-6 text-white" />
+            </div>
+            {!isSidebarCollapsed && (
+                <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent tracking-tight whitespace-nowrap overflow-hidden">
+                ProjectPlan
+                </h1>
+            )}
+            </div>
+            
+            <nav className="flex-1 px-4 py-6 space-y-2">
+            {navItems.map((item) => (
+                <button
+                key={item.name}
+                onClick={() => setActiveTab(item.name)}
+                className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-2' : 'gap-4 px-6'} py-4 text-sm font-bold rounded-[1.2rem] transition-all duration-300 group ${
+                    activeTab === item.name
+                    ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-200 scale-100'
+                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+                title={isSidebarCollapsed ? item.label : ''}
+                >
+                <item.icon className={`w-5 h-5 transition-transform group-hover:scale-110 ${activeTab === item.name ? 'text-white' : 'text-slate-400 group-hover:text-slate-600'}`} />
+                {!isSidebarCollapsed && <span>{item.label}</span>}
+                </button>
+            ))}
+            </nav>
+
+            <div className="p-4 border-t border-slate-50">
+                <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-4'} cursor-pointer p-2 sm:p-4 rounded-[1.5rem] bg-slate-50 hover:bg-white hover:shadow-lg hover:shadow-slate-100 transition-all duration-300 border border-transparent hover:border-slate-100`}>
+                <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-white text-xs font-bold ring-4 ring-white shadow-md shrink-0">
+                    {userProfile?.name?.charAt(0) || 'U'}
+                </div>
+                {!isSidebarCollapsed && (
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-slate-900 truncate">{userProfile?.name || 'Guest User'}</p>
+                        <p className="text-xs text-slate-500 truncate font-medium">{userProfile?.role || 'Viewer'}</p>
+                    </div>
+                )}
+                </div>
+            </div>
+        </aside>
+      )}
+
+      {/* --- Mobile Bottom Navigation --- */}
       {isLoggedIn && (
         <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-200 z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] safe-area-bottom pb-safe">
             <div className="relative grid grid-cols-5 h-16 items-center">
@@ -3431,14 +3391,11 @@ const App = () => {
                 <div 
                     className="absolute top-2 bottom-2 bg-indigo-50 rounded-full transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1)"
                     style={{ 
-                        // คำนวณตำแหน่ง: 
-                        // ใช้ transform: translateX(-50%) เพื่อจัดกึ่งกลางจุด anchor
-                        // จุด anchor แต่ละช่องคือ 10%, 30%, 50%, 70%, 90%
                         left: `${(navItems.findIndex(i => i.name === activeTab) < 2 
                             ? (navItems.findIndex(i => i.name === activeTab) * 20) + 10 
                             : ((navItems.findIndex(i => i.name === activeTab) + 1) * 20) + 10 // +1 ข้ามช่องกลาง
                         )}%`, 
-                        width: '48px', // Fix width เพื่อความสวยงาม (ประมาณ 12-14% ของจอ)
+                        width: '48px',
                         transform: 'translateX(-50%)'
                     }}
                 />
