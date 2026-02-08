@@ -1248,7 +1248,7 @@ const App = () => {
   useEffect(() => {
     const currentTab = navItems.find(item => item.name === activeTab);
     if (currentTab) {
-      document.title = `${currentTab.label} - ลูกหยีสร้างเองอะค้าบบบบบ`;
+      document.title = `${currentTab.label} - ลูกหยีสร้างเองอะค้าบบบบ`;
     } else {
       document.title = "NexusPlan Dashboard";
     }
@@ -2236,10 +2236,12 @@ const App = () => {
                 className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col gap-4 relative overflow-hidden"
               >
                 <div className="flex justify-between items-start">
-                   <div className="flex flex-col gap-1">
-                      <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit">{item.id}</span>
-                      <div className="flex items-center gap-1.5 text-slate-500 text-xs">
-                        <Clock className="w-3 h-3" /> {item.date}
+                   <div className="flex flex-col gap-2">
+                      {/* ID: เพิ่มขนาดและปรับดีไซน์ */}
+                      <span className="font-black text-indigo-600 bg-indigo-50 px-2.5 py-1.5 rounded-lg text-sm w-fit shadow-sm border border-indigo-100">{item.id}</span>
+                      {/* Date: บังคับให้อยู่บรรทัดเดียวกัน (whitespace-nowrap) */}
+                      <div className="flex items-center gap-1.5 text-slate-500 text-xs font-bold whitespace-nowrap">
+                        <Clock className="w-3.5 h-3.5" /> {item.date}
                       </div>
                    </div>
                    <div className="flex flex-col gap-1.5 items-end">
@@ -2282,36 +2284,46 @@ const App = () => {
                                 <div>{renderDeliveryTime(item)}</div>
                             </div>
                             
-                            <div className="flex items-center gap-1.5 text-slate-500 text-xs pl-5">
-                                <MapPin className="w-3 h-3 shrink-0" /> 
+                            {/* Location: ยอมให้ขึ้นบรรทัดใหม่ได้ไม่เกิน 2 บรรทัด */}
+                            <div className="flex items-start gap-1.5 text-slate-500 text-xs pl-0.5">
+                                <MapPin className="w-3.5 h-3.5 shrink-0 mt-0.5 text-slate-400" /> 
                                 {item.mapLink ? (
                                     <a 
                                         href={item.mapLink} 
                                         target="_blank" 
                                         rel="noreferrer"
                                         onClick={(e) => e.stopPropagation()}
-                                        className="text-blue-600 hover:underline truncate"
+                                        className="text-blue-600 hover:underline line-clamp-2 leading-tight"
                                     >
                                         {item.location || '-'}
                                     </a>
                                 ) : (
-                                    <span className="truncate">{item.location || '-'}</span>
+                                    <span className="line-clamp-2 leading-tight">{item.location || '-'}</span>
                                 )}
                             </div>
                         </div>
                     </div>
                 </div>
 
+                {/* Recipient: ปรับขนาด และจัดวางเบอร์โทรชิดขวา */}
                 {(item.recipient || item.recipientPhone) && (
-                    <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-50 p-2 rounded-lg">
-                        <span className="font-bold text-slate-600">ผู้รับ:</span> {item.recipient || '-'} 
+                    <div className="flex justify-between items-start gap-3 text-sm text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                        <div className="flex flex-col min-w-0">
+                           <div className="flex gap-1">
+                               <span className="font-bold text-slate-700 shrink-0">ผู้รับ:</span>
+                               <span className="font-medium line-clamp-2 leading-snug break-words">
+                                   {item.recipient || '-'}
+                               </span>
+                           </div>
+                        </div>
                         {item.recipientPhone && (
                             <a 
                                 href={`tel:${item.recipientPhone}`} 
                                 onClick={(e) => e.stopPropagation()}
-                                className="flex items-center gap-1 ml-1 text-blue-600 hover:underline"
+                                className="flex items-center gap-1.5 text-indigo-600 bg-white px-2.5 py-1.5 rounded-lg border border-indigo-100 shadow-sm hover:bg-indigo-50 transition-colors whitespace-nowrap shrink-0 ml-1"
                             >
-                                <Phone className="w-3 h-3" />{item.recipientPhone}
+                                <Phone className="w-3.5 h-3.5" />
+                                <span className="font-bold text-xs">{item.recipientPhone}</span>
                             </a>
                         )}
                     </div>
@@ -3409,74 +3421,36 @@ const App = () => {
       {/* ------------------------------- */}
 
       {isLoggedIn && (
-        <aside className={`hidden md:flex flex-col ${isSidebarCollapsed ? 'w-20' : 'w-72'} bg-white border-r border-slate-100 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-20 transition-all duration-300 relative`}>
-            {/* ... Sidebar Content ... */}
-            <button
-                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 bg-white border border-slate-200 rounded-full shadow-sm text-slate-400 hover:text-indigo-600 transition-colors z-50"
-            >
-                {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-            </button>
-
-            <div className={`p-6 pb-4 flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
-            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200 shrink-0">
-                <Clipboard className="w-6 h-6 text-white" />
-            </div>
-            {!isSidebarCollapsed && (
-                <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent tracking-tight whitespace-nowrap overflow-hidden">
-                ProjectPlan
-                </h1>
-            )}
-            </div>
-            
-            <nav className="flex-1 px-4 py-6 space-y-2">
-            {navItems.map((item) => (
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-slate-200 z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] safe-area-bottom">
+            <div className="grid grid-cols-4 p-2 gap-1">
+            {navItems.map((item) => {
+                const isActive = activeTab === item.name;
+                return (
                 <button
-                key={item.name}
-                onClick={() => setActiveTab(item.name)}
-                className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-2' : 'gap-4 px-6'} py-4 text-sm font-bold rounded-[1.2rem] transition-all duration-300 group ${
-                    activeTab === item.name
-                    ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-200 scale-100'
-                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
-                }`}
-                title={isSidebarCollapsed ? item.label : ''}
+                    key={item.name}
+                    onClick={() => setActiveTab(item.name)}
+                    className="relative flex items-center justify-center h-14 rounded-2xl group cursor-pointer"
                 >
-                <item.icon className={`w-5 h-5 transition-transform group-hover:scale-110 ${activeTab === item.name ? 'text-white' : 'text-slate-400 group-hover:text-slate-600'}`} />
-                {!isSidebarCollapsed && <span>{item.label}</span>}
-                </button>
-            ))}
-            </nav>
-
-            <div className="p-4 border-t border-slate-50">
-                <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-4'} cursor-pointer p-2 sm:p-4 rounded-[1.5rem] bg-slate-50 hover:bg-white hover:shadow-lg hover:shadow-slate-100 transition-all duration-300 border border-transparent hover:border-slate-100`}>
-                <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-white text-xs font-bold ring-4 ring-white shadow-md shrink-0">
-                    {userProfile?.name?.charAt(0) || 'U'}
-                </div>
-                {!isSidebarCollapsed && (
-                    <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-slate-900 truncate">{userProfile?.name || 'Guest User'}</p>
-                        <p className="text-xs text-slate-500 truncate font-medium">{userProfile?.role || 'Viewer'}</p>
+                    {/* Background Animation */}
+                    <div className={`absolute inset-0 bg-indigo-50 rounded-2xl transition-all duration-300 ease-out ${
+                        isActive ? 'opacity-100 scale-100' : 'opacity-0 scale-75'
+                    }`} />
+                    
+                    {/* Icon Animation */}
+                    <div className={`relative z-10 transition-all duration-300 ${
+                        isActive ? 'text-indigo-600 -translate-y-1' : 'text-slate-400 group-hover:text-slate-600'
+                    }`}>
+                        <item.icon className={`w-7 h-7 ${isActive ? 'fill-indigo-600/20' : ''}`} />
                     </div>
-                )}
-                </div>
-            </div>
-        </aside>
-      )}
 
-      {isLoggedIn && (
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-6 py-3 flex justify-between items-center z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] safe-area-bottom">
-            {navItems.map((item) => (
-            <button
-                key={item.name}
-                onClick={() => setActiveTab(item.name)}
-                className={`flex flex-col items-center gap-1 transition-colors ${activeTab === item.name ? 'text-indigo-600' : 'text-slate-400'}`}
-            >
-                <div className={`p-1 rounded-xl transition-all ${activeTab === item.name ? 'bg-indigo-50' : ''}`}>
-                <item.icon className={`w-6 h-6 ${activeTab === item.name ? 'fill-indigo-600/20' : ''}`} />
-                </div>
-                <span className="text-[10px] font-bold">{item.label}</span>
-            </button>
-            ))}
+                    {/* Dot Indicator */}
+                    <div className={`absolute bottom-3 w-1.5 h-1.5 bg-indigo-600 rounded-full transition-all duration-300 delay-75 ${
+                        isActive ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-0 translate-y-2'
+                    }`} />
+                </button>
+                );
+            })}
+            </div>
         </nav>
       )}
 
