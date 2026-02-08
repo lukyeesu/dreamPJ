@@ -328,6 +328,275 @@ const ImageViewer = ({ src, onClose }) => {
   );
 };
 
+// --- Customer Quotation View (New Component) ---
+const CustomerQuotationView = ({ data, shopInfo }) => {
+  const [previewImage, setPreviewImage] = useState(null);
+
+  if (!data) return null;
+
+  // Calculate Financials
+  const totalSupport = data.customerSupport ? data.customerSupport.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) : 0;
+  const hasQuotationItems = data.quotationItems && data.quotationItems.length > 0;
+  const totalQuotation = hasQuotationItems
+      ? data.quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) 
+      : (parseFloat(data.wage) || 0);
+  const netReceivable = totalSupport + totalQuotation;
+
+  const dealStatusInfo = systemStatusTypes.find(s => s.value === data.dealStatus) || { label: data.dealStatus, color: 'bg-slate-100 text-slate-500' };
+
+  return (
+    <div className="min-h-screen bg-slate-50 pb-safe font-sans">
+       {previewImage && <ImageViewer src={processImageUrl(previewImage)} onClose={() => setPreviewImage(null)} />}
+
+       {/* Compact Header */}
+       <div className="bg-indigo-600 text-white pt-8 pb-10 px-4 rounded-b-[2rem] shadow-md shadow-indigo-200 relative overflow-hidden z-0 md:pt-16 md:pb-28 md:rounded-b-[3rem]">
+          <div className="absolute top-0 right-0 p-2 opacity-10">
+             <FileText className="w-24 h-24 transform -rotate-12 md:w-64 md:h-64 md:opacity-20" />
+          </div>
+          <div className="relative z-10 flex flex-col items-center text-center space-y-2">
+             <h1 className="text-5xl font-black tracking-tight leading-none drop-shadow-sm md:text-7xl">
+                {shopInfo?.shopName || 'รายละเอียดใบเสนอราคา'}
+             </h1>
+             <div className="inline-flex items-center gap-1.5 bg-white/20 px-3 py-1 rounded-full backdrop-blur-md border border-white/10 shadow-sm md:px-6 md:py-2 md:mt-2">
+                <DollarSign className="w-3.5 h-3.5 text-indigo-50 md:w-5 md:h-5" />
+                <p className="text-indigo-50 text-[10px] font-bold tracking-wide opacity-90 md:text-sm">ใบเสนอราคา (Quotation View)</p>
+             </div>
+          </div>
+       </div>
+
+       <div className="max-w-md md:max-w-6xl mx-auto px-4 relative z-10 space-y-3 -mt-6 md:-mt-20 md:space-y-0 md:grid md:grid-cols-12 md:gap-8">
+          
+          {/* LEFT COLUMN (Desktop): Main Info & Details */}
+          <div className="md:col-span-7 space-y-3 md:space-y-6">
+              {/* Row 1: Main Card (Name, ID, Image) */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-col gap-4 relative overflow-hidden md:p-8 md:rounded-[2rem] md:shadow-md">
+                <div className="flex justify-between items-start gap-3">
+                    <div className="flex flex-col gap-2 min-w-0 flex-1">
+                        <h3 className="text-lg font-black text-slate-800 leading-tight line-clamp-2 md:text-2xl md:mb-1">{data.name}</h3>
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-black text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-md text-xs border border-indigo-100 whitespace-nowrap md:text-sm md:px-3 md:py-1">
+                                {data.id}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 truncate ${dealStatusInfo.color} md:text-xs md:px-3 md:py-1`}>
+                                {data.dealStatus === 'cancelled' ? <AlertCircle className="w-3 h-3 md:w-4 md:h-4"/> : <Activity className="w-3 h-3 md:w-4 md:h-4"/>}
+                                {dealStatusInfo.label}
+                            </span>
+                        </div>
+                    </div>
+                    {data.image && (
+                        <div 
+                            className="w-16 h-16 shrink-0 rounded-xl overflow-hidden border border-slate-100 bg-slate-50 relative group cursor-pointer shadow-sm md:w-32 md:h-32 md:rounded-2xl"
+                            onClick={() => setPreviewImage(data.image)}
+                        >
+                            <img 
+                                src={processImageUrl(data.image)} 
+                                alt="Preview" 
+                                className="w-full h-full object-cover" 
+                            />
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                                 <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 drop-shadow-sm md:w-8 md:h-8" />
+                            </div>
+                        </div>
+                    )}
+                </div>
+              </div>
+
+              {/* Row 2: Combined Info Card */}
+              <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-2 gap-3 md:p-8 md:rounded-[2rem] md:shadow-md md:gap-8">
+                 <div className="flex flex-col gap-2 border-r border-slate-100 pr-2 md:gap-4 md:pr-6">
+                    <div className="flex items-center gap-1.5 text-indigo-500 mb-1 md:mb-2">
+                        <User className="w-3.5 h-3.5 md:w-5 md:h-5" />
+                        <span className="text-[10px] font-bold uppercase text-slate-400 md:text-sm">ข้อมูลทั่วไป</span>
+                    </div>
+                    <div>
+                        <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">วันที่</p>
+                        <p className="text-xs font-bold text-slate-700 truncate md:text-base">{formatDate(data.rawDateTime)}</p>
+                    </div>
+                    <div>
+                        <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">ศิลปิน</p>
+                        <p className="text-xs font-bold text-slate-700 truncate md:text-base">{data.artist}</p>
+                    </div>
+                    <div>
+                        <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">ลูกค้า</p>
+                        <p className="text-xs font-bold text-slate-700 truncate md:text-base">{data.customer}</p>
+                    </div>
+                 </div>
+                 <div className="flex flex-col gap-2 pl-1 md:gap-4 md:pl-4">
+                    <div className="flex items-center gap-1.5 text-rose-500 mb-1 md:mb-2">
+                        <Truck className="w-3.5 h-3.5 md:w-5 md:h-5" />
+                        <span className="text-[10px] font-bold uppercase text-slate-400 md:text-sm">จัดส่ง</span>
+                    </div>
+                    <div>
+                        <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">กำหนดส่ง</p>
+                        <div className="text-xs font-bold text-slate-700 truncate md:text-base">{renderDeliveryTime(data)}</div>
+                    </div>
+                    <div>
+                        <div className="flex justify-between items-center">
+                            <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">สถานที่</p>
+                            {data.mapLink && (
+                                <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-[9px] text-blue-600 font-bold hover:underline md:text-xs">
+                                    Map
+                                </a>
+                            )}
+                        </div>
+                        <p className="text-xs font-bold text-slate-700 line-clamp-2 leading-tight md:text-base">{data.location || '-'}</p>
+                    </div>
+                    {(data.recipient || data.recipientPhone) && (
+                        <div>
+                            <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">ผู้รับ</p>
+                            <p className="text-xs font-bold text-slate-700 truncate md:text-base">{data.recipient || '-'}</p>
+                            {data.recipientPhone && <a href={`tel:${data.recipientPhone}`} className="text-[10px] text-indigo-600 font-bold block md:text-sm">{data.recipientPhone}</a>}
+                        </div>
+                    )}
+                 </div>
+              </div>
+          </div>
+
+          {/* RIGHT COLUMN (Desktop): Financial Summary */}
+          <div className="md:col-span-5 space-y-3 md:space-y-6">
+              {/* Row 3: Financial Summary Card (Same as Modal) */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-5 md:p-8 md:rounded-[2rem] md:shadow-lg md:sticky md:top-6">
+                  <h3 className="text-lg font-black text-slate-800 text-center uppercase tracking-wide md:text-xl md:mb-6">สรุปยอดเรียกเก็บเงิน</h3>
+                  
+                  {/* Money Order */}
+                  {data.customerSupport && data.customerSupport.some(i => parseFloat(i.price) > 0) && (
+                      <div className="space-y-2 md:space-y-3">
+                          <div className="flex justify-between items-center border-b border-indigo-100 pb-1 mb-2 md:pb-2">
+                              <h4 className="text-sm font-bold text-indigo-600 flex items-center gap-2 md:text-base">
+                                 <Gift className="w-4 h-4 md:w-5 md:h-5" />
+                                 เงินสนับสนุนศิลปิน
+                              </h4>
+                              <span className="text-sm font-bold text-indigo-700 md:text-lg">฿{totalSupport.toLocaleString()}</span>
+                          </div>
+                          <ul className="space-y-2 pl-2 md:space-y-3">
+                              {data.customerSupport.filter(item => parseFloat(item.price) > 0).map((item, idx) => (
+                                  <li key={idx} className="flex justify-between items-center text-xs text-slate-600 border-b border-slate-100 last:border-0 pb-1 last:pb-0 md:text-sm md:pb-2">
+                                      <span className="flex items-center gap-2">
+                                          <span className="w-1.5 h-1.5 bg-indigo-300 rounded-full md:w-2 md:h-2"></span>
+                                          {item.denomination >= 20 ? 'แบงค์' : 'เหรียญ'} {item.denomination} x {item.quantity} {item.denomination >= 20 ? 'ใบ' : 'เหรียญ'}
+                                      </span>
+                                      <span className="font-medium text-slate-800 tabular-nums">{parseFloat(item.price).toLocaleString()}</span>
+                                  </li>
+                              ))}
+                          </ul>
+                      </div>
+                  )}
+
+                  {/* Quotation Items */}
+                  <div className="space-y-2 md:space-y-3">
+                      <div className="flex justify-between items-center border-b border-emerald-100 pb-1 mb-2 md:pb-2">
+                          <h4 className="text-sm font-bold text-emerald-600 flex items-center gap-2 md:text-base">
+                             <FileText className="w-4 h-4 md:w-5 md:h-5" />
+                             รายการเสนอราคา
+                          </h4>
+                          <span className="text-sm font-bold text-emerald-700 md:text-lg">฿{totalQuotation.toLocaleString()}</span>
+                      </div>
+                      <ul className="space-y-2 pl-2 md:space-y-3">
+                          {hasQuotationItems ? (
+                              data.quotationItems.map((item, idx) => (
+                                  <li key={idx} className="flex justify-between items-start text-xs text-slate-600 border-b border-slate-100 last:border-0 pb-1 last:pb-0 md:text-sm md:pb-2">
+                                      <div className="flex items-start gap-2 pr-2">
+                                          <span className="w-1.5 h-1.5 bg-emerald-300 rounded-full mt-1.5 shrink-0 md:w-2 md:h-2 md:mt-2"></span>
+                                          <span className="font-medium text-slate-600 break-words">
+                                              {item.category && <span className="font-bold text-slate-700 mr-1">{item.category}</span>}
+                                              {item.detail || '-'}
+                                          </span>
+                                      </div>
+                                      <span className="font-medium text-slate-800 tabular-nums whitespace-nowrap">
+                                          {parseFloat(item.price).toLocaleString()}
+                                      </span>
+                                  </li>
+                              ))
+                          ) : (
+                              <li className="flex justify-between items-center text-xs text-slate-600 border-b border-slate-100 last:border-0 pb-1 last:pb-0 md:text-sm md:pb-2">
+                                  <span className="flex items-center gap-2">
+                                      <span className="w-1.5 h-1.5 bg-emerald-300 rounded-full md:w-2 md:h-2"></span>
+                                      ค่าบริการรวม
+                                  </span>
+                                  <span className="font-medium text-slate-800 tabular-nums">{totalQuotation.toLocaleString()}</span>
+                              </li>
+                          )}
+                      </ul>
+                  </div>
+
+                  {/* Net Total */}
+                  <div className="pt-4 border-t-2 border-slate-200 flex justify-between items-end bg-slate-100/50 -mx-5 -mb-5 p-5 rounded-b-2xl md:p-8 md:-mx-8 md:-mb-8 md:rounded-b-[2rem]">
+                      <div className="flex flex-col">
+                          <span className="text-sm font-bold text-slate-500 uppercase tracking-wider md:text-base">ยอดเรียกเก็บสุทธิ</span>
+                      </div>
+                      <span className="text-3xl font-black text-indigo-600 leading-none tabular-nums md:text-4xl">฿{netReceivable.toLocaleString()}</span>
+                  </div>
+              </div>
+          </div>
+
+          {/* Moved Shop Contact Card Here - Will appear at bottom on Mobile, Left-bottom on Desktop (Grid Flow) */}
+          {shopInfo && (
+            <div className="md:col-span-7">
+                <div className="bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-200 p-5 relative overflow-hidden md:p-8 md:rounded-[2rem]">
+                    <div className="absolute top-0 right-0 p-2 opacity-10 pointer-events-none">
+                        <StoreIcon className="w-24 h-24 transform rotate-12 md:w-48 md:h-48" />
+                    </div>
+                    <h3 className="text-sm font-bold uppercase tracking-wider mb-4 flex items-center justify-center gap-2 relative z-10 opacity-90 md:text-lg md:mb-6">
+                        <StoreIcon className="w-4 h-4 md:w-6 md:h-6" /> ข้อมูลติดต่อร้าน
+                    </h3>
+                    <div className="flex flex-col gap-4 relative z-10 md:gap-6">
+                        <div className="flex items-center justify-center gap-3 flex-wrap">
+                            {shopInfo.phone && (
+                                <a href={`tel:${shopInfo.phone}`} className="flex items-center gap-2 bg-white text-indigo-600 px-5 py-2.5 rounded-xl shadow-sm hover:bg-indigo-50 transition active:scale-95 md:px-8 md:py-3 md:text-lg">
+                                    <Phone className="w-5 h-5 md:w-6 md:h-6" />
+                                    <span className="text-base font-bold md:text-lg">{shopInfo.phone}</span>
+                                </a>
+                            )}
+                            {shopInfo.email && (
+                                <a href={`mailto:${shopInfo.email}`} className="flex items-center gap-2 bg-white/10 text-white px-5 py-2.5 rounded-xl border border-white/20 hover:bg-white/20 transition active:scale-95 md:px-8 md:py-3 md:text-lg">
+                                    <Mail className="w-5 h-5 md:w-6 md:h-6" />
+                                    <span className="text-base font-bold md:text-lg">Email</span>
+                                </a>
+                            )}
+                        </div>
+                        <div className="flex items-center justify-center gap-4 md:gap-6">
+                            {shopInfo.line && (
+                                <a href={shopInfo.line} target="_blank" rel="noreferrer" className="w-12 h-12 bg-[#06C755] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
+                                    <MessageCircle className="w-6 h-6 text-white fill-current md:w-8 md:h-8" />
+                                </a>
+                            )}
+                            {shopInfo.facebook && (
+                                <a href={shopInfo.facebook} target="_blank" rel="noreferrer" className="w-12 h-12 bg-[#1877F2] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
+                                    <Facebook className="w-6 h-6 text-white fill-current md:w-8 md:h-8" />
+                                </a>
+                            )}
+                            {shopInfo.instagram && (
+                                <a href={shopInfo.instagram} target="_blank" rel="noreferrer" className="w-12 h-12 bg-gradient-to-tr from-[#FFDC80] via-[#FD1D1D] to-[#C13584] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
+                                    <Instagram className="w-6 h-6 text-white md:w-8 md:h-8" />
+                                </a>
+                            )}
+                            {shopInfo.tiktok && (
+                                <a href={shopInfo.tiktok} target="_blank" rel="noreferrer" className="w-12 h-12 bg-black rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
+                                    <Music2 className="w-6 h-6 text-white md:w-8 md:h-8" />
+                                </a>
+                            )}
+                        </div>
+                        {shopInfo.address && (
+                            <div className="text-center mt-2 px-4">
+                                <p className="text-xs font-medium text-indigo-50 leading-relaxed md:text-sm md:max-w-lg md:mx-auto">
+                                    {shopInfo.address}
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+          )}
+
+          <div className="text-center pt-4 pb-8 md:col-span-12">
+             <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest md:text-xs">Powered by NexusPlan</p>
+          </div>
+
+       </div>
+    </div>
+  );
+};
+
 // --- Customer Tracking View ---
 const CustomerTrackingView = ({ data, shopInfo }) => {
   const [previewImage, setPreviewImage] = useState(null); // Add local state for image preview
@@ -379,213 +648,222 @@ const CustomerTrackingView = ({ data, shopInfo }) => {
        {previewImage && <ImageViewer src={processImageUrl(previewImage)} onClose={() => setPreviewImage(null)} />}
 
        {/* Compact Header - Adjusted padding/margin to prevent overlap */}
-       <div className="bg-indigo-600 text-white pt-8 pb-10 px-4 rounded-b-[2rem] shadow-md shadow-indigo-200 relative overflow-hidden z-0">
+       <div className="bg-indigo-600 text-white pt-8 pb-10 px-4 rounded-b-[2rem] shadow-md shadow-indigo-200 relative overflow-hidden z-0 md:pt-16 md:pb-28 md:rounded-b-[3rem]">
           <div className="absolute top-0 right-0 p-2 opacity-10">
-             <PackageCheck className="w-24 h-24 transform rotate-12" />
+             <PackageCheck className="w-24 h-24 transform rotate-12 md:w-64 md:h-64 md:opacity-20" />
           </div>
           <div className="relative z-10 flex flex-col items-center text-center space-y-2">
-             <h1 className="text-5xl font-black tracking-tight leading-none drop-shadow-sm">
+             <h1 className="text-5xl font-black tracking-tight leading-none drop-shadow-sm md:text-7xl">
                 {shopInfo?.shopName || 'ติดตามสถานะงาน'}
              </h1>
-             <div className="inline-flex items-center gap-1.5 bg-white/20 px-3 py-1 rounded-full backdrop-blur-md border border-white/10 shadow-sm">
-                <Search className="w-3.5 h-3.5 text-indigo-50" />
-                <p className="text-indigo-50 text-[10px] font-bold tracking-wide opacity-90">ระบบติดตามสถานะ (Tracking Status)</p>
+             <div className="inline-flex items-center gap-1.5 bg-white/20 px-3 py-1 rounded-full backdrop-blur-md border border-white/10 shadow-sm md:px-6 md:py-2 md:mt-2">
+                <Search className="w-3.5 h-3.5 text-indigo-50 md:w-5 md:h-5" />
+                <p className="text-indigo-50 text-[10px] font-bold tracking-wide opacity-90 md:text-sm">ระบบติดตามสถานะ (Tracking Status)</p>
              </div>
           </div>
        </div>
 
-       <div className="max-w-md mx-auto px-4 relative z-10 space-y-3 -mt-6">
+       <div className="max-w-md md:max-w-5xl mx-auto px-4 relative z-10 space-y-3 -mt-6 md:-mt-20 md:space-y-6">
           
           {/* Row 1: Main Card (Name, ID, Status, Image Preview, Timeline) */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-col gap-4 relative overflow-hidden">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col gap-6 relative md:p-8 md:rounded-[2rem] md:shadow-md">
             
-            {/* Top Area: Info (Left) + Small Image Preview (Right) */}
-            <div className="flex justify-between items-start gap-3">
-                <div className="flex flex-col gap-2 min-w-0 flex-1">
-                    {/* Project Name */}
-                    <h3 className="text-lg font-black text-slate-800 leading-tight line-clamp-2">{data.name}</h3>
-                    
-                    {/* ID & Status Badge */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-black text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-md text-xs border border-indigo-100 whitespace-nowrap">
-                            {data.id}
-                        </span>
-                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 truncate ${dealStatusInfo.color}`}>
-                            {data.dealStatus === 'cancelled' ? <AlertCircle className="w-3 h-3"/> : <Activity className="w-3 h-3"/>}
-                            {dealStatusInfo.label}
-                        </span>
-                    </div>
-                </div>
-
-                {/* Right: Small Image Preview */}
-                {data.image && (
-                    <div 
-                        className="w-16 h-16 shrink-0 rounded-xl overflow-hidden border border-slate-100 bg-slate-50 relative group cursor-pointer shadow-sm"
-                        onClick={() => setPreviewImage(data.image)}
-                    >
-                        <img 
-                            src={processImageUrl(data.image)} 
-                            alt="Preview" 
-                            className="w-full h-full object-cover" 
-                        />
-                        {/* Zoom Icon Overlay */}
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                             <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 drop-shadow-sm" />
+            <div className="flex flex-col md:flex-row md:items-start md:gap-8">
+                {/* Top Area: Info (Left) + Small Image Preview (Right) */}
+                <div className="flex justify-between items-start gap-3 md:flex-1">
+                    <div className="flex flex-col gap-2 min-w-0 flex-1">
+                        {/* Project Name */}
+                        <h3 className="text-lg font-black text-slate-800 leading-tight line-clamp-2 md:text-2xl md:mb-1">{data.name}</h3>
+                        
+                        {/* ID & Status Badge - Added gap-y-2 and content-start for safer wrapping */}
+                        <div className="flex items-center gap-2 flex-wrap gap-y-2 content-start">
+                            <span className="font-black text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-md text-xs border border-indigo-100 whitespace-nowrap md:text-sm md:px-3 md:py-1">
+                                {data.id}
+                            </span>
+                            <span className={`px-2 py-1 rounded-md text-[10px] font-bold border flex items-center gap-1 truncate ${dealStatusInfo.color} md:text-xs md:px-3 md:py-1`}>
+                                {data.dealStatus === 'cancelled' ? <AlertCircle className="w-3 h-3 md:w-4 md:h-4"/> : <Activity className="w-3 h-3 md:w-4 md:h-4"/>}
+                                {dealStatusInfo.label}
+                            </span>
                         </div>
                     </div>
-                )}
-            </div>
 
-            <div className="h-px bg-slate-100 w-full" />
-
-            {/* Timeline Section */}
-            <div className="px-1">
-               <div className="flex items-center justify-between relative">
-                    {/* Background Line */}
-                    <div className="absolute left-6 right-6 top-4 h-0.5 bg-slate-100 -z-10 rounded-full"></div>
-
-                    {steps.map((step, idx) => {
-                        const status = getStepStatus(step.id);
-                        let colorClass = 'bg-white text-slate-300 border-2 border-slate-200'; 
-                        if (status === 'completed') colorClass = 'bg-emerald-500 text-white border-emerald-500 shadow-sm shadow-emerald-200';
-                        if (status === 'current') colorClass = 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200 ring-4 ring-indigo-50 scale-110';
-
-                        return (
-                            <div key={step.id} className="flex flex-col items-center gap-2 relative group cursor-default">
-                                <div className={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-500 z-10 ${colorClass}`}>
-                                    <step.icon className="w-4 h-4" strokeWidth={status === 'current' ? 2.5 : 2} />
-                                </div>
-                                <span className={`text-[10px] font-bold absolute -bottom-5 w-20 text-center transition-colors duration-300 ${status === 'current' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}>
-                                    {step.label}
-                                </span>
+                    {/* Right: Small Image Preview */}
+                    {data.image && (
+                        <div 
+                            className="w-16 h-16 shrink-0 rounded-xl overflow-hidden border border-slate-100 bg-slate-50 relative group cursor-pointer shadow-sm md:w-28 md:h-28 md:rounded-2xl"
+                            onClick={() => setPreviewImage(data.image)}
+                        >
+                            <img 
+                                src={processImageUrl(data.image)} 
+                                alt="Preview" 
+                                className="w-full h-full object-cover" 
+                            />
+                            {/* Zoom Icon Overlay */}
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                                 <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 drop-shadow-sm md:w-8 md:h-8" />
                             </div>
-                        );
-                    })}
-               </div>
-               <div className="h-3"></div> {/* Reduced spacer */}
-            </div>
-          </div>
-
-          {/* Row 2: Combined Info Card (Compact 2 Columns) */}
-          <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-2 gap-3">
-             {/* Left Column: General Info */}
-             <div className="flex flex-col gap-2 border-r border-slate-100 pr-2">
-                <div className="flex items-center gap-1.5 text-indigo-500 mb-1">
-                    <User className="w-3.5 h-3.5" />
-                    <span className="text-[10px] font-bold uppercase text-slate-400">ข้อมูลทั่วไป</span>
-                </div>
-                <div>
-                    <p className="text-[9px] text-slate-400">วันที่</p>
-                    <p className="text-xs font-bold text-slate-700 truncate">{formatDate(data.rawDateTime)}</p>
-                </div>
-                <div>
-                    <p className="text-[9px] text-slate-400">ศิลปิน</p>
-                    <p className="text-xs font-bold text-slate-700 truncate">{data.artist}</p>
-                </div>
-                <div>
-                    <p className="text-[9px] text-slate-400">ลูกค้า</p>
-                    <p className="text-xs font-bold text-slate-700 truncate">{data.customer}</p>
-                </div>
-             </div>
-
-             {/* Right Column: Delivery Info */}
-             <div className="flex flex-col gap-2 pl-1">
-                <div className="flex items-center gap-1.5 text-rose-500 mb-1">
-                    <Truck className="w-3.5 h-3.5" />
-                    <span className="text-[10px] font-bold uppercase text-slate-400">จัดส่ง</span>
-                </div>
-                <div>
-                    <p className="text-[9px] text-slate-400">กำหนดส่ง</p>
-                    <div className="text-xs font-bold text-slate-700 truncate">{renderDeliveryTime(data)}</div>
-                </div>
-                <div>
-                    <div className="flex justify-between items-center">
-                        <p className="text-[9px] text-slate-400">สถานที่</p>
-                        {data.mapLink && (
-                            <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-[9px] text-blue-600 font-bold hover:underline">
-                                Map
-                            </a>
-                        )}
-                    </div>
-                    <p className="text-xs font-bold text-slate-700 line-clamp-2 leading-tight">{data.location || '-'}</p>
-                </div>
-                {(data.recipient || data.recipientPhone) && (
-                    <div>
-                        <p className="text-[9px] text-slate-400">ผู้รับ</p>
-                        <p className="text-xs font-bold text-slate-700 truncate">{data.recipient || '-'}</p>
-                        {data.recipientPhone && <a href={`tel:${data.recipientPhone}`} className="text-[10px] text-indigo-600 font-bold block">{data.recipientPhone}</a>}
-                    </div>
-                )}
-             </div>
-          </div>
-
-          {/* Row 3: Shop Contact Card (Compact Redesign) */}
-          {shopInfo && (
-            <div className="bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-200 p-5 relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-2 opacity-10 pointer-events-none">
-                    <StoreIcon className="w-24 h-24 transform rotate-12" />
-                </div>
-                
-                {/* Header of card */}
-                <h3 className="text-sm font-bold uppercase tracking-wider mb-4 flex items-center justify-center gap-2 relative z-10 opacity-90">
-                    <StoreIcon className="w-4 h-4" /> ข้อมูลติดต่อร้าน
-                </h3>
-
-                <div className="flex flex-col gap-4 relative z-10">
-                    {/* Row 1: Phone & Email Buttons (Centered) */}
-                    <div className="flex items-center justify-center gap-3 flex-wrap">
-                        {shopInfo.phone && (
-                            <a href={`tel:${shopInfo.phone}`} className="flex items-center gap-2 bg-white text-indigo-600 px-5 py-2.5 rounded-xl shadow-sm hover:bg-indigo-50 transition active:scale-95">
-                                <Phone className="w-5 h-5" />
-                                <span className="text-base font-bold">{shopInfo.phone}</span>
-                            </a>
-                        )}
-                        {shopInfo.email && (
-                            <a href={`mailto:${shopInfo.email}`} className="flex items-center gap-2 bg-white/10 text-white px-5 py-2.5 rounded-xl border border-white/20 hover:bg-white/20 transition active:scale-95">
-                                <Mail className="w-5 h-5" />
-                                <span className="text-base font-bold">Email</span>
-                            </a>
-                        )}
-                    </div>
-
-                    {/* Row 2: Social Media Buttons (Centered Row) */}
-                    <div className="flex items-center justify-center gap-4">
-                        {shopInfo.line && (
-                            <a href={shopInfo.line} target="_blank" rel="noreferrer" className="w-12 h-12 bg-[#06C755] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20">
-                                <MessageCircle className="w-6 h-6 text-white fill-current" />
-                            </a>
-                        )}
-                        {shopInfo.facebook && (
-                            <a href={shopInfo.facebook} target="_blank" rel="noreferrer" className="w-12 h-12 bg-[#1877F2] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20">
-                                <Facebook className="w-6 h-6 text-white fill-current" />
-                            </a>
-                        )}
-                        {shopInfo.instagram && (
-                            <a href={shopInfo.instagram} target="_blank" rel="noreferrer" className="w-12 h-12 bg-gradient-to-tr from-[#FFDC80] via-[#FD1D1D] to-[#C13584] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20">
-                                <Instagram className="w-6 h-6 text-white" />
-                            </a>
-                        )}
-                        {shopInfo.tiktok && (
-                            <a href={shopInfo.tiktok} target="_blank" rel="noreferrer" className="w-12 h-12 bg-black rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20">
-                                <Music2 className="w-6 h-6 text-white" />
-                            </a>
-                        )}
-                    </div>
-
-                    {/* Row 3: Address (Plain Text, Centered) */}
-                    {shopInfo.address && (
-                        <div className="text-center mt-2 px-4">
-                            <p className="text-xs font-medium text-indigo-50 leading-relaxed">
-                                {shopInfo.address}
-                            </p>
                         </div>
                     )}
                 </div>
-            </div>
-          )}
 
-          <div className="text-center pt-4 pb-8">
-             <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Powered by NexusPlan</p>
+                {/* PC Separator */}
+                <div className="hidden md:block w-px bg-slate-100 self-stretch mx-4"></div>
+
+                <div className="h-px bg-slate-100 w-full md:hidden my-2" />
+
+                {/* Timeline Section - Updated for better mobile layout (Grid based) */}
+                <div className="px-0 md:flex-1 md:flex md:flex-col md:justify-center md:pt-4 w-full">
+                   <div className="relative w-full pt-2 pb-1">
+                        {/* Background Line - Positioned using percentages for better Grid alignment */}
+                        <div className="absolute left-[12.5%] right-[12.5%] top-[26px] h-0.5 bg-slate-100 -z-10 rounded-full md:top-[24px] md:h-1"></div>
+
+                        <div className="grid grid-cols-4 w-full">
+                            {steps.map((step, idx) => {
+                                const status = getStepStatus(step.id);
+                                let colorClass = 'bg-white text-slate-300 border-2 border-slate-200'; 
+                                if (status === 'completed') colorClass = 'bg-emerald-500 text-white border-emerald-500 shadow-sm shadow-emerald-200';
+                                if (status === 'current') colorClass = 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200 ring-4 ring-indigo-50 scale-110';
+
+                                return (
+                                    <div key={step.id} className="flex flex-col items-center gap-3 relative group cursor-default">
+                                        <div className={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-500 z-10 ${colorClass} md:w-12 md:h-12`}>
+                                            <step.icon className="w-4 h-4 md:w-6 md:h-6" strokeWidth={status === 'current' ? 2.5 : 2} />
+                                        </div>
+                                        {/* Label - Adjusted font size for mobile */}
+                                        <span className={`text-[10px] font-bold text-center leading-tight transition-colors duration-300 ${status === 'current' ? 'text-indigo-600 scale-105' : 'text-slate-400'} md:text-xs px-0.5`}>
+                                            {step.label}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                   </div>
+                </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-6">
+              {/* Row 2: Combined Info Card (Compact 2 Columns) */}
+              <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-2 gap-3 md:p-8 md:rounded-[2rem] md:shadow-md md:gap-8">
+                 {/* Left Column: General Info */}
+                 <div className="flex flex-col gap-2 border-r border-slate-100 pr-2 md:gap-4 md:pr-6">
+                    <div className="flex items-center gap-1.5 text-indigo-500 mb-1 md:mb-2">
+                        <User className="w-3.5 h-3.5 md:w-5 md:h-5" />
+                        <span className="text-[10px] font-bold uppercase text-slate-400 md:text-sm">ข้อมูลทั่วไป</span>
+                    </div>
+                    <div>
+                        <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">วันที่</p>
+                        <p className="text-xs font-bold text-slate-700 truncate md:text-base">{formatDate(data.rawDateTime)}</p>
+                    </div>
+                    <div>
+                        <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">ศิลปิน</p>
+                        <p className="text-xs font-bold text-slate-700 truncate md:text-base">{data.artist}</p>
+                    </div>
+                    <div>
+                        <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">ลูกค้า</p>
+                        <p className="text-xs font-bold text-slate-700 truncate md:text-base">{data.customer}</p>
+                    </div>
+                 </div>
+
+                 {/* Right Column: Delivery Info */}
+                 <div className="flex flex-col gap-2 pl-1 md:gap-4 md:pl-4">
+                    <div className="flex items-center gap-1.5 text-rose-500 mb-1 md:mb-2">
+                        <Truck className="w-3.5 h-3.5 md:w-5 md:h-5" />
+                        <span className="text-[10px] font-bold uppercase text-slate-400 md:text-sm">จัดส่ง</span>
+                    </div>
+                    <div>
+                        <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">กำหนดส่ง</p>
+                        <div className="text-xs font-bold text-slate-700 truncate md:text-base">{renderDeliveryTime(data)}</div>
+                    </div>
+                    <div>
+                        <div className="flex justify-between items-center">
+                            <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">สถานที่</p>
+                            {data.mapLink && (
+                                <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-[9px] text-blue-600 font-bold hover:underline md:text-xs">
+                                    Map
+                                </a>
+                            )}
+                        </div>
+                        <p className="text-xs font-bold text-slate-700 line-clamp-2 leading-tight md:text-base">{data.location || '-'}</p>
+                    </div>
+                    {(data.recipient || data.recipientPhone) && (
+                        <div>
+                            <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">ผู้รับ</p>
+                            <p className="text-xs font-bold text-slate-700 truncate md:text-base">{data.recipient || '-'}</p>
+                            {data.recipientPhone && <a href={`tel:${data.recipientPhone}`} className="text-[10px] text-indigo-600 font-bold block md:text-sm">{data.recipientPhone}</a>}
+                        </div>
+                    )}
+                 </div>
+              </div>
+
+              {/* Row 3: Shop Contact Card (Compact Redesign) */}
+              {shopInfo && (
+                <div className="bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-200 p-5 relative overflow-hidden md:p-8 md:rounded-[2rem] md:flex md:flex-col md:justify-center">
+                    <div className="absolute top-0 right-0 p-2 opacity-10 pointer-events-none">
+                        <StoreIcon className="w-24 h-24 transform rotate-12 md:w-48 md:h-48" />
+                    </div>
+                    
+                    {/* Header of card */}
+                    <h3 className="text-sm font-bold uppercase tracking-wider mb-4 flex items-center justify-center gap-2 relative z-10 opacity-90 md:text-lg md:mb-6">
+                        <StoreIcon className="w-4 h-4 md:w-6 md:h-6" /> ข้อมูลติดต่อร้าน
+                    </h3>
+
+                    <div className="flex flex-col gap-4 relative z-10 md:gap-6">
+                        {/* Row 1: Phone & Email Buttons (Centered) */}
+                        <div className="flex items-center justify-center gap-3 flex-wrap">
+                            {shopInfo.phone && (
+                                <a href={`tel:${shopInfo.phone}`} className="flex items-center gap-2 bg-white text-indigo-600 px-5 py-2.5 rounded-xl shadow-sm hover:bg-indigo-50 transition active:scale-95 md:px-8 md:py-3 md:text-lg">
+                                    <Phone className="w-5 h-5 md:w-6 md:h-6" />
+                                    <span className="text-base font-bold md:text-lg">{shopInfo.phone}</span>
+                                </a>
+                            )}
+                            {shopInfo.email && (
+                                <a href={`mailto:${shopInfo.email}`} className="flex items-center gap-2 bg-white/10 text-white px-5 py-2.5 rounded-xl border border-white/20 hover:bg-white/20 transition active:scale-95 md:px-8 md:py-3 md:text-lg">
+                                    <Mail className="w-5 h-5 md:w-6 md:h-6" />
+                                    <span className="text-base font-bold md:text-lg">Email</span>
+                                </a>
+                            )}
+                        </div>
+
+                        {/* Row 2: Social Media Buttons (Centered Row) */}
+                        <div className="flex items-center justify-center gap-4 md:gap-6">
+                            {shopInfo.line && (
+                                <a href={shopInfo.line} target="_blank" rel="noreferrer" className="w-12 h-12 bg-[#06C755] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
+                                    <MessageCircle className="w-6 h-6 text-white fill-current md:w-8 md:h-8" />
+                                </a>
+                            )}
+                            {shopInfo.facebook && (
+                                <a href={shopInfo.facebook} target="_blank" rel="noreferrer" className="w-12 h-12 bg-[#1877F2] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
+                                    <Facebook className="w-6 h-6 text-white fill-current md:w-8 md:h-8" />
+                                </a>
+                            )}
+                            {shopInfo.instagram && (
+                                <a href={shopInfo.instagram} target="_blank" rel="noreferrer" className="w-12 h-12 bg-gradient-to-tr from-[#FFDC80] via-[#FD1D1D] to-[#C13584] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
+                                    <Instagram className="w-6 h-6 text-white md:w-8 md:h-8" />
+                                </a>
+                            )}
+                            {shopInfo.tiktok && (
+                                <a href={shopInfo.tiktok} target="_blank" rel="noreferrer" className="w-12 h-12 bg-black rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
+                                    <Music2 className="w-6 h-6 text-white md:w-8 md:h-8" />
+                                </a>
+                            )}
+                        </div>
+
+                        {/* Row 3: Address (Plain Text, Centered) */}
+                        {shopInfo.address && (
+                            <div className="text-center mt-2 px-4">
+                                <p className="text-xs font-medium text-indigo-50 leading-relaxed md:text-sm md:max-w-lg md:mx-auto">
+                                    {shopInfo.address}
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+              )}
+          </div>
+
+          <div className="text-center pt-4 pb-8 md:col-span-12">
+             <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest md:text-xs">Powered by NexusPlan</p>
           </div>
 
        </div>
@@ -596,6 +874,7 @@ const CustomerTrackingView = ({ data, shopInfo }) => {
 const SharePreviewModal = ({ data, onClose }) => {
   const [isCopied, setIsCopied] = useState(false);
   const [isLinkCopied, setIsLinkCopied] = useState(false); // New state for link copy
+  const [isQuoteLinkCopied, setIsQuoteLinkCopied] = useState(false); // [NEW] state for quote link copy
 
   // คำนวณยอดต่างๆ เพื่อใช้แสดงผล
   const totalSupport = data.customerSupport ? data.customerSupport.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) : 0;
@@ -700,6 +979,35 @@ ${moneyOrderDetails}${quotationDetails}
         }
       } catch (err) {
           console.error('Unable to copy link', err);
+      }
+  };
+
+  // [NEW] Function to copy quotation link
+  const handleCopyQuoteLink = () => {
+      try {
+        const urlObj = new URL(window.location.href);
+        const secureToken = generateTrackingToken(data.id, data.rawDateTime);
+        urlObj.searchParams.delete('tracking');
+        urlObj.searchParams.set('quotation', secureToken);
+        const url = urlObj.toString();
+      
+        const textArea = document.createElement("textarea");
+        textArea.value = url;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        textArea.style.top = "0";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        
+        if (successful) {
+            setIsQuoteLinkCopied(true);
+            setTimeout(() => setIsQuoteLinkCopied(false), 2000);
+        }
+      } catch (err) {
+          console.error('Unable to copy quotation link', err);
       }
   };
 
@@ -914,8 +1222,19 @@ ${moneyOrderDetails}${quotationDetails}
                  className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${isLinkCopied ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                >
                  {isLinkCopied ? <Check className="w-4 h-4" /> : <LinkIcon className="w-4 h-4" />}
-                 {isLinkCopied ? 'คัดลอกลิงก์' : 'คัดลอกลิงก์'}
+                 {isLinkCopied ? 'คัดลอกลิงก์' : 'ลิงก์ติดตามงาน'}
                </button>
+               {/* [NEW] Quotation Link Button */}
+               <button 
+                 onClick={handleCopyQuoteLink}
+                 className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${isQuoteLinkCopied ? 'bg-purple-50 text-purple-600 border border-purple-100' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+               >
+                 {isQuoteLinkCopied ? <Check className="w-4 h-4" /> : <LinkIcon className="w-4 h-4" />}
+                 {isQuoteLinkCopied ? 'คัดลอกลิงก์' : 'ลิงก์เสนอราคา'}
+               </button>
+           </div>
+           
+           <div className="grid grid-cols-2 gap-3">
                <button 
                  onClick={handleCopyText}
                  className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${isCopied ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
@@ -923,14 +1242,14 @@ ${moneyOrderDetails}${quotationDetails}
                  {isCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                  {isCopied ? 'คัดลอกข้อความ' : 'คัดลอกข้อความ'}
                </button>
+               <button 
+                 onClick={handlePrint}
+                 className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2"
+               >
+                 <Printer className="w-4 h-4" />
+                 พิมพ์ / บันทึก PDF
+               </button>
            </div>
-           <button 
-             onClick={handlePrint}
-             className="w-full py-3.5 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2"
-           >
-             <Printer className="w-4 h-4" />
-             พิมพ์ / บันทึก PDF
-           </button>
         </div>
       </div>
     </div>,
@@ -2130,6 +2449,7 @@ const App = () => {
 
   // Tracking State
   const [trackingId, setTrackingId] = useState(null);
+  const [quotationId, setQuotationId] = useState(null); // [NEW] state
 
   useEffect(() => {
     setVisibleCount(20);
@@ -2187,12 +2507,16 @@ const App = () => {
     }
   }, []);
 
-  // Parse URL for tracking ID
+  // Parse URL for tracking ID or Quotation ID
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
     const trackId = searchParams.get('tracking');
+    const quoteId = searchParams.get('quotation');
     if (trackId) {
         setTrackingId(trackId);
+    }
+    if (quoteId) {
+        setQuotationId(quoteId);
     }
   }, []);
 
@@ -2296,10 +2620,10 @@ const App = () => {
   };
 
   useEffect(() => {
-    if (isLoggedIn || trackingId) {
+    if (isLoggedIn || trackingId || quotationId) { // [FIX] Add quotationId condition
         fetchProjects();
     }
-  }, [isLoggedIn, trackingId]);
+  }, [isLoggedIn, trackingId, quotationId]);
 
   const saveSystemSettings = async (key, value) => {
       if (!GOOGLE_SCRIPT_URL) return;
@@ -3706,6 +4030,39 @@ const App = () => {
         return <CustomerTrackingView data={trackData} shopInfo={shopInfo} />;
     }
 
+    // [NEW] Quotation View Logic
+    if (quotationId) {
+        if (isLoading && allActivities.length === 0) {
+            return (
+                <div className="flex flex-col items-center justify-center h-screen w-full bg-slate-50">
+                    <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
+                    <p className="text-slate-500 font-bold text-lg animate-pulse">กำลังโหลดใบเสนอราคา...</p>
+                </div>
+            );
+        }
+        
+        const quoteData = allActivities.find(item => 
+            generateTrackingToken(item.id, item.rawDateTime) === quotationId
+        );
+        
+        if (!quoteData) {
+             return (
+                <div className="flex flex-col items-center justify-center h-screen w-full bg-slate-50 px-4 text-center">
+                    <div className="p-4 bg-slate-200 rounded-full text-slate-500 mb-4">
+                       <FileText className="w-12 h-12" />
+                    </div>
+                    <h2 className="text-2xl font-black text-slate-800 mb-2">ไม่พบข้อมูลใบเสนอราคา</h2>
+                    <p className="text-slate-500 mb-6">รหัสเอกสาร: <span className="font-mono font-bold text-indigo-600 break-all">{quotationId}</span> ไม่ถูกต้อง หรือถูกลบไปแล้ว</p>
+                    <button onClick={() => window.location.search = ''} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-200">
+                        กลับหน้าหลัก
+                    </button>
+                </div>
+             );
+        }
+
+        return <CustomerQuotationView data={quoteData} shopInfo={shopInfo} />;
+    }
+
     // 2. ถ้าไม่มี Tracking ID ก็เข้า Flow ปกติ (Login -> Dashboard)
     if (!isLoggedIn) {
         return <LoginScreen onLogin={handleLogin} isLoading={isLoading} loginError={loginError} />;
@@ -4571,7 +4928,7 @@ const App = () => {
 
       {/* --- Desktop Sidebar --- */}
       {/* Only show sidebar if logged in AND NOT in tracking mode */}
-      {isLoggedIn && !trackingId && (
+      {isLoggedIn && !trackingId && !quotationId && (
         <aside className={`hidden md:flex flex-col ${isSidebarCollapsed ? 'w-20' : 'w-72'} bg-white border-r border-slate-100 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-20 transition-all duration-300 relative`}>
             {/* ... Sidebar Content ... */}
             <button
@@ -4628,7 +4985,7 @@ const App = () => {
 
       {/* --- Mobile Bottom Navigation --- */}
       {/* Only show nav if logged in AND NOT in tracking mode */}
-      {isLoggedIn && !trackingId && (
+      {isLoggedIn && !trackingId && !quotationId && (
         <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-200 z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] safe-area-bottom pb-safe">
             <div className="relative grid grid-cols-5 h-16 items-center">
                 {/* Sliding Background Indicator */}
@@ -4695,7 +5052,7 @@ const App = () => {
 
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
         {/* Only show header if logged in AND NOT in tracking mode */}
-        {isLoggedIn && !trackingId && (
+        {isLoggedIn && !trackingId && !quotationId && (
             <header className="h-20 bg-white/80 backdrop-blur-xl border-b border-slate-100 flex items-center justify-between px-6 sm:px-8 z-10 sticky top-0">
             <div className="flex items-center gap-4">
                 <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
