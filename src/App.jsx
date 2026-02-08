@@ -1243,6 +1243,18 @@ const App = () => {
   // ----------------------------------------
 
   const [activeTab, setActiveTab] = useState('Overview');
+
+  // --- เพิ่มส่วนเปลี่ยนชื่อเว็บตามหน้า (Tab) ---
+  useEffect(() => {
+    const currentTab = navItems.find(item => item.name === activeTab);
+    if (currentTab) {
+      document.title = `${currentTab.label} - ลูกหยีสร้างเองอะค้าบบบบบ`;
+    } else {
+      document.title = "NexusPlan Dashboard";
+    }
+  }, [activeTab]);
+  // ----------------------------------------
+
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [isSaving, setIsSaving] = useState(false); 
 
