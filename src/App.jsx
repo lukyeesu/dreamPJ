@@ -67,15 +67,18 @@ import {
   ChevronUp,
   Loader2,
   Wifi,
-  WifiOff
+  WifiOff,
+  Lock,
+  Eye,
+  EyeOff,
+  LogIn,
+  UserPlus
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
 // นำ Web App URL ที่ได้จากการ Deploy Apps Script มาวางที่นี่
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzVAcljQwrnYwvzZ93d7RDIKpS2ctFDklrcq-HJzOgjFb0gvg1sNhxp3OiuZJ9CTXxX/exec"; 
 // ---------------------
-
-// --- Constants & Helpers ---
 
 const navItems = [
   { name: 'Overview', icon: Home, label: 'ภาพรวมแผนงาน' },
@@ -132,7 +135,232 @@ const renderDeliveryTime = (item) => {
   return <span>{end || item.deliveryDate || '-'}</span>;
 };
 
-// --- Custom Modern Date Time Picker ---
+// --- Custom Components ---
+
+const Toast = ({ message, type, onClose }) => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onClose();
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  const isSuccess = type === 'success';
+
+  return createPortal(
+    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top-2 fade-in duration-300 pointer-events-none">
+       <div className={`pointer-events-auto flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border ${
+         isSuccess ? 'bg-white border-emerald-100 text-slate-800' : 'bg-white border-rose-100 text-slate-800'
+       }`}>
+          <div className={`p-2 rounded-full shrink-0 ${isSuccess ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
+            {isSuccess ? <CheckCircle className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+          </div>
+          <div className="flex flex-col">
+             <span className={`font-bold text-sm ${isSuccess ? 'text-emerald-700' : 'text-rose-700'}`}>
+               {isSuccess ? 'สำเร็จ' : 'แจ้งเตือน'}
+             </span>
+             <span className="text-sm font-medium text-slate-600">{message}</span>
+          </div>
+          <button onClick={onClose} className="ml-2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg transition">
+             <X className="w-4 h-4" />
+          </button>
+       </div>
+    </div>,
+    document.body
+  );
+};
+
+const LoadingOverlay = () => createPortal(
+  <div className="fixed inset-0 z-[100] bg-white/60 backdrop-blur-[2px] flex items-center justify-center animate-in fade-in duration-200">
+     <div className="flex flex-col items-center gap-4 bg-white p-8 rounded-[2rem] shadow-2xl border border-slate-100">
+        <div className="relative">
+           <div className="w-16 h-16 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
+           <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-8 h-8 bg-indigo-50 rounded-full flex items-center justify-center shadow-inner">
+                <Loader2 className="w-4 h-4 text-indigo-600 animate-pulse" />
+              </div>
+           </div>
+        </div>
+        <div className="text-center">
+            <p className="text-slate-800 font-bold text-lg">กำลังประมวลผล</p>
+            <p className="text-slate-500 text-sm">กรุณารอสักครู่...</p>
+        </div>
+     </div>
+  </div>,
+  document.body
+);
+
+// --- Login Screen Component ---
+const LoginScreen = ({ onLogin, isLoading, loginError }) => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onLogin(username, password, rememberMe);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] bg-slate-50 flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-md p-8 rounded-[2.5rem] shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-500">
+        <div className="flex flex-col items-center mb-8">
+          <div className="w-16 h-16 bg-indigo-600 rounded-3xl flex items-center justify-center shadow-lg shadow-indigo-200 mb-4 rotate-3 hover:rotate-6 transition-transform">
+            <Clipboard className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight">ProjectPlan</h1>
+          <p className="text-slate-500 text-sm mt-1">เข้าสู่ระบบเพื่อจัดการแผนงาน</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">ชื่อผู้ใช้งาน</label>
+            <div className="relative">
+              <User className="absolute left-4 top-3.5 w-5 h-5 text-slate-400" />
+              <input
+                type="text"
+                value={username}
+                disabled={isLoading}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium disabled:opacity-50"
+                placeholder="Username"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">รหัสผ่าน</label>
+            <div className="relative">
+              <Lock className="absolute left-4 top-3.5 w-5 h-5 text-slate-400" />
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                disabled={isLoading}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full pl-12 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium disabled:opacity-50"
+                placeholder="••••••••"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-3.5 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 ml-1">
+            <input
+              type="checkbox"
+              id="remember"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+            />
+            <label htmlFor="remember" className="text-sm font-bold text-slate-600 cursor-pointer select-none">
+              จดจำการเข้าสู่ระบบ
+            </label>
+          </div>
+
+          <div className="flex flex-col gap-3">
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full py-3.5 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-200 hover:bg-indigo-700 hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                {isLoading ? (
+                    <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        กำลังตรวจสอบ...
+                    </>
+                ) : (
+                    <>
+                        <LogIn className="w-5 h-5" />
+                        เข้าสู่ระบบ
+                    </>
+                )}
+              </button>
+              
+              {loginError && (
+                  <div className="bg-rose-50 text-rose-600 text-xs font-bold p-3 rounded-xl border border-rose-100 flex items-center gap-2 animate-in slide-in-from-top-1 fade-in">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      {loginError}
+                  </div>
+              )}
+          </div>
+        </form>
+        
+        <div className="mt-6 text-center">
+           <p className="text-xs text-slate-400 bg-slate-50 py-2 px-4 rounded-lg inline-block border border-slate-100">
+             ค่าเริ่มต้น: admin / password1234
+           </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ... (ModernDateTimePicker, ListManager, AdvancedListManager components remain largely the same, but ListManagers need update to save settings) ...
+
+const ViewOnlyField = ({ value, type, icon: Icon }) => {
+    if (!value) {
+        return (
+            <div className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-400 italic text-sm flex items-center gap-2">
+                {Icon && <Icon className="w-4 h-4" />}
+                <span>-</span>
+            </div>
+        );
+    }
+  
+    let content = <span className="text-slate-700 font-medium truncate block">{value}</span>;
+    let Wrapper = 'div';
+    let wrapperProps = { className: "w-full overflow-hidden" }; // Default wrapper props with overflow protection
+  
+    if (type === 'tel') {
+        Wrapper = 'a';
+        wrapperProps = { href: `tel:${value}`, className: "block w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl hover:bg-indigo-50 hover:border-indigo-200 transition-colors cursor-pointer group overflow-hidden" };
+        content = (
+            <div className="flex items-center gap-2 text-indigo-700 font-bold group-hover:text-indigo-800 overflow-hidden">
+               <Phone className="w-4 h-4 shrink-0" />
+               <span className="truncate">{value}</span>
+            </div>
+        );
+    } else if (type === 'email') {
+        Wrapper = 'a';
+        wrapperProps = { href: `mailto:${value}`, className: "block w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl hover:bg-indigo-50 hover:border-indigo-200 transition-colors cursor-pointer group overflow-hidden" };
+        content = (
+            <div className="flex items-center gap-2 text-indigo-700 font-bold group-hover:text-indigo-800 overflow-hidden">
+               <Mail className="w-4 h-4 shrink-0" />
+               <span className="truncate">{value}</span>
+            </div>
+        );
+    } else if (type === 'url') {
+        Wrapper = 'a';
+        wrapperProps = { href: value, target: "_blank", rel: "noreferrer", className: "block w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl hover:bg-blue-50 hover:border-blue-200 transition-colors cursor-pointer group overflow-hidden" };
+        content = (
+            <div className="flex items-center gap-2 text-blue-600 font-bold group-hover:text-blue-700 truncate">
+               <ExternalLink className="w-4 h-4 shrink-0" />
+               <span className="truncate">{value}</span>
+            </div>
+        );
+    } else {
+        // Default view only text
+        return (
+            <div className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 font-medium flex items-center gap-2 overflow-hidden">
+                {Icon && <Icon className="w-4 h-4 text-slate-400 shrink-0" />}
+                <span className="truncate">{value}</span>
+            </div>
+        );
+    }
+  
+    return <Wrapper {...wrapperProps}>{content}</Wrapper>;
+};
+
+// ... (ModernDateTimePicker) ...
 const ModernDateTimePicker = ({ value, onChange, placeholder, hasTime = true, minDate, className, compact = false, disabled = false, pickerType = 'date' }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [viewDate, setViewDate] = useState(new Date());
@@ -263,8 +491,14 @@ const ModernDateTimePicker = ({ value, onChange, placeholder, hasTime = true, mi
     let current = value ? new Date(value) : new Date();
     if (isNaN(current.getTime())) current = new Date();
 
-    if (type === 'hour') current.setHours(parseInt(val) || 0);
-    if (type === 'minute') current.setMinutes(parseInt(val) || 0);
+    if (type === 'timeString') {
+        const [h, m] = val.split(':');
+        current.setHours(parseInt(h) || 0);
+        current.setMinutes(parseInt(m) || 0);
+    } else {
+        if (type === 'hour') current.setHours(parseInt(val) || 0);
+        if (type === 'minute') current.setMinutes(parseInt(val) || 0);
+    }
 
     const offset = current.getTimezoneOffset() * 60000;
     const localISOTime = new Date(current.getTime() - offset).toISOString().slice(0, 16);
@@ -542,29 +776,21 @@ const ModernDateTimePicker = ({ value, onChange, placeholder, hasTime = true, mi
 
            <div className="border-t border-slate-100 pt-3 mt-2 flex flex-col gap-3">
              {hasTime && viewMode === 'days' && pickerType === 'date' && (
-                 <div className="flex items-center gap-2 justify-center">
-                    <Clock className="w-4 h-4 text-slate-400" />
-                    <div className="flex items-center gap-1 bg-slate-50 rounded-lg p-1 border border-slate-200">
+                 <div className="flex flex-col gap-1 w-full">
+                    <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase tracking-wide">เวลา (24 ชม.)</label>
+                    <div className="flex items-center bg-slate-50 rounded-xl px-3 py-2 border border-slate-200 hover:border-indigo-300 transition-all group focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:bg-white">
+                       <Clock className="w-4 h-4 text-slate-400 mr-2 group-focus-within:text-indigo-500 transition-colors" />
                        <input 
-                          type="number" 
-                          min="0" max="23" 
-                          className="w-10 bg-transparent text-center font-bold text-slate-700 outline-none focus:text-indigo-600"
-                          value={value ? new Date(value).getHours().toString().padStart(2, '0') : '00'}
-                          onChange={(e) => handleTimeChange('hour', e.target.value)}
-                       />
-                       <span className="text-slate-400">:</span>
-                       <input 
-                          type="number" 
-                          min="0" max="59" 
-                          className="w-10 bg-transparent text-center font-bold text-slate-700 outline-none focus:text-indigo-600"
-                          value={value ? new Date(value).getMinutes().toString().padStart(2, '0') : '00'}
-                          onChange={(e) => handleTimeChange('minute', e.target.value)}
+                          type="time" 
+                          className="bg-transparent w-full font-bold text-slate-700 outline-none text-base font-mono placeholder:text-slate-300"
+                          value={value ? new Date(value).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }) : '00:00'}
+                          onChange={(e) => handleTimeChange('timeString', e.target.value)}
                        />
                     </div>
                  </div>
              )}
              
-             <div className="flex gap-2 w-full">
+             <div className="flex gap-2 w-full mt-1">
                 <button 
                   onClick={handleClear} 
                   className="flex-1 text-xs font-bold text-slate-500 hover:bg-slate-100 hover:text-rose-500 px-3 py-2 rounded-lg transition-colors"
@@ -586,8 +812,24 @@ const ModernDateTimePicker = ({ value, onChange, placeholder, hasTime = true, mi
   );
 };
 
-const ListManager = ({ title, items, onAdd, onDelete, placeholder, icon: Icon }) => {
+const ListManager = ({ title, items, onAdd, onDelete, placeholder, icon: Icon, onSave }) => {
   const [newItem, setNewItem] = useState('');
+  
+  const handleAdd = () => {
+    if (newItem.trim()) {
+        const newItems = [...items, newItem];
+        onAdd(newItem); // Update local state immediately
+        onSave(newItems); // Trigger save to sheet
+        setNewItem('');
+    }
+  };
+
+  const handleDelete = (index) => {
+      const newItems = items.filter((_, i) => i !== index);
+      onDelete(index); // Update local
+      onSave(newItems); // Trigger save
+  };
+
   return (
     <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col h-full">
       <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold border-b border-slate-100 pb-3">
@@ -604,19 +846,11 @@ const ListManager = ({ title, items, onAdd, onDelete, placeholder, icon: Icon })
           placeholder={placeholder}
           className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && newItem.trim()) {
-              onAdd(newItem);
-              setNewItem('');
-            }
+            if (e.key === 'Enter') handleAdd();
           }}
         />
         <button
-          onClick={() => {
-            if (newItem.trim()) {
-              onAdd(newItem);
-              setNewItem('');
-            }
-          }}
+          onClick={handleAdd}
           className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition"
         >
           <Plus className="w-5 h-5" />
@@ -627,7 +861,7 @@ const ListManager = ({ title, items, onAdd, onDelete, placeholder, icon: Icon })
            <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl group hover:bg-slate-100 transition-colors">
               <span className="text-sm font-medium text-slate-700">{typeof item === 'string' ? item : item.label}</span>
               <button
-                onClick={() => onDelete(idx)}
+                onClick={() => handleDelete(idx)}
                 className="text-slate-300 hover:text-rose-500 transition-colors p-1"
               >
                 <XCircle className="w-4 h-4" />
@@ -640,7 +874,7 @@ const ListManager = ({ title, items, onAdd, onDelete, placeholder, icon: Icon })
   );
 };
 
-const AdvancedListManager = ({ title, items, onUpdate, placeholder, icon: Icon }) => {
+const AdvancedListManager = ({ title, items, onUpdate, placeholder, icon: Icon, onSave }) => {
   const [newItemLabel, setNewItemLabel] = useState('');
   const [selectedColor, setSelectedColor] = useState(colorPresets[0].value);
   const [selectedType, setSelectedType] = useState('pending');
@@ -652,15 +886,15 @@ const AdvancedListManager = ({ title, items, onUpdate, placeholder, icon: Icon }
   const handleAddOrUpdate = () => {
     if (!newItemLabel.trim()) return;
 
+    let updatedItems;
     if (isEditing && editIndex !== null) {
-      const updatedItems = [...items];
+      updatedItems = [...items];
       updatedItems[editIndex] = {
         ...updatedItems[editIndex],
         label: newItemLabel,
         color: selectedColor,
         type: selectedType
       };
-      onUpdate(updatedItems);
       setIsEditing(false);
       setEditIndex(null);
     } else {
@@ -670,8 +904,12 @@ const AdvancedListManager = ({ title, items, onUpdate, placeholder, icon: Icon }
         color: selectedColor,
         type: selectedType
       };
-      onUpdate([...items, newItem]);
+      updatedItems = [...items, newItem];
     }
+    
+    onUpdate(updatedItems);
+    onSave(updatedItems); // Save to sheet
+
     setNewItemLabel('');
     setSelectedColor(colorPresets[0].value);
     setSelectedType('pending');
@@ -697,6 +935,7 @@ const AdvancedListManager = ({ title, items, onUpdate, placeholder, icon: Icon }
     const handleDelete = (index) => {
       const updatedItems = items.filter((_, i) => i !== index);
       onUpdate(updatedItems);
+      onSave(updatedItems); // Save to sheet
       if (isEditing && editIndex === index) {
         cancelEdit();
       }
@@ -721,6 +960,9 @@ const AdvancedListManager = ({ title, items, onUpdate, placeholder, icon: Icon }
   };
 
   const onDragEnd = () => {
+    if (draggedItemIndex !== null) {
+       onSave(items); // Save after drag sort
+    }
     setDraggedItemIndex(null);
   };
 
@@ -872,6 +1114,7 @@ const AdvancedListManager = ({ title, items, onUpdate, placeholder, icon: Icon }
   );
 };
 
+// ... (DateFilterControl and SortableHeader remain the same) ...
 const DateFilterControl = ({ mode, setMode, date, setDate, range, setRange }) => {
   return (
       <div className="flex bg-white border border-slate-200 rounded-2xl overflow-hidden h-full shadow-sm hover:border-indigo-300 transition-colors w-full md:w-auto">
@@ -989,37 +1232,48 @@ const App = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('Overview');
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+  const [isSaving, setIsSaving] = useState(false); 
 
-  const [userProfile, setUserProfile] = useState({
-    name: 'John Smith',
-    role: 'Project Manager',
-    email: 'john.smith@nexusplan.com',
-    phone: '081-234-5678'
-  });
+  // --- เพิ่ม State สำหรับ Infinite Scroll ---
+  const [visibleCount, setVisibleCount] = useState(20);
+  // ----------------------------------------
 
-  const [projectCategories, setProjectCategories] = useState([
-    'คอนเสิร์ต', 'อีเวนต์', 'ถ่ายทำ', 'อื่นๆ'
+  // --- Login State ---
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  // Default authorized users (fallback)
+  const [authorizedUsers, setAuthorizedUsers] = useState([
+    {
+      username: 'admin',
+      password: 'password1234',
+      name: 'Admin User',
+      role: 'System Administrator',
+      email: 'admin@nexusplan.com',
+      phone: '-'
+    },
+    {
+      username: 'john',
+      password: 'password1234', 
+      name: 'John Smith',
+      role: 'Project Manager',
+      email: 'john.smith@nexusplan.com',
+      phone: '081-234-5678'
+    }
   ]);
+  const [loginError, setLoginError] = useState('');
 
-  const [expenseCategories, setExpenseCategories] = useState([
-    'ค่าเดินทาง', 'ค่าที่พัก', 'ค่าอาหาร/เครื่องดื่ม', 'ค่าอุปกรณ์', 'ค่าเช่าสถานที่',
-    'ค่าจ้างทีมงาน', 'ค่าแต่งหน้า/ทำผม', 'ค่าเครื่องแต่งกาย', 'ค่าโฆษณา/PR', 'ค่าประสานงาน', 'เบ็ดเตล็ด'
-  ]);
+  const [userProfile, setUserProfile] = useState(null); // Will set after login
 
-  const [dealStatuses, setDealStatuses] = useState([
-    { value: 'pending', label: 'รอตัดสินใจ', type: 'pending', color: 'bg-amber-50 text-amber-700 border-amber-100' },
-    { value: 'confirmed', label: 'ยืนยันแล้ว', type: 'active', color: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
-    { value: 'declined', label: 'ลูกค้าไม่อนุมัติ', type: 'declined', color: 'bg-gray-50 text-gray-600 border-gray-200' },
-    { value: 'cancelled', label: 'ยกเลิก', type: 'cancelled', color: 'bg-rose-50 text-rose-700 border-rose-100' }
-  ]);
+  // --- New User State for Settings ---
+  const [newUser, setNewUser] = useState({ username: '', password: '', name: '', role: '', email: '', phone: '' });
+  const [isAddingUser, setIsAddingUser] = useState(false);
 
-  const [transportStatuses, setTransportStatuses] = useState([
-    { value: 'pending', label: 'รอดำเนินการจัดส่ง', type: 'pending', color: 'bg-slate-50 text-slate-500 border-slate-200' },
-    { value: 'shipping', label: 'กำลังจัดส่ง', type: 'active', color: 'bg-blue-50 text-blue-700 border-blue-100' },
-    { value: 'delivered', label: 'จัดส่งเรียบร้อย', type: 'completed', color: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
-    { value: 'issue', label: 'มีปัญหา', type: 'cancelled', color: 'bg-rose-50 text-rose-700 border-rose-100' }
-  ]);
+  const [projectCategories, setProjectCategories] = useState([]);
+  const [expenseCategories, setExpenseCategories] = useState([]);
+  const [dealStatuses, setDealStatuses] = useState([]);
+  const [transportStatuses, setTransportStatuses] = useState([]);
 
+  // ... (Other state variables remain the same) ...
   const [isScrolled, setIsScrolled] = useState(false);
   const mainRef = useRef(null);
   const tabScrollPositions = useRef({});
@@ -1046,16 +1300,16 @@ const App = () => {
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterTransport, setFilterTransport] = useState('all');
 
-  const [savedArtists, setSavedArtists] = useState(['Bodyslam', 'Three Man Down', 'Tilly Birds', 'Bowkylion', 'Ink Waruntorn']);
-  const [savedCustomers, setSavedCustomers] = useState([
-    { name: 'บริษัท จีเอ็มเอ็ม แกรมมี่ จำกัด', social: 'GMM Grammy', line: '@gmm', phone: '02-669-9000', email: 'contact@gmmgrammy.com' },
-    { name: 'คุณสมชาย ใจดี', social: 'Somchai.J', line: 'somchai88', phone: '081-111-2222', email: 'somchai@email.com' },
-    { name: 'The Mall Group', social: 'The Mall', line: '@themall', phone: '02-310-1000', email: 'event@themall.com' }
-  ]);
-  const [savedRecipients, setSavedRecipients] = useState([
-    { name: 'คุณวิชัย (คลังสินค้า)', phone: '089-999-8888' },
-    { name: 'คุณอารี (หน้างาน)', phone: '081-234-5678' }
-  ]);
+  // --- เพิ่ม useEffect สำหรับรีเซ็ตจำนวนการแสดงผลเมื่อเปลี่ยน Filter หรือ Tab ---
+  useEffect(() => {
+    setVisibleCount(20);
+  }, [activeTab, searchTerm, dateFilterMode, filterDate, filterDateRange, filterCategory, filterStatus, filterTransport, sortConfig]);
+  // -------------------------------------------------------------------------
+
+  // Autocomplete Data
+  const [savedArtists, setSavedArtists] = useState([]);
+  const [savedCustomers, setSavedCustomers] = useState([]);
+  const [savedRecipients, setSavedRecipients] = useState([]);
 
   const [currentId, setCurrentId] = useState('');
   const [projectName, setProjectName] = useState('');
@@ -1067,7 +1321,7 @@ const App = () => {
   const [customerLine, setCustomerLine] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
-  const [projectCategory, setProjectCategory] = useState(projectCategories[0]);
+  const [projectCategory, setProjectCategory] = useState('');
 
   const [deliveryStart, setDeliveryStart] = useState('');
   const [deliveryEnd, setDeliveryEnd] = useState('');
@@ -1080,42 +1334,259 @@ const App = () => {
   const [note, setNote] = useState('');
 
   const [wage, setWage] = useState(0);
-  const [transportStatus, setTransportStatus] = useState(transportStatuses[0].value);
-  const [dealStatus, setDealStatus] = useState(dealStatuses[0].value);
+  const [transportStatus, setTransportStatus] = useState('');
+  const [dealStatus, setDealStatus] = useState('');
   
   const [expenses, setExpenses] = useState([{ category: '', detail: '', price: 0 }]);
   const [customerSupportItems, setCustomerSupportItems] = useState([{ detail: '', price: 0 }]);
   
-  // State for data from API
   const [allActivities, setAllActivities] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // --- API Fetching Logic ---
+  // --- Auth Check on Mount ---
+  useEffect(() => {
+    const auth = localStorage.getItem('nexus_auth');
+    const savedProfile = localStorage.getItem('nexus_profile');
+    if (auth && savedProfile) {
+        setIsLoggedIn(true);
+        setUserProfile(JSON.parse(savedProfile));
+    }
+  }, []);
+
+  // --- Fetch Logic ---
+  const fetchSettings = async () => {
+    if (!GOOGLE_SCRIPT_URL) return;
+    try {
+        const response = await fetch(GOOGLE_SCRIPT_URL, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'getSettings' })
+        });
+        const result = await response.json();
+        if (result.status === 'success' && result.data) {
+            const data = result.data;
+            if (data.project_categories) setProjectCategories(data.project_categories);
+            if (data.expense_categories) setExpenseCategories(data.expense_categories);
+            if (data.deal_statuses) setDealStatuses(data.deal_statuses);
+            if (data.transport_statuses) setTransportStatuses(data.transport_statuses);
+            
+            // Handle App Credentials (can be object or array)
+            if (data.app_credentials) {
+                let creds = data.app_credentials;
+                // If legacy single object format, convert to array with default admin profile
+                if (!Array.isArray(creds)) {
+                    creds = [{
+                        username: creds.username,
+                        password: creds.password,
+                        name: 'Admin',
+                        role: 'Administrator',
+                        email: 'admin@nexusplan.com',
+                        phone: '-'
+                    }];
+                }
+                setAuthorizedUsers(creds);
+            }
+        }
+    } catch (error) {
+        console.error("Error fetching settings:", error);
+    }
+  };
+
+  // เพิ่ม: ดึงค่าการตั้งค่า (รวมถึงรายชื่อ User) ทันทีที่เปิดหน้าเว็บ
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
   const fetchProjects = async () => {
     if (!GOOGLE_SCRIPT_URL) return;
     setIsLoading(true);
     try {
-      const response = await fetch(GOOGLE_SCRIPT_URL);
+      // Fetch both projects and settings
+      const response = await fetch(GOOGLE_SCRIPT_URL, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'read' })
+      });
       const result = await response.json();
+      
       if (result.status === 'success') {
-        setAllActivities(result.data);
+        // Fix for duplicate keys: Deduplicate items by ID
+        const uniqueItems = Array.from(
+            result.data.reduce((map, item) => {
+                if (item.id) map.set(item.id, item);
+                return map;
+            }, new Map()).values()
+        );
+
+        setAllActivities(uniqueItems);
+        
+        // --- Process Autocomplete Data ---
+        // Extract unique artists
+        const artists = [...new Set(uniqueItems.map(item => item.artist).filter(Boolean))].sort();
+        setSavedArtists(artists);
+
+        // Extract unique customers
+        const customersMap = new Map();
+        uniqueItems.forEach(item => {
+            if (item.customer && !customersMap.has(item.customer)) {
+                customersMap.set(item.customer, {
+                    name: item.customer,
+                    social: item.customerInfo?.social || '',
+                    line: item.customerInfo?.line || '',
+                    phone: item.customerInfo?.phone || '',
+                    email: item.customerInfo?.email || ''
+                });
+            }
+        });
+        setSavedCustomers(Array.from(customersMap.values()));
+
+        // Extract unique recipients
+        const recipientsMap = new Map();
+        uniqueItems.forEach(item => {
+            if (item.recipient && !recipientsMap.has(item.recipient)) {
+                recipientsMap.set(item.recipient, {
+                    name: item.recipient,
+                    phone: item.recipientPhone || ''
+                });
+            }
+        });
+        setSavedRecipients(Array.from(recipientsMap.values()));
       }
+      
+      // Fetch settings in parallel
+      await fetchSettings();
+
     } catch (error) {
       console.error("Error fetching data:", error);
+      showToast("ไม่สามารถโหลดข้อมูลได้", "error");
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchProjects();
-  }, []);
+    if (isLoggedIn) {
+        fetchProjects();
+    }
+  }, [isLoggedIn]);
+
+  // --- Save Settings Logic ---
+  const saveSystemSettings = async (key, value) => {
+      if (!GOOGLE_SCRIPT_URL) return;
+      try {
+          await fetch(GOOGLE_SCRIPT_URL, {
+              method: 'POST',
+              body: JSON.stringify({
+                  action: 'saveSettings',
+                  data: { [key]: value }
+              })
+          });
+          // Also update local state for users immediately if that's what we saved
+          if (key === 'app_credentials') {
+              setAuthorizedUsers(value);
+          }
+      } catch (error) {
+          console.error("Error saving settings:", error);
+          showToast("บันทึกการตั้งค่าไม่สำเร็จ", "error");
+      }
+  };
+
+  // --- User Management Logic ---
+  const handleAddUser = () => {
+      if (!newUser.username || !newUser.password || !newUser.name) {
+          showToast("กรุณากรอก Username, Password และชื่อ", "error");
+          return;
+      }
+      // Check duplicate username
+      if (authorizedUsers.some(u => u.username.toLowerCase() === newUser.username.toLowerCase())) {
+          showToast("ชื่อผู้ใช้นี้มีอยู่แล้ว", "error");
+          return;
+      }
+
+      const updatedUsers = [...authorizedUsers, newUser];
+      saveSystemSettings('app_credentials', updatedUsers);
+      setAuthorizedUsers(updatedUsers);
+      setNewUser({ username: '', password: '', name: '', role: '', email: '', phone: '' });
+      setIsAddingUser(false);
+      showToast("เพิ่มผู้ใช้งานเรียบร้อยแล้ว");
+  };
+
+  const handleDeleteUser = (usernameToDelete) => {
+      if (authorizedUsers.length <= 1) {
+          showToast("ไม่สามารถลบผู้ใช้งานคนสุดท้ายได้", "error");
+          return;
+      }
+      if (usernameToDelete === userProfile?.username) { // Prevent self-delete safety check (optional)
+         // Allow for now but warn
+      }
+      
+      const updatedUsers = authorizedUsers.filter(u => u.username !== usernameToDelete);
+      saveSystemSettings('app_credentials', updatedUsers);
+      setAuthorizedUsers(updatedUsers);
+      showToast("ลบผู้ใช้งานเรียบร้อยแล้ว");
+  };
+
+  // --- Login Handler ---
+  const handleLogin = (user, pass, remember) => {
+      setIsLoading(true);
+      setLoginError('');
+      
+      // Simulate network delay for UX
+      setTimeout(() => {
+          // Find matching user
+          const foundUser = authorizedUsers.find(u => 
+              u.username.toLowerCase() === user.toLowerCase() && u.password === pass
+          );
+
+          if (foundUser) {
+              setIsLoggedIn(true);
+              setUserProfile({
+                  name: foundUser.name,
+                  role: foundUser.role,
+                  email: foundUser.email,
+                  phone: foundUser.phone,
+                  username: foundUser.username // Store username for reference
+              });
+
+              if (remember) {
+                  localStorage.setItem('nexus_auth', 'true');
+                  localStorage.setItem('nexus_profile', JSON.stringify({
+                      name: foundUser.name,
+                      role: foundUser.role,
+                      email: foundUser.email,
+                      phone: foundUser.phone,
+                      username: foundUser.username
+                  }));
+              }
+              showToast(`ยินดีต้อนรับคุณ ${foundUser.name}`, "success");
+          } else {
+              setLoginError("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง");
+              showToast("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง", "error");
+          }
+          setIsLoading(false);
+      }, 1000);
+  };
+
+  const handleLogout = () => {
+      setIsLoggedIn(false);
+      setUserProfile(null);
+      localStorage.removeItem('nexus_auth');
+      localStorage.removeItem('nexus_profile');
+      showToast("ออกจากระบบแล้ว");
+  };
+
+  const showToast = (message, type = 'success') => {
+    setToast({ show: true, message, type });
+  };
+
+  const closeToast = () => {
+    setToast({ ...toast, show: false });
+  };
 
   const getPageTitle = (tabName) => {
     const tab = navItems.find(t => t.name === tabName);
-    return tab ? tab.label : 'NexusPlan';
+    return tab ? tab.label : 'ProjectPlan';
   };
 
+  // ... (calculations and helpers remain same) ...
   const totalExpenses = expenses.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0);
   const profit = (parseFloat(wage) || 0) - totalExpenses;
   const totalSupport = customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0);
@@ -1137,9 +1608,22 @@ const App = () => {
   };
   
   const handleScroll = (e) => {
-    const scrollTop = e.target.scrollTop;
+    const { scrollTop, scrollHeight, clientHeight } = e.target;
     tabScrollPositions.current[activeTab] = scrollTop;
     setIsScrolled(scrollTop > 0);
+
+    // --- ส่วนที่แก้ไข: Infinite Scroll Logic ---
+    // ทำงานเฉพาะในหน้าที่แสดงรายการทั้งหมด (Plans หรือ Analytics)
+    if (activeTab === 'Plans' || activeTab === 'Analytics') {
+      // ตรวจสอบว่าเลื่อนลงมาเกือบสุดหรือยัง (เหลือพื้นที่ 100px)
+      if (scrollTop + clientHeight >= scrollHeight - 100) {
+        // ถ้าจำนวนที่แสดงอยู่ น้อยกว่า จำนวนทั้งหมด ให้โหลดเพิ่ม
+        if (visibleCount < filteredAndSortedActivities.length) {
+           setVisibleCount(prev => prev + 15);
+        }
+      }
+    }
+    // -------------------------------------------
   };
 
   useEffect(() => {
@@ -1367,7 +1851,7 @@ const App = () => {
       setTransportStatus(activity.transportStatus);
     } else {
       setEditingId(null);
-      let nextIdNumber = 1000;
+      let nextIdNumber = 1; // เริ่มต้นที่ 1
       if (allActivities.length > 0) {
         const ids = allActivities.map(item => {
           const match = item.id.match(/\d+/); 
@@ -1376,9 +1860,10 @@ const App = () => {
         const maxId = Math.max(...ids);
         if (maxId > 0) nextIdNumber = maxId + 1;
       }
-      setCurrentId(`P-${nextIdNumber}`);
+      // จัดรูปแบบเป็น P-0001
+      setCurrentId(`P-${String(nextIdNumber).padStart(4, '0')}`);
       setProjectName('');
-      setProjectCategory(projectCategories[0]); 
+      setProjectCategory(projectCategories[0] || ''); // Use first category if available or empty string
       const now = new Date();
       const localIsoString = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
       setProjectDateTime(localIsoString);
@@ -1398,17 +1883,16 @@ const App = () => {
       setWage(0);
       setExpenses([{ category: '', detail: '', price: 0 }]);
       setCustomerSupportItems([{ detail: '', price: 0 }]);
-      setDealStatus(dealStatuses[0].value); 
-      setTransportStatus(transportStatuses[0].value);
+      setDealStatus(dealStatuses.length > 0 ? dealStatuses[0].value : ''); 
+      setTransportStatus(transportStatuses.length > 0 ? transportStatuses[0].value : '');
     }
     setIsAddModalOpen(true);
   };
 
   const handleSaveProject = async () => {
-    setIsLoading(true);
-    if (artistName && !savedArtists.includes(artistName)) {
-      setSavedArtists([...savedArtists, artistName]);
-    }
+    setIsSaving(true); 
+    // Autocomplete list update is now handled in fetchProjects response logic
+    
     if (customerName) {
       const newCustomerData = {
         name: customerName,
@@ -1417,24 +1901,10 @@ const App = () => {
         phone: customerPhone,
         email: customerEmail
       };
+      // Optimistic Update
       const existingCustomerIndex = savedCustomers.findIndex(c => c.name === customerName);
       if (existingCustomerIndex === -1) {
         setSavedCustomers([...savedCustomers, newCustomerData]);
-      } else {
-        const updatedCustomers = [...savedCustomers];
-        updatedCustomers[existingCustomerIndex] = newCustomerData;
-        setSavedCustomers(updatedCustomers);
-      }
-    }
-    if (recipientName) {
-      const newRecipientData = { name: recipientName, phone: recipientPhone };
-      const existingRecipientIndex = savedRecipients.findIndex(r => r.name === recipientName);
-      if (existingRecipientIndex === -1) {
-        setSavedRecipients([...savedRecipients, newRecipientData]);
-      } else {
-        const updatedRecipients = [...savedRecipients];
-        updatedRecipients[existingRecipientIndex] = newRecipientData;
-        setSavedRecipients(updatedRecipients);
       }
     }
 
@@ -1481,13 +1951,32 @@ const App = () => {
         });
         const result = await response.json();
         if (result.status === 'success') {
-          await fetchProjects();
+          // --- แก้ไขตรงนี้: อัปเดตข้อมูลหน้าจอทันที ไม่ต้องรอโหลดใหม่ ---
+          
+          // 1. อัปเดต State ภายในเครื่องทันที (Optimistic Update)
+          setAllActivities(prev => {
+             const exists = prev.some(item => item.id === activityData.id);
+             if (exists) {
+                 return prev.map(item => item.id === activityData.id ? activityData : item);
+             } else {
+                 return [activityData, ...prev];
+             }
+          });
+
+          // 2. ปิด Loading และ Modal ทันทีเพื่อให้ผู้ใช้รู้สึกเร็ว
+          setIsSaving(false);
           closeModal();
+          showToast("บันทึกข้อมูลสำเร็จเรียบร้อย", 'success');
+
+          // 3. โหลดข้อมูลล่าสุดจาก Server แบบ Background (ผู้ใช้ไม่ต้องรอหมุน)
+          fetchProjects(); 
+          return;
+          // -------------------------------------------------------
         } else {
-          alert("Error saving: " + result.message);
+          showToast("ไม่สามารถบันทึกข้อมูลได้: " + result.message, 'error');
         }
       } catch (error) {
-        alert("Network error: " + error.message);
+        showToast("เกิดข้อผิดพลาดในการเชื่อมต่อ: " + error.message, 'error');
       }
     } else {
       // Fallback for no API
@@ -1497,8 +1986,9 @@ const App = () => {
         setAllActivities([activityData, ...allActivities]);
       }
       closeModal();
+      showToast("บันทึกข้อมูลสำเร็จ (โหมดออฟไลน์)", 'success');
     }
-    setIsLoading(false);
+    setIsSaving(false); // ปิด Overlay
   };
 
   const handleDeleteProject = () => {
@@ -1514,7 +2004,7 @@ const App = () => {
 
   const executeDelete = async () => {
     if (deleteConfirm.id) {
-      setIsLoading(true);
+      setIsSaving(true); // แสดง Overlay ขณะลบ
       if (GOOGLE_SCRIPT_URL) {
          try {
            const response = await fetch(GOOGLE_SCRIPT_URL, {
@@ -1524,21 +2014,23 @@ const App = () => {
            const result = await response.json();
            if (result.status === 'success') {
              await fetchProjects();
+             showToast("ลบข้อมูลเรียบร้อยแล้ว", 'success');
            } else {
-             alert("Error deleting: " + result.message);
+             showToast("เกิดข้อผิดพลาดในการลบ: " + result.message, 'error');
            }
          } catch(error) {
-            alert("Network error: " + error.message);
+            showToast("เกิดข้อผิดพลาดในการเชื่อมต่อ: " + error.message, 'error');
          }
       } else {
         setAllActivities(allActivities.filter(item => item.id !== deleteConfirm.id));
+        showToast("ลบข้อมูลเรียบร้อยแล้ว (โหมดออฟไลน์)", 'success');
       }
       
       closeDeleteModal();
       if (deleteConfirm.fromModal) {
         closeModal();
       }
-      setIsLoading(false);
+      setIsSaving(false); // ปิด Overlay
     }
   };
 
@@ -1577,6 +2069,7 @@ const App = () => {
     setCustomerSupportItems(newItems);
   };
 
+  // ... (DonutChart, renderTable, renderFilterCard remain same) ...
   const DonutChart = ({ data }) => {
     return (
        <div className="flex flex-col gap-4">
@@ -1607,7 +2100,13 @@ const App = () => {
 
   const renderTable = (limit = 0, customData = null) => {
     const sourceData = limit > 0 ? (customData || sortedActivitiesForOverview) : (customData || filteredAndSortedActivities);
-    const items = limit > 0 ? sourceData.slice(0, limit) : sourceData;
+    
+    // --- ส่วนที่แก้ไข: การตัดข้อมูลตาม visibleCount ---
+    // ถ้า limit > 0 (เช่นในหน้า Overview ที่ระบุ 5) ให้ใช้ limit
+    // ถ้า limit == 0 (หน้า Plans/Analytics) ให้ใช้ visibleCount เพื่อทำ Infinite Scroll
+    const displayLimit = limit > 0 ? limit : visibleCount;
+    const items = sourceData.slice(0, displayLimit);
+    // ------------------------------------------------
 
     return (
       <div className="w-full">
@@ -1832,10 +2331,14 @@ const App = () => {
                       <div className="flex flex-col gap-1 min-w-[140px]">
                         <div className="text-sm font-medium text-slate-700">{item.recipient || '-'}</div>
                         {item.recipientPhone && (
-                          <div className="flex items-center gap-1 text-xs text-slate-500">
+                          <a 
+                            href={`tel:${item.recipientPhone}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex items-center gap-1 text-xs text-slate-500 hover:text-indigo-600 hover:underline transition-colors w-fit"
+                          >
                             <Phone className="w-3 h-3" />
                             {item.recipientPhone}
-                          </div>
+                          </a>
                         )}
                       </div>
                     </td>
@@ -2103,8 +2606,13 @@ const App = () => {
   );
 
   const renderContent = () => {
-    // --- Loading State Display ---
-    if (isLoading) {
+    // --- If not logged in, show login screen ---
+    if (!isLoggedIn) {
+        return <LoginScreen onLogin={handleLogin} isLoading={isLoading} loginError={loginError} />;
+    }
+
+    // --- Loading State Display (Now handled by LoadingOverlay, but keep basic check for initial load) ---
+    if (isLoading && allActivities.length === 0) {
       return (
         <div className="flex flex-col items-center justify-center h-[calc(100vh-80px)] w-full">
             <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
@@ -2133,7 +2641,7 @@ const App = () => {
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 px-4 sm:px-8 lg:px-10 pt-6 pb-24 md:pb-6">
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
               <div>
-                <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">สวัสดี, John</h2>
+                <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">สวัสดี, {userProfile?.name?.split(' ')[0] || 'User'}</h2>
                 <p className="text-slate-500 mt-2 text-base font-medium">สรุปสถานะโครงการประจำวันที่ {new Date().toLocaleDateString('th-TH')}</p>
               </div>
             </div>
@@ -2283,54 +2791,6 @@ const App = () => {
                      Margin: {currentRevenue > 0 ? ((currentProfit/currentRevenue)*100).toFixed(1) : 0}%
                    </p>
                 </div>
-             </div>
-             <div className="px-4 sm:px-8 lg:px-10">
-               <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
-                 <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 divide-x-0 divide-y md:divide-y-0 md:divide-x divide-slate-100">
-                    <div className="p-6 flex flex-col items-center justify-center text-center group hover:bg-slate-50 transition-colors">
-                       <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl mb-3 group-hover:scale-110 transition-transform">
-                          <Folder className="w-6 h-6"/>
-                       </div>
-                       <p className="text-3xl font-black text-slate-800">{totalProjects}</p>
-                       <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mt-1">โครงการทั้งหมด</p>
-                    </div>
-                    <div className="p-6 flex flex-col items-center justify-center text-center group hover:bg-emerald-50/50 transition-colors">
-                       <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl mb-3 group-hover:scale-110 transition-transform">
-                          <CheckCircle className="w-6 h-6"/>
-                       </div>
-                       <p className="text-3xl font-black text-emerald-700">{completedProjects}</p>
-                       <p className="text-xs font-bold text-emerald-500 uppercase tracking-wide mt-1">งานเสร็จสิ้น</p>
-                    </div>
-                    <div className="p-6 flex flex-col items-center justify-center text-center group hover:bg-blue-50/50 transition-colors">
-                       <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl mb-3 group-hover:scale-110 transition-transform">
-                          <Clock className="w-6 h-6"/>
-                       </div>
-                       <p className="text-3xl font-black text-blue-700">{activeProjects}</p>
-                       <p className="text-xs font-bold text-blue-500 uppercase tracking-wide mt-1">กำลังดำเนินการ</p>
-                    </div>
-                    <div className="p-6 flex flex-col items-center justify-center text-center group hover:bg-amber-50/50 transition-colors">
-                       <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl mb-3 group-hover:scale-110 transition-transform">
-                          <Hourglass className="w-6 h-6"/>
-                       </div>
-                       <p className="text-3xl font-black text-amber-700">{pendingProjects}</p>
-                       <p className="text-xs font-bold text-amber-500 uppercase tracking-wide mt-1">รอดำเนินการ</p>
-                    </div>
-                    <div className="p-6 flex flex-col items-center justify-center text-center group hover:bg-rose-50/50 transition-colors">
-                       <div className="p-3 bg-rose-50 text-rose-600 rounded-2xl mb-3 group-hover:scale-110 transition-transform">
-                          <AlertCircle className="w-6 h-6"/>
-                       </div>
-                       <p className="text-3xl font-black text-rose-700">{issueProjects}</p>
-                       <p className="text-xs font-bold text-rose-500 uppercase tracking-wide mt-1">ยกเลิก/มีปัญหา</p>
-                    </div>
-                    <div className="p-6 flex flex-col items-center justify-center text-center group hover:bg-gray-50/50 transition-colors">
-                       <div className="p-3 bg-gray-50 text-gray-600 rounded-2xl mb-3 group-hover:scale-110 transition-transform">
-                          <ThumbsDown className="w-6 h-6"/>
-                       </div>
-                       <p className="text-3xl font-black text-gray-700">{declinedProjects}</p>
-                       <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mt-1">ลูกค้าไม่อนุมัติ</p>
-                    </div>
-                 </div>
-               </div>
              </div>
              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 px-4 sm:px-8 lg:px-10">
                 <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col max-h-[400px]">
@@ -2497,49 +2957,174 @@ const App = () => {
           <div className="space-y-8 animate-in fade-in duration-500 px-4 sm:px-8 lg:px-10 pt-6 pb-24 md:pb-6">
             <div className="max-w-4xl mx-auto">
               <h2 className="text-3xl font-extrabold text-slate-900 mb-6">ตั้งค่าระบบ</h2>
+              {/* ... User Profile Card (Dynamic) ... */}
               <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden mb-8">
-                <div className="h-40 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 relative">
+                {/* ... Profile Cover ... */}
+                <div className="h-48 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 relative">
                   <div className="absolute right-6 top-6">
                      <button className="p-2 bg-white/20 backdrop-blur-md text-white rounded-xl hover:bg-white/30 transition shadow-sm">
                         <Camera className="w-5 h-5" />
                      </button>
                   </div>
                 </div>
-                <div className="px-8 pb-10">
-                   <div className="relative flex flex-col sm:flex-row sm:items-end -mt-12 mb-8 gap-4">
-                      <div className="relative">
-                         <div className="w-32 h-32 bg-white p-1.5 rounded-full shadow-xl">
-                            <div className="w-full h-full bg-slate-100 text-slate-600 rounded-full flex items-center justify-center text-4xl font-black border border-slate-100 overflow-hidden">
-                               {userProfile.name.charAt(0)}
+                <div className="px-8 pb-8">
+                   <div className="flex flex-col items-center sm:items-start relative">
+                      {/* Avatar - Positioned to overlap banner cleanly */}
+                      <div className="-mt-16 mb-6 relative z-10">
+                         <div className="w-32 h-32 bg-white p-1.5 rounded-full shadow-2xl ring-4 ring-white/50">
+                            <div className="w-full h-full bg-slate-100 text-slate-600 rounded-full flex items-center justify-center text-4xl font-black border border-slate-200 overflow-hidden">
+                               {userProfile?.name?.charAt(0) || 'U'}
                             </div>
                          </div>
-                         <button className="absolute bottom-1 right-1 p-2 bg-slate-800 text-white rounded-full border-4 border-white shadow-sm hover:bg-slate-700 transition">
-                            <Edit className="w-3.5 h-3.5" />
-                         </button>
                       </div>
-                      <div className="mb-2 text-center sm:text-left">
-                         <h3 className="text-2xl font-black text-slate-900">{userProfile.name}</h3>
-                         <p className="text-slate-500 font-medium">{userProfile.role}</p>
-                      </div>
-                   </div>
-                   <div className="space-y-8">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-                          <div className="space-y-2">
-                             <label className="text-sm font-bold text-slate-700 ml-1">ชื่อ-นามสกุล</label>
-                             <div className="relative">
-                                <User className="absolute left-4 top-3.5 w-5 h-5 text-slate-400" />
-                                <input
-                                    type="text"
-                                    value={userProfile.name}
-                                    onChange={(e) => setUserProfile({...userProfile, name: e.target.value})}
-                                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium text-slate-800"
-                                />
-                             </div>
-                          </div>
+                      
+                      {/* User Info - Content Below Banner */}
+                      <div className="w-full">
+                         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6">
+                            <div className="text-center sm:text-left">
+                               <h3 className="text-3xl font-black text-slate-900 tracking-tight mb-1">{userProfile?.name || 'Guest'}</h3>
+                               <p className="text-lg text-slate-500 font-medium">{userProfile?.role || 'No Role'}</p>
+                            </div>
+
+                            <div className="flex flex-col sm:items-end gap-2 w-full sm:w-auto">
+                               {userProfile?.email && (
+                                   <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100 w-full sm:w-auto">
+                                       <div className="p-2 bg-white rounded-xl shadow-sm text-indigo-500">
+                                          <Mail className="w-4 h-4" />
+                                       </div>
+                                       <span className="text-sm font-bold text-slate-600 pr-2">{userProfile.email}</span>
+                                   </div>
+                               )}
+                               {userProfile?.phone && (
+                                   <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100 w-full sm:w-auto">
+                                       <div className="p-2 bg-white rounded-xl shadow-sm text-emerald-500">
+                                          <Phone className="w-4 h-4" />
+                                       </div>
+                                       <span className="text-sm font-bold text-slate-600 pr-2">{userProfile.phone}</span>
+                                   </div>
+                               )}
+                            </div>
+                         </div>
                       </div>
                    </div>
                 </div>
               </div>
+
+              {/* User Management Section */}
+              <div className="mb-8">
+                  <h3 className="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
+                      <Users className="w-5 h-5 text-indigo-600" />
+                      จัดการผู้ใช้งาน (User Management)
+                  </h3>
+                  <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                      <div className="space-y-4">
+                          {authorizedUsers.map((user, idx) => (
+                              <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 gap-4">
+                                  <div className="flex items-center gap-4">
+                                      <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-700 font-bold border border-slate-200 shadow-sm shrink-0">
+                                          {user.name.charAt(0)}
+                                      </div>
+                                      <div>
+                                          <div className="font-bold text-slate-800 flex items-center gap-2">
+                                              {user.username}
+                                              <span className="text-xs font-normal text-slate-400 bg-white px-2 py-0.5 rounded-md border border-slate-100">
+                                                  {user.role}
+                                              </span>
+                                          </div>
+                                          <div className="text-sm text-slate-500">{user.name}</div>
+                                      </div>
+                                  </div>
+                                  <div className="flex items-center gap-2 self-end sm:self-auto">
+                                      <button 
+                                          onClick={() => handleDeleteUser(user.username)}
+                                          className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition"
+                                          title="ลบผู้ใช้"
+                                          disabled={authorizedUsers.length <= 1}
+                                      >
+                                          <Trash2 className="w-4 h-4" />
+                                      </button>
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
+
+                      {/* Add User Form */}
+                      <div className="mt-6 pt-6 border-t border-slate-100">
+                          {!isAddingUser ? (
+                              <button 
+                                  onClick={() => setIsAddingUser(true)}
+                                  className="w-full py-3 bg-indigo-50 text-indigo-600 font-bold rounded-xl hover:bg-indigo-100 transition flex items-center justify-center gap-2 border border-indigo-100"
+                              >
+                                  <UserPlus className="w-5 h-5" />
+                                  เพิ่มผู้ใช้งานใหม่
+                              </button>
+                          ) : (
+                              <div className="bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100 animate-in fade-in slide-in-from-top-2">
+                                  <h4 className="font-bold text-indigo-900 mb-4">เพิ่มผู้ใช้งานใหม่</h4>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                                      <input 
+                                          type="text" 
+                                          placeholder="Username (สำหรับ Login)" 
+                                          value={newUser.username}
+                                          onChange={e => setNewUser({...newUser, username: e.target.value})}
+                                          className="px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                      />
+                                      <input 
+                                          type="text" 
+                                          placeholder="Password" 
+                                          value={newUser.password}
+                                          onChange={e => setNewUser({...newUser, password: e.target.value})}
+                                          className="px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                      />
+                                      <input 
+                                          type="text" 
+                                          placeholder="ชื่อ-นามสกุล" 
+                                          value={newUser.name}
+                                          onChange={e => setNewUser({...newUser, name: e.target.value})}
+                                          className="px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                      />
+                                      <input 
+                                          type="text" 
+                                          placeholder="ตำแหน่ง (Role)" 
+                                          value={newUser.role}
+                                          onChange={e => setNewUser({...newUser, role: e.target.value})}
+                                          className="px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                      />
+                                      <input 
+                                          type="email" 
+                                          placeholder="Email (Optional)" 
+                                          value={newUser.email}
+                                          onChange={e => setNewUser({...newUser, email: e.target.value})}
+                                          className="px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                      />
+                                      <input 
+                                          type="tel" 
+                                          placeholder="เบอร์โทร (Optional)" 
+                                          value={newUser.phone}
+                                          onChange={e => setNewUser({...newUser, phone: e.target.value})}
+                                          className="px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                      />
+                                  </div>
+                                  <div className="flex justify-end gap-3">
+                                      <button 
+                                          onClick={() => setIsAddingUser(false)}
+                                          className="px-4 py-2 text-slate-500 font-bold hover:bg-slate-100 rounded-xl transition"
+                                      >
+                                          ยกเลิก
+                                      </button>
+                                      <button 
+                                          onClick={handleAddUser}
+                                          className="px-6 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition"
+                                      >
+                                          บันทึก
+                                      </button>
+                                  </div>
+                              </div>
+                          )}
+                      </div>
+                  </div>
+              </div>
+
               <h3 className="text-xl font-bold text-slate-900 mb-4">ตั้งค่าตัวเลือกระบบ (System Options)</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <ListManager
@@ -2549,6 +3134,7 @@ const App = () => {
                     onDelete={(idx) => setProjectCategories(projectCategories.filter((_, i) => i !== idx))}
                     placeholder="เพิ่มหมวดหมู่..."
                     icon={Tag}
+                    onSave={(newItems) => saveSystemSettings('project_categories', newItems)}
                   />
                   <ListManager
                     title="หมวดหมู่ค่าใช้จ่าย"
@@ -2557,6 +3143,7 @@ const App = () => {
                     onDelete={(idx) => setExpenseCategories(expenseCategories.filter((_, i) => i !== idx))}
                     placeholder="เพิ่มหมวดหมู่ค่าใช้จ่าย..."
                     icon={DollarSign}
+                    onSave={(newItems) => saveSystemSettings('expense_categories', newItems)}
                   />
                   <AdvancedListManager
                     title="สถานะดีล (Deal Status)"
@@ -2564,6 +3151,7 @@ const App = () => {
                     onUpdate={setDealStatuses} 
                     placeholder="เพิ่มสถานะดีล..."
                     icon={Briefcase}
+                    onSave={(newItems) => saveSystemSettings('deal_statuses', newItems)}
                   />
                   <AdvancedListManager
                     title="สถานะขนส่ง (Transport)"
@@ -2571,25 +3159,17 @@ const App = () => {
                     onUpdate={setTransportStatuses} 
                     placeholder="เพิ่มสถานะขนส่ง..."
                     icon={Truck}
+                    onSave={(newItems) => saveSystemSettings('transport_statuses', newItems)}
                   />
               </div>
               <div className="pt-8 mt-8 border-t border-slate-100 flex flex-col-reverse sm:flex-row justify-between gap-4">
-                  <button className="px-6 py-3.5 text-rose-600 font-bold bg-white border border-rose-100 hover:bg-rose-50 rounded-xl transition-colors flex items-center justify-center gap-2">
+                  <button 
+                    onClick={handleLogout}
+                    className="px-6 py-3.5 text-rose-600 font-bold bg-white border border-rose-100 hover:bg-rose-50 rounded-xl transition-colors flex items-center justify-center gap-2"
+                  >
                     <LogOut className="w-5 h-5" />
                     <span>ออกจากระบบ</span>
                   </button>
-                  <div className="flex flex-col sm:flex-row gap-3">
-                      <button className="px-6 py-3.5 text-slate-500 font-bold bg-white border border-slate-200 hover:bg-slate-50 rounded-xl transition-colors">
-                        ยกเลิก
-                      </button>
-                      <button
-                        onClick={() => alert("บันทึกข้อมูลเรียบร้อยแล้ว")}
-                        className="px-8 py-3.5 text-white font-bold bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-lg shadow-indigo-200 hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2"
-                      >
-                        <Save className="w-5 h-5" />
-                        <span>บันทึกการเปลี่ยนแปลง</span>
-                      </button>
-                  </div>
               </div>
             </div>
           </div>
@@ -2603,6 +3183,7 @@ const App = () => {
     <div className="flex h-screen bg-[#F8FAFC] font-sans text-slate-800 overflow-hidden selection:bg-indigo-100 selection:text-indigo-900">
       
       <style>{`
+        /* ... (styles remain same) ... */
         @keyframes modalEnter {
           0% { opacity: 0; transform: scale(0.95) translateY(10px); filter: blur(2px); }
           100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
@@ -2610,129 +3191,117 @@ const App = () => {
         .modal-animate-in {
           animation: modalEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
-        @keyframes modalExit {
-          0% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
-          100% { opacity: 0; transform: scale(0.95) translateY(10px); filter: blur(2px); }
-        }
-        .modal-animate-out {
-          animation: modalExit 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-        @keyframes backdropEnter {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-        .backdrop-animate-in {
-          animation: backdropEnter 0.3s ease-out forwards;
-        }
-        @keyframes backdropExit {
-          from { opacity: 1; }
-          to { opacity: 0; }
-        }
-        .backdrop-animate-out {
-          animation: backdropExit 0.3s ease-out forwards;
-        }
-        /* Hide scrollbar for Chrome, Safari and Opera */
+        /* ... */
         .no-scrollbar::-webkit-scrollbar {
           display: none;
         }
-        /* Hide scrollbar for IE, Edge and Firefox */
         .no-scrollbar {
           -ms-overflow-style: none;  /* IE and Edge */
           scrollbar-width: none;  /* Firefox */
         }
-        /* Safe Area Bottom for Mobile */
         .safe-area-bottom {
           padding-bottom: env(safe-area-inset-bottom);
         }
       `}</style>
       
-      <aside className={`hidden md:flex flex-col ${isSidebarCollapsed ? 'w-20' : 'w-72'} bg-white border-r border-slate-100 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-20 transition-all duration-300 relative`}>
-        <button
-            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-            className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 bg-white border border-slate-200 rounded-full shadow-sm text-slate-400 hover:text-indigo-600 transition-colors z-50"
-        >
-            {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-        </button>
+      {/* --- Global Feedback Elements --- */}
+      {isSaving && <LoadingOverlay />} 
+      {toast.show && <Toast message={toast.message} type={toast.type} onClose={closeToast} />}
+      {/* ------------------------------- */}
 
-        <div className={`p-6 pb-4 flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
-          <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200 shrink-0">
-            <Clipboard className="w-6 h-6 text-white" />
-          </div>
-          {!isSidebarCollapsed && (
-            <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent tracking-tight whitespace-nowrap overflow-hidden">
-              NexusPlan
-            </h1>
-          )}
-        </div>
-        
-        <nav className="flex-1 px-4 py-6 space-y-2">
-          {navItems.map((item) => (
+      {isLoggedIn && (
+        <aside className={`hidden md:flex flex-col ${isSidebarCollapsed ? 'w-20' : 'w-72'} bg-white border-r border-slate-100 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-20 transition-all duration-300 relative`}>
+            {/* ... Sidebar Content ... */}
             <button
-              key={item.name}
-              onClick={() => setActiveTab(item.name)}
-              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-2' : 'gap-4 px-6'} py-4 text-sm font-bold rounded-[1.2rem] transition-all duration-300 group ${
-                activeTab === item.name
-                  ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-200 scale-100'
-                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
-              }`}
-              title={isSidebarCollapsed ? item.label : ''}
+                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 bg-white border border-slate-200 rounded-full shadow-sm text-slate-400 hover:text-indigo-600 transition-colors z-50"
             >
-              <item.icon className={`w-5 h-5 transition-transform group-hover:scale-110 ${activeTab === item.name ? 'text-white' : 'text-slate-400 group-hover:text-slate-600'}`} />
-              {!isSidebarCollapsed && <span>{item.label}</span>}
+                {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
             </button>
-          ))}
-        </nav>
 
-        <div className="p-4 border-t border-slate-50">
-            <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-4'} cursor-pointer p-2 sm:p-4 rounded-[1.5rem] bg-slate-50 hover:bg-white hover:shadow-lg hover:shadow-slate-100 transition-all duration-300 border border-transparent hover:border-slate-100`}>
-              <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-white text-xs font-bold ring-4 ring-white shadow-md shrink-0">
-                JS
-              </div>
-              {!isSidebarCollapsed && (
-                <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-slate-900 truncate">John Smith</p>
-                    <p className="text-xs text-slate-500 truncate font-medium">Project Manager</p>
+            <div className={`p-6 pb-4 flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200 shrink-0">
+                <Clipboard className="w-6 h-6 text-white" />
+            </div>
+            {!isSidebarCollapsed && (
+                <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent tracking-tight whitespace-nowrap overflow-hidden">
+                ProjectPlan
+                </h1>
+            )}
+            </div>
+            
+            <nav className="flex-1 px-4 py-6 space-y-2">
+            {navItems.map((item) => (
+                <button
+                key={item.name}
+                onClick={() => setActiveTab(item.name)}
+                className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-2' : 'gap-4 px-6'} py-4 text-sm font-bold rounded-[1.2rem] transition-all duration-300 group ${
+                    activeTab === item.name
+                    ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-200 scale-100'
+                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+                title={isSidebarCollapsed ? item.label : ''}
+                >
+                <item.icon className={`w-5 h-5 transition-transform group-hover:scale-110 ${activeTab === item.name ? 'text-white' : 'text-slate-400 group-hover:text-slate-600'}`} />
+                {!isSidebarCollapsed && <span>{item.label}</span>}
+                </button>
+            ))}
+            </nav>
+
+            <div className="p-4 border-t border-slate-50">
+                <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-4'} cursor-pointer p-2 sm:p-4 rounded-[1.5rem] bg-slate-50 hover:bg-white hover:shadow-lg hover:shadow-slate-100 transition-all duration-300 border border-transparent hover:border-slate-100`}>
+                <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-white text-xs font-bold ring-4 ring-white shadow-md shrink-0">
+                    {userProfile?.name?.charAt(0) || 'U'}
                 </div>
-              )}
+                {!isSidebarCollapsed && (
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-slate-900 truncate">{userProfile?.name || 'Guest User'}</p>
+                        <p className="text-xs text-slate-500 truncate font-medium">{userProfile?.role || 'Viewer'}</p>
+                    </div>
+                )}
+                </div>
             </div>
-        </div>
-      </aside>
+        </aside>
+      )}
 
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-6 py-3 flex justify-between items-center z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] safe-area-bottom">
-        {navItems.map((item) => (
-          <button
-            key={item.name}
-            onClick={() => setActiveTab(item.name)}
-            className={`flex flex-col items-center gap-1 transition-colors ${activeTab === item.name ? 'text-indigo-600' : 'text-slate-400'}`}
-          >
-            <div className={`p-1 rounded-xl transition-all ${activeTab === item.name ? 'bg-indigo-50' : ''}`}>
-               <item.icon className={`w-6 h-6 ${activeTab === item.name ? 'fill-indigo-600/20' : ''}`} />
-            </div>
-            <span className="text-[10px] font-bold">{item.label}</span>
-          </button>
-        ))}
-      </nav>
+      {isLoggedIn && (
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-6 py-3 flex justify-between items-center z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] safe-area-bottom">
+            {navItems.map((item) => (
+            <button
+                key={item.name}
+                onClick={() => setActiveTab(item.name)}
+                className={`flex flex-col items-center gap-1 transition-colors ${activeTab === item.name ? 'text-indigo-600' : 'text-slate-400'}`}
+            >
+                <div className={`p-1 rounded-xl transition-all ${activeTab === item.name ? 'bg-indigo-50' : ''}`}>
+                <item.icon className={`w-6 h-6 ${activeTab === item.name ? 'fill-indigo-600/20' : ''}`} />
+                </div>
+                <span className="text-[10px] font-bold">{item.label}</span>
+            </button>
+            ))}
+        </nav>
+      )}
 
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-        <header className="h-20 bg-white/80 backdrop-blur-xl border-b border-slate-100 flex items-center justify-between px-6 sm:px-8 z-10 sticky top-0">
-          <div className="flex items-center gap-4">
-            {/* Removed Hamburger Menu for Mobile since we have bottom nav */}
-            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-              {getPageTitle(activeTab)}
-            </h1>
-          </div>
+        {isLoggedIn && (
+            <header className="h-20 bg-white/80 backdrop-blur-xl border-b border-slate-100 flex items-center justify-between px-6 sm:px-8 z-10 sticky top-0">
+            <div className="flex items-center gap-4">
+                <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+                {getPageTitle(activeTab)}
+                </h1>
+            </div>
 
-          <div>
-            <button
-              onClick={() => openModal()}
-              className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-200 hover:-translate-y-0.5 transition-all flex items-center gap-2"
-            >
-              <Plus className="w-5 h-5" />
-              <span className="hidden sm:inline">เพิ่มรายการ</span>
-              <span className="sm:hidden">เพิ่ม</span>
-            </button>
-          </div>
-        </header>
+            <div>
+                <button
+                onClick={() => openModal()}
+                className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-200 hover:-translate-y-0.5 transition-all flex items-center gap-2"
+                >
+                <Plus className="w-5 h-5" />
+                <span className="hidden sm:inline">เพิ่มรายการ</span>
+                <span className="sm:hidden">เพิ่ม</span>
+                </button>
+            </div>
+            </header>
+        )}
 
         <main
           ref={mainRef}
@@ -2745,7 +3314,7 @@ const App = () => {
         </main>
       </div>
 
-      {/* ... (Modals remain the same) ... */}
+      {/* ... (Modals: Delete and Add remain same) ... */}
       {/* Delete Confirmation Modal */}
       {deleteConfirm.show && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -2781,7 +3350,7 @@ const App = () => {
         </div>
       )}
 
-      {/* Modern Add Item Modal - Expanded Version - RESPONSIVE FIX */}
+      {/* Modern Add Item Modal - Expanded Version */}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
            {/* Backdrop */}
@@ -2822,7 +3391,7 @@ const App = () => {
              {/* Scrollable Body - Compact Padding */}
              <div className="flex-1 overflow-y-auto p-4 sm:p-8 custom-scrollbar">
                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
-                   {/* ... (rest of the form content remains same) ... */}
+                   {/* ... (Rest of Form - same structure as before) ... */}
                    {/* ส่วนที่ 1: งาน/โปรเจค */}
                    <div className="space-y-6">
                        <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
@@ -2894,22 +3463,28 @@ const App = () => {
                                    onChange={(e) => setCustomerLine(e.target.value)}
                                    className={`px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
                                  />
-                                 <input
-                                   type="tel"
-                                   placeholder="เบอร์โทร"
-                                   value={customerPhone}
-                                   disabled={viewOnlyMode}
-                                   onChange={(e) => setCustomerPhone(e.target.value)}
-                                   className={`px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
-                                 />
-                                 <input
-                                   type="email"
-                                   placeholder="อีเมล"
-                                   value={customerEmail}
-                                   disabled={viewOnlyMode}
-                                   onChange={(e) => setCustomerEmail(e.target.value)}
-                                   className={`px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
-                                 />
+                                 {viewOnlyMode ? (
+                                      <ViewOnlyField value={customerPhone} type="tel" icon={Phone} />
+                                 ) : (
+                                      <input
+                                        type="tel"
+                                        placeholder="เบอร์โทร"
+                                        value={customerPhone}
+                                        onChange={(e) => setCustomerPhone(e.target.value)}
+                                        className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                                      />
+                                 )}
+                                 {viewOnlyMode ? (
+                                      <ViewOnlyField value={customerEmail} type="email" icon={Mail} />
+                                 ) : (
+                                      <input
+                                        type="email"
+                                        placeholder="อีเมล"
+                                        value={customerEmail}
+                                        onChange={(e) => setCustomerEmail(e.target.value)}
+                                        className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                                      />
+                                 )}
                              </div>
                            </div>
 
@@ -3009,14 +3584,17 @@ const App = () => {
                            </div>
                            <div className="space-y-2">
                              <label className="text-sm font-bold text-slate-700 ml-1">Google Maps Link</label>
-                             <input
-                               type="url"
-                               placeholder="https://maps.google.com/..."
-                               value={mapLink}
-                               disabled={viewOnlyMode}
-                               onChange={(e) => setMapLink(e.target.value)}
-                               className={`w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium text-blue-600 ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
-                             />
+                             {viewOnlyMode ? (
+                                <ViewOnlyField value={mapLink} type="url" icon={MapPin} />
+                             ) : (
+                                <input
+                                  type="url"
+                                  placeholder="https://maps.google.com/..."
+                                  value={mapLink}
+                                  onChange={(e) => setMapLink(e.target.value)}
+                                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium text-blue-600"
+                                />
+                             )}
                            </div>
                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                               <div className="space-y-2">
@@ -3033,13 +3611,16 @@ const App = () => {
                               </div>
                               <div className="space-y-2">
                                 <label className="text-sm font-bold text-slate-700 ml-1">เบอร์โทรผู้รับ</label>
-                                <input
-                                  type="tel"
-                                  value={recipientPhone}
-                                  disabled={viewOnlyMode}
-                                  onChange={(e) => setRecipientPhone(e.target.value)}
-                                  className={`w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
-                                />
+                                {viewOnlyMode ? (
+                                    <ViewOnlyField value={recipientPhone} type="tel" icon={Phone} />
+                                ) : (
+                                    <input
+                                      type="tel"
+                                      value={recipientPhone}
+                                      onChange={(e) => setRecipientPhone(e.target.value)}
+                                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium"
+                                    />
+                                )}
                               </div>
                            </div>
                            
@@ -3071,6 +3652,7 @@ const App = () => {
 
                  {/* ส่วนที่ 3: การเงิน */}
                  <div className="mt-10 space-y-6" ref={part3Ref}>
+                     {/* ... (Finance section same as before) ... */}
                      <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
                           <span className="bg-slate-900 text-white w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold">3</span>
                           <h4 className="font-bold text-slate-800 text-lg">การเงิน</h4>

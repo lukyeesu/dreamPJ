@@ -1,3 +1,19 @@
-@tailwind base;
+@import "tailwindcss";
+
+/* ลบโค้ดเก่าในไฟล์นี้ออกให้หมด แล้วใส่แค่บรรทัดด้านบน หรือถ้ายังไม่หายให้ลองใช้แบบด้านล่างนี้ครับ */
+
+/* @tailwind base;
 @tailwind components;
 @tailwind utilities;
+*/
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  background-color: #f8fafc; /* พื้นหลังสีสว่างสบายตา */
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
