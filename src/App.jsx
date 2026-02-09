@@ -497,7 +497,7 @@ const CustomerTrackingView = ({ data }) => {
           </div>
 
           <div className="text-center pb-8">
-             <p className="text-xs text-slate-400">Powered by NexusPlan</p>
+             <p className="text-xs text-slate-400">Powered by LukYeePlan</p>
           </div>
 
        </div>
