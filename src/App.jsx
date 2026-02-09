@@ -3608,7 +3608,9 @@ const App = () => {
                       <h3 className="text-lg font-bold text-rose-700">รวมรายจ่าย</h3>
                    </div>
                    <p className="text-3xl font-black text-rose-800">฿{currentCost.toLocaleString()}</p>
-                   <p className="text-sm text-rose-600 mt-1 font-medium">ต้นทุนค่าใช้จ่าย</p>
+                   <p className="text-sm text-rose-600 mt-1 font-medium">
+                     Cost: {currentRevenue > 0 ? ((currentCost/currentRevenue)*100).toFixed(1) : 0}%
+                   </p>
                 </div>
 
                 <div className="bg-indigo-50 p-6 rounded-[2rem] border border-indigo-100 shadow-sm relative overflow-hidden group hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
