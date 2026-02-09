@@ -349,13 +349,13 @@ const CustomerTrackingView = ({ data }) => {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-12">
-       {/* Mobile Header-like Card */}
-       <div className="bg-indigo-600 text-white p-6 pb-12 rounded-b-[2.5rem] shadow-lg shadow-indigo-200 relative overflow-hidden">
+    <div className="min-h-screen bg-slate-50 pb-safe">
+       {/* Responsive Header Card */}
+       <div className="bg-indigo-600 text-white p-6 pb-12 rounded-b-[2.5rem] shadow-lg shadow-indigo-200 relative overflow-hidden w-full">
           <div className="absolute top-0 right-0 p-8 opacity-10">
              <PackageCheck className="w-32 h-32 transform rotate-12" />
           </div>
-          <div className="relative z-10 flex flex-col items-center text-center gap-2 mt-4">
+          <div className="relative z-10 flex flex-col items-center text-center gap-2 mt-4 max-w-4xl mx-auto">
              <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center mb-2 shadow-inner border border-white/10">
                 <Search className="w-6 h-6 text-white" />
              </div>
@@ -367,36 +367,38 @@ const CustomerTrackingView = ({ data }) => {
           </div>
        </div>
 
-       <div className="max-w-md mx-auto px-4 -mt-8 relative z-20 space-y-6">
+       <div className="max-w-5xl mx-auto px-4 -mt-8 relative z-20 space-y-6 pb-12">
           
-          {/* Status Card */}
-          <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
-             <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 text-center">สถานะปัจจุบัน</h2>
-             <div className="flex justify-between items-start relative px-2">
+          {/* Status Card - Redesigned for better spacing and responsiveness */}
+          <div className="bg-white p-6 md:p-8 rounded-[2rem] shadow-sm border border-slate-100">
+             <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-6 text-center">สถานะปัจจุบัน</h2>
+             <div className="relative px-2 md:px-10">
                 {/* Connecting Line */}
-                <div className="absolute top-4 left-4 right-4 h-0.5 bg-slate-100 -z-10"></div>
+                <div className="absolute top-5 left-2 right-2 md:left-12 md:right-12 h-1 bg-slate-100 -z-10 rounded-full"></div>
                 
-                {steps.map((step, idx) => {
-                   const status = getStepStatus(step.id);
-                   let colorClass = 'bg-slate-100 text-slate-400 border-slate-200'; // pending
-                   if (status === 'completed') colorClass = 'bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-200';
-                   if (status === 'current') colorClass = 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200 scale-110';
+                <div className="flex justify-between items-start w-full">
+                    {steps.map((step, idx) => {
+                    const status = getStepStatus(step.id);
+                    let colorClass = 'bg-slate-100 text-slate-400 border-slate-200'; // pending
+                    if (status === 'completed') colorClass = 'bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-200';
+                    if (status === 'current') colorClass = 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200 scale-110 ring-4 ring-indigo-50';
 
-                   return (
-                      <div key={step.id} className="flex flex-col items-center gap-2">
-                         <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all duration-500 ${colorClass}`}>
-                            <step.icon className="w-4 h-4" />
-                         </div>
-                         <span className={`text-[10px] font-bold ${status === 'current' ? 'text-indigo-600' : 'text-slate-400'}`}>
-                            {step.label}
-                         </span>
-                      </div>
-                   );
-                })}
+                    return (
+                        <div key={step.id} className="flex flex-col items-center gap-3 md:gap-4 flex-1">
+                            <div className={`w-10 h-10 md:w-14 md:h-14 rounded-full flex items-center justify-center border-2 transition-all duration-500 z-10 ${colorClass}`}>
+                                <step.icon className="w-5 h-5 md:w-7 md:h-7" strokeWidth={2.5} />
+                            </div>
+                            <span className={`text-[10px] md:text-sm font-bold text-center leading-tight px-1 ${status === 'current' ? 'text-indigo-600' : 'text-slate-400'}`}>
+                                {step.label}
+                            </span>
+                        </div>
+                    );
+                    })}
+                </div>
              </div>
-             <div className="mt-6 text-center">
-                <span className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold ${
-                    data.dealStatus === 'cancelled' ? 'bg-rose-50 text-rose-600' : 'bg-slate-50 text-slate-600'
+             <div className="mt-8 text-center">
+                <span className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold shadow-sm border ${
+                    data.dealStatus === 'cancelled' ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-white text-slate-700 border-slate-200'
                 }`}>
                     {data.dealStatus === 'cancelled' ? <AlertCircle className="w-4 h-4"/> : <Activity className="w-4 h-4 text-indigo-500"/>}
                     {data.dealStatus === 'cancelled' ? 'ยกเลิก/มีปัญหา' : `สถานะ: ${data.dealStatus || 'กำลังดำเนินการ'}`}
@@ -404,71 +406,73 @@ const CustomerTrackingView = ({ data }) => {
              </div>
           </div>
 
-          {/* Project Details (Part 1) */}
-          <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
-             <h3 className="text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
-                <FileText className="w-5 h-5 text-indigo-600" />
-                รายละเอียดงาน
-             </h3>
-             <div className="space-y-4">
-                <div>
-                   <p className="text-xs text-slate-400 font-bold mb-1">ชื่อโครงการ</p>
-                   <p className="text-base font-bold text-slate-800 leading-tight">{data.name}</p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Project Details (Part 1) */}
+            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 h-full">
+                <h3 className="text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-indigo-600" />
+                    รายละเอียดงาน
+                </h3>
+                <div className="space-y-4">
+                    <div>
+                    <p className="text-xs text-slate-400 font-bold mb-1">ชื่อโครงการ</p>
+                    <p className="text-base font-bold text-slate-800 leading-tight">{data.name}</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <p className="text-xs text-slate-400 font-bold mb-1">วันที่เริ่ม</p>
+                        <p className="text-sm font-bold text-slate-600">{formatDate(data.rawDateTime)}</p>
+                    </div>
+                    <div>
+                        <p className="text-xs text-slate-400 font-bold mb-1">ศิลปิน</p>
+                        <p className="text-sm font-bold text-slate-600">{data.artist}</p>
+                    </div>
+                    </div>
+                    <div>
+                    <p className="text-xs text-slate-400 font-bold mb-1">ลูกค้า</p>
+                    <p className="text-sm font-bold text-slate-600">{data.customer}</p>
+                    </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                   <div>
-                      <p className="text-xs text-slate-400 font-bold mb-1">วันที่เริ่ม</p>
-                      <p className="text-sm font-bold text-slate-600">{formatDate(data.rawDateTime)}</p>
-                   </div>
-                   <div>
-                      <p className="text-xs text-slate-400 font-bold mb-1">ศิลปิน</p>
-                      <p className="text-sm font-bold text-slate-600">{data.artist}</p>
-                   </div>
-                </div>
-                <div>
-                   <p className="text-xs text-slate-400 font-bold mb-1">ลูกค้า</p>
-                   <p className="text-sm font-bold text-slate-600">{data.customer}</p>
-                </div>
-             </div>
-          </div>
+            </div>
 
-          {/* Delivery & Location (Part 2) */}
-          <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
-             <h3 className="text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
-                <Truck className="w-5 h-5 text-emerald-600" />
-                การจัดส่ง & สถานที่
-             </h3>
-             <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                <div className="flex items-start gap-3">
-                   <Clock className="w-5 h-5 text-indigo-500 shrink-0 mt-0.5" />
-                   <div>
-                      <p className="text-xs text-slate-400 font-bold">กำหนดส่ง</p>
-                      <div className="text-sm font-bold text-slate-700">{renderDeliveryTime(data)}</div>
-                   </div>
+            {/* Delivery & Location (Part 2) */}
+            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 h-full">
+                <h3 className="text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
+                    <Truck className="w-5 h-5 text-emerald-600" />
+                    การจัดส่ง & สถานที่
+                </h3>
+                <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                    <div className="flex items-start gap-3">
+                    <Clock className="w-5 h-5 text-indigo-500 shrink-0 mt-0.5" />
+                    <div>
+                        <p className="text-xs text-slate-400 font-bold">กำหนดส่ง</p>
+                        <div className="text-sm font-bold text-slate-700">{renderDeliveryTime(data)}</div>
+                    </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                    <MapPin className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+                    <div>
+                        <p className="text-xs text-slate-400 font-bold">สถานที่</p>
+                        <p className="text-sm font-bold text-slate-700">{data.location || '-'}</p>
+                        {data.mapLink && (
+                            <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1">
+                                <ExternalLink className="w-3 h-3" /> เปิดแผนที่
+                            </a>
+                        )}
+                    </div>
+                    </div>
+                    {(data.recipient || data.recipientPhone) && (
+                    <div className="flex items-start gap-3 pt-2 border-t border-slate-200 mt-2">
+                        <User className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+                        <div>
+                            <p className="text-xs text-slate-400 font-bold">ผู้รับ</p>
+                            <p className="text-sm font-bold text-slate-700">{data.recipient || '-'}</p>
+                            <p className="text-xs font-medium text-slate-500">{data.recipientPhone}</p>
+                        </div>
+                    </div>
+                    )}
                 </div>
-                <div className="flex items-start gap-3">
-                   <MapPin className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
-                   <div>
-                      <p className="text-xs text-slate-400 font-bold">สถานที่</p>
-                      <p className="text-sm font-bold text-slate-700">{data.location || '-'}</p>
-                      {data.mapLink && (
-                         <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1">
-                            <ExternalLink className="w-3 h-3" /> เปิดแผนที่
-                         </a>
-                      )}
-                   </div>
-                </div>
-                {(data.recipient || data.recipientPhone) && (
-                   <div className="flex items-start gap-3 pt-2 border-t border-slate-200 mt-2">
-                      <User className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
-                      <div>
-                         <p className="text-xs text-slate-400 font-bold">ผู้รับ</p>
-                         <p className="text-sm font-bold text-slate-700">{data.recipient || '-'}</p>
-                         <p className="text-xs font-medium text-slate-500">{data.recipientPhone}</p>
-                      </div>
-                   </div>
-                )}
-             </div>
+            </div>
           </div>
 
           {/* Images */}
@@ -477,27 +481,27 @@ const CustomerTrackingView = ({ data }) => {
                 <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3 px-2 flex items-center gap-2">
                    <ImageIcon className="w-4 h-4" /> รูปภาพอ้างอิง
                 </h3>
-                <div className="rounded-2xl overflow-hidden border border-slate-100 bg-slate-50">
-                   <img src={processImageUrl(data.image)} alt="Reference" className="w-full h-auto object-contain max-h-80" />
+                <div className="rounded-2xl overflow-hidden border border-slate-100 bg-slate-50 flex justify-center bg-white/50">
+                   <img src={processImageUrl(data.image)} alt="Reference" className="w-full h-auto object-contain max-h-[500px]" />
                 </div>
              </div>
           )}
 
           {/* Net Amount */}
           <div className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white p-6 rounded-[2rem] shadow-lg shadow-indigo-200">
-             <div className="flex justify-between items-center">
+             <div className="flex flex-col sm:flex-row justify-between items-center gap-4 text-center sm:text-left">
                 <div>
                    <p className="text-indigo-200 text-xs font-bold uppercase tracking-wider mb-1">ยอดชำระสุทธิ</p>
                    <p className="text-xs text-indigo-100 opacity-80">Net Receivable</p>
                 </div>
-                <div className="text-right">
-                   <p className="text-3xl font-black tracking-tight">฿{netReceivable.toLocaleString()}</p>
+                <div className="text-right w-full sm:w-auto">
+                   <p className="text-3xl md:text-4xl font-black tracking-tight break-all">฿{netReceivable.toLocaleString()}</p>
                 </div>
              </div>
           </div>
 
           <div className="text-center pb-8">
-             <p className="text-xs text-slate-400">Powered by LukYeePlan</p>
+             <p className="text-xs text-slate-400">Powered by NexusPlan</p>
           </div>
 
        </div>
@@ -602,13 +606,18 @@ const SharePreviewModal = ({ data, onClose }) => {
         <div className="p-6 overflow-y-auto custom-scrollbar bg-slate-50 print:bg-white print:p-0">
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 print:border-none print:shadow-none">
             
-            <div className="flex justify-between items-start mb-6 border-b border-slate-100 pb-4">
-               <div>
-                  <h2 className="text-xl font-black text-slate-800 leading-tight">{data.name}</h2>
-                  <p className="text-slate-500 text-sm mt-1">ID: <span className="font-mono font-bold text-indigo-600">{data.id}</span></p>
+            {/* Header: Adjusted for Mobile Responsiveness (Grid 2 cols) to prevent overlapping */}
+            <div className="grid grid-cols-[1fr_auto] gap-4 items-start mb-6 border-b border-slate-100 pb-4">
+               <div className="min-w-0">
+                  <h2 className="text-xl font-black text-slate-800 leading-tight break-words">{data.name}</h2>
+                  <div className="mt-2">
+                     <span className="inline-flex items-center bg-indigo-50 text-indigo-600 text-sm px-3 py-1 rounded-lg font-bold border border-indigo-100 shadow-sm">
+                        {data.id}
+                     </span>
+                  </div>
                </div>
-               <div className="text-right">
-                  <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold border border-emerald-100">
+               <div className="shrink-0">
+                  <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold border border-emerald-100 whitespace-nowrap shadow-sm">
                     ใบสรุปงาน
                   </span>
                </div>
@@ -683,13 +692,15 @@ const SharePreviewModal = ({ data, onClose }) => {
             )}
 
             <div className="mt-6 pt-6 border-t-2 border-dashed border-slate-200">
-               <div className="bg-indigo-600 text-white p-5 rounded-2xl shadow-lg shadow-indigo-200 flex justify-between items-center">
+               <div className="bg-indigo-600 text-white p-5 rounded-2xl shadow-lg shadow-indigo-200 flex flex-col sm:flex-row justify-between items-center gap-4 text-center sm:text-left">
                   <div>
                      <p className="text-indigo-200 text-xs font-bold uppercase tracking-wider">ยอดเรียกเก็บสุทธิ</p>
                      <p className="text-xs text-indigo-100 opacity-80 mt-1">Net Receivable</p>
                   </div>
-                  <div className="text-right">
-                     <p className="text-3xl font-black tracking-tight">฿{netReceivable.toLocaleString()}</p>
+                  <div className="w-full sm:w-auto overflow-hidden">
+                     <p className={`font-black tracking-tight leading-none break-all ${netReceivable.toString().length > 10 ? 'text-2xl' : 'text-3xl'}`}>
+                        ฿{netReceivable.toLocaleString()}
+                     </p>
                   </div>
                </div>
             </div>
@@ -697,22 +708,22 @@ const SharePreviewModal = ({ data, onClose }) => {
           </div>
         </div>
 
-        {/* Buttons Action Area */}
+        {/* Buttons Action Area (Modified for Mobile Responsive) */}
         <div className="p-4 bg-white border-t border-slate-100 flex flex-col gap-3 print:hidden">
-           <div className="flex gap-3">
+           <div className="grid grid-cols-2 gap-3">
                <button 
                  onClick={handleCopyLink}
                  className={`flex-1 py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${isLinkCopied ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
                >
                  {isLinkCopied ? <Check className="w-5 h-5" /> : <LinkIcon className="w-5 h-5" />}
-                 {isLinkCopied ? 'คัดลอกลิงก์แล้ว' : 'คัดลอกลิงก์ติดตาม'}
+                 {isLinkCopied ? 'คัดลอกลิงก์' : 'คัดลอกลิงก์'}
                </button>
                <button 
                  onClick={handleCopyText}
                  className={`flex-1 py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${isCopied ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
                >
                  {isCopied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
-                 {isCopied ? 'คัดลอกข้อความแล้ว' : 'คัดลอกข้อความ'}
+                 {isCopied ? 'คัดลอกข้อความ' : 'คัดลอกข้อความ'}
                </button>
            </div>
            <button 
@@ -1790,9 +1801,9 @@ const DateFilterControl = ({ mode, setMode, date, setDate, range, setRange }) =>
   );
 };
 
-const SortableHeader = ({ label, sortKey, sortConfig, handleSort, alignRight = false }) => (
+const SortableHeader = ({ label, sortKey, sortConfig, handleSort, alignRight = false, className = '' }) => (
   <th
-    className={`px-6 py-4 font-medium whitespace-nowrap cursor-pointer hover:bg-slate-50 transition-colors group select-none ${alignRight ? 'text-right' : 'text-left'}`}
+    className={`px-4 py-4 font-medium whitespace-nowrap cursor-pointer hover:bg-slate-50 transition-colors group select-none ${alignRight ? 'text-right' : 'text-left'} ${className}`}
     onClick={() => handleSort(sortKey)}
   >
     <div className={`flex items-center gap-1 ${alignRight ? 'justify-end' : ''}`}>
@@ -2223,7 +2234,7 @@ const App = () => {
         if (visibleCount < filteredAndSortedActivities.length && !isLoadingMore) {
            setIsLoadingMore(true);
            setTimeout(() => {
-              setVisibleCount(prev => prev + 15);
+              setVisibleCount(prev => prev + 5);
               setIsLoadingMore(false);
            }, 1000);
         }
@@ -2360,7 +2371,18 @@ const App = () => {
 
       const matchesCategory = filterCategory === 'all' || item.category === filterCategory;
       const matchesStatus = filterStatus === 'all' || item.dealStatus === filterStatus;
-      const matchesTransport = filterTransport === 'all' || item.transportStatus === filterTransport;
+      
+      // [FIX] Added logic for 'active_only' transport filter to exclude completed/cancelled items
+      let matchesTransport = true;
+      if (filterTransport === 'active_only') {
+          matchesTransport = 
+            item.transportStatus !== 'delivered' && 
+            item.transportStatus !== 'completed' && 
+            item.transportStatus !== 'issue' && 
+            item.transportStatus !== 'cancelled';
+      } else {
+          matchesTransport = filterTransport === 'all' || item.transportStatus === filterTransport;
+      }
 
       return matchesSearch && matchesDate && matchesCategory && matchesStatus && matchesTransport;
     });
@@ -2839,6 +2861,7 @@ const App = () => {
 
     return (
       <div className="w-full">
+        {/* Mobile View (Card Layout) - Restored */}
         <div className="md:hidden flex flex-col gap-4 p-2">
           {items.map((item, i) => {
             const itemExpenses = item.expenses ? item.expenses.reduce((sum, ex) => sum + (parseFloat(ex.price) || 0), 0) : 0;
@@ -3002,166 +3025,169 @@ const App = () => {
         </div>
 
         <div className="hidden md:block">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="text-slate-400 text-sm font-semibold border-b border-slate-50">
-                    <SortableHeader label="รหัส / วันที่บันทึก" sortKey="id" sortConfig={sortConfig} handleSort={handleSort} />
-                    <SortableHeader label="โครงการ / หมวดหมู่" sortKey="name" sortConfig={sortConfig} handleSort={handleSort} />
-                    <SortableHeader label="ศิลปิน / ลูกค้า" sortKey="artist" sortConfig={sortConfig} handleSort={handleSort} />
-                    <SortableHeader label="ผู้รับ / เบอร์โทร" sortKey="recipient" sortConfig={sortConfig} handleSort={handleSort} />
-                    <SortableHeader label="กำหนดส่ง / สถานที่" sortKey="rawDeliveryDateTime" sortConfig={sortConfig} handleSort={handleSort} />
-                    <SortableHeader label="สถานะ (ดีล / ขนส่ง)" sortKey="dealStatus" sortConfig={sortConfig} handleSort={handleSort} />
-                    <SortableHeader label="การเงิน (บาท)" sortKey="wage" alignRight sortConfig={sortConfig} handleSort={handleSort} />
-                    <SortableHeader label="หมายเหตุ" sortKey="note" sortConfig={sortConfig} handleSort={handleSort} />
-                    <th className="px-6 py-4 font-medium text-right whitespace-nowrap">ดำเนินการ</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {items.map((item, i) => {
-                    const itemExpenses = item.expenses ? item.expenses.reduce((sum, ex) => sum + (parseFloat(ex.price) || 0), 0) : 0;
-                    const itemProfit = (item.wage || 0) - itemExpenses;
-                    const itemSupport = item.customerSupport ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0) : 0;
-                    const itemReceivable = (item.wage || 0) + itemSupport;
+            {/* Desktop Table Container with responsive constraints */}
+            <div className="overflow-x-auto overflow-y-hidden pb-4 custom-scrollbar">
+              <div className="min-w-fit w-full max-w-[1530px]">
+                <table className="w-full min-w-[1280px] table-fixed">
+                  <thead>
+                    <tr className="text-slate-400 text-sm font-semibold border-b border-slate-50">
+                      <SortableHeader className="w-[10%]" label="รหัส / วันที่" sortKey="id" sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[16%]" label="โครงการ / หมวดหมู่" sortKey="name" sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[14%]" label="ศิลปิน / ลูกค้า" sortKey="artist" sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[12%]" label="ผู้รับ / เบอร์โทร" sortKey="recipient" sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[14%]" label="กำหนดส่ง / สถานที่" sortKey="rawDeliveryDateTime" sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[12%]" label="สถานะ" sortKey="dealStatus" sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[10%]" label="การเงิน (บาท)" sortKey="wage" alignRight sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[6%]" label="หมายเหตุ" sortKey="note" sortConfig={sortConfig} handleSort={handleSort} />
+                      <th className="w-[6%] px-2 py-4 font-medium text-right whitespace-nowrap">ดำเนินการ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {items.map((item, i) => {
+                      const itemExpenses = item.expenses ? item.expenses.reduce((sum, ex) => sum + (parseFloat(ex.price) || 0), 0) : 0;
+                      const itemProfit = (item.wage || 0) - itemExpenses;
+                      const itemSupport = item.customerSupport ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0) : 0;
+                      const itemReceivable = (item.wage || 0) + itemSupport;
 
-                    const dealStatusInfo = getDealStatusInfo(item.dealStatus);
-                    const transportStatusInfo = getTransportStatusInfo(item.transportStatus);
-                    const animDelay = (i % 20) * 50; 
+                      const dealStatusInfo = getDealStatusInfo(item.dealStatus);
+                      const transportStatusInfo = getTransportStatusInfo(item.transportStatus);
+                      const animDelay = (i % 20) * 50; 
 
-                    return (
-                      <tr
-                        key={item.id}
-                        onClick={() => openModal(item, true)}
-                        className="hover:bg-slate-50/80 transition-colors group cursor-pointer space-row-animation"
-                        style={{ animationDelay: `${animDelay}ms` }}
-                      >
-                         <td className="px-6 py-4 align-top">
-                          <div className="flex flex-col gap-1">
-                            <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit">{item.id}</span>
-                            <div className="flex items-center gap-1.5 text-slate-500 text-xs mt-1">
-                              <Clock className="w-3 h-3" />
-                              {item.date}
+                      return (
+                        <tr
+                          key={item.id}
+                          onClick={() => openModal(item, true)}
+                          className="hover:bg-slate-50/80 transition-colors group cursor-pointer space-row-animation"
+                          style={{ animationDelay: `${animDelay}ms` }}
+                        >
+                          <td className="px-4 py-4 align-top truncate">
+                            <div className="flex flex-col gap-1">
+                              <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit">{item.id}</span>
+                              <div className="flex items-center gap-1.5 text-slate-500 text-xs mt-1 truncate">
+                                <Clock className="w-3 h-3 shrink-0" />
+                                {item.date}
+                              </div>
                             </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 align-top">
-                          <div className="flex flex-col gap-1 min-w-[140px]">
-                            <span className="font-bold text-slate-800 text-sm">{item.name}</span>
-                            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                              <Tag className="w-3 h-3" />
-                              {item.category}
+                          </td>
+                          <td className="px-4 py-4 align-top truncate">
+                            <div className="flex flex-col gap-1 w-full">
+                              <span className="font-bold text-slate-800 text-sm truncate" title={item.name}>{item.name}</span>
+                              <div className="flex items-center gap-1.5 text-xs text-slate-500 truncate">
+                                <Tag className="w-3 h-3 shrink-0" />
+                                {item.category}
+                              </div>
                             </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 align-top">
-                          <div className="flex flex-col gap-1.5 min-w-[140px]">
-                            <div className="flex items-center gap-2">
-                              <User className="w-3 h-3 text-indigo-500" />
-                              <span className="text-sm font-semibold text-slate-700">{item.artist}</span>
+                          </td>
+                          <td className="px-4 py-4 align-top truncate">
+                            <div className="flex flex-col gap-1.5 w-full">
+                              <div className="flex items-center gap-2 truncate">
+                                <User className="w-3 h-3 text-indigo-500 shrink-0" />
+                                <span className="text-sm font-semibold text-slate-700 truncate" title={item.artist}>{item.artist}</span>
+                              </div>
+                              <div className="flex items-center gap-2 text-xs text-slate-500 truncate">
+                                <Briefcase className="w-3 h-3 shrink-0" />
+                                <span className="truncate" title={item.customer}>{item.customer}</span>
+                              </div>
                             </div>
-                            <div className="flex items-center gap-2 text-xs text-slate-500">
-                              <Briefcase className="w-3 h-3" />
-                              {item.customer}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 align-top">
-                          <div className="flex flex-col gap-1 min-w-[140px]">
-                            <div className="text-sm font-medium text-slate-700">{item.recipient || '-'}</div>
-                            {item.recipientPhone && (
-                              <a 
-                                href={`tel:${item.recipientPhone}`}
-                                onClick={(e) => e.stopPropagation()}
-                                className="flex items-center gap-1 text-xs text-slate-500 hover:text-indigo-600 hover:underline transition-colors w-fit"
-                              >
-                                <Phone className="w-3 h-3" />
-                                {item.recipientPhone}
-                              </a>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 align-top">
-                          <div className="flex flex-col gap-1 min-w-[160px]">
-                            <div className="flex items-center gap-1.5 text-slate-700 text-sm font-medium">
-                              <Clock className="w-3 h-3 text-indigo-500" />
-                              <div>{renderDeliveryTime(item)}</div>
-                            </div>
-                            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                              <MapPin className="w-3 h-3 shrink-0" />
-                              {item.mapLink ? (
+                          </td>
+                          <td className="px-4 py-4 align-top truncate">
+                            <div className="flex flex-col gap-1 w-full">
+                              <div className="text-sm font-medium text-slate-700 truncate" title={item.recipient || '-'}>{item.recipient || '-'}</div>
+                              {item.recipientPhone && (
                                 <a 
-                                  href={item.mapLink} 
-                                  target="_blank" 
-                                  rel="noreferrer" 
-                                  onClick={(e) => e.stopPropagation()} 
-                                  className="text-blue-600 hover:underline truncate max-w-[140px]"
-                                  title="เปิดแผนที่"
+                                  href={`tel:${item.recipientPhone}`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="flex items-center gap-1 text-xs text-slate-500 hover:text-indigo-600 hover:underline transition-colors w-fit"
                                 >
-                                  {item.location || '-'}
+                                  <Phone className="w-3 h-3 shrink-0" />
+                                  {item.recipientPhone}
                                 </a>
-                              ) : (
-                                <span className="truncate max-w-[140px]">{item.location || '-'}</span>
                               )}
                             </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 align-top">
-                          <div className="flex flex-col gap-2 items-start">
-                            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${dealStatusInfo.color}`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${dealStatusInfo.value === 'confirmed' ? 'bg-emerald-500' : dealStatusInfo.value === 'pending' ? 'bg-amber-500' : dealStatusInfo.value === 'declined' ? 'bg-gray-400' : 'bg-rose-500'}`}></span>
-                              {dealStatusInfo.label}
-                            </span>
-                            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${transportStatusInfo.color}`}>
-                              <Truck className="w-3 h-3" />
-                              {transportStatusInfo.label}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 align-top text-right">
-                            <div className="flex flex-col gap-1 items-end min-w-[120px]">
-                              <span className="text-sm font-black text-slate-800" title="ยอดเรียกเก็บสุทธิ">
-                                 ฿{itemReceivable.toLocaleString()}
-                              </span>
-                              <div className="text-xs text-slate-400 flex gap-1 items-center justify-end">
-                                  <span className="text-emerald-600" title="ค่าจ้าง">{item.wage.toLocaleString()}</span>
-                                  {itemSupport > 0 && <span className="text-blue-500" title="สนับสนุน">+{itemSupport.toLocaleString()}</span>}
+                          </td>
+                          <td className="px-4 py-4 align-top truncate">
+                            <div className="flex flex-col gap-1 w-full">
+                              <div className="flex items-center gap-1.5 text-slate-700 text-sm font-medium truncate">
+                                <Clock className="w-3 h-3 text-indigo-500 shrink-0" />
+                                <div className="truncate">{renderDeliveryTime(item)}</div>
                               </div>
-                              <span className="text-xs text-rose-500 font-medium flex items-center gap-1" title="รายจ่าย">
-                                <TrendingDown className="w-3 h-3" /> -{itemExpenses.toLocaleString()}
+                              <div className="flex items-center gap-1.5 text-xs text-slate-500 truncate">
+                                <MapPin className="w-3 h-3 shrink-0" />
+                                {item.mapLink ? (
+                                  <a 
+                                    href={item.mapLink} 
+                                    target="_blank" 
+                                    rel="noreferrer" 
+                                    onClick={(e) => e.stopPropagation()} 
+                                    className="text-blue-600 hover:underline truncate w-full"
+                                    title={item.location}
+                                  >
+                                    {item.location || '-'}
+                                  </a>
+                                ) : (
+                                  <span className="truncate w-full" title={item.location}>{item.location || '-'}</span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-4 align-top">
+                            <div className="flex flex-col gap-2 items-start w-full">
+                              <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border w-full max-w-[140px] truncate ${dealStatusInfo.color}`}>
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dealStatusInfo.value === 'confirmed' ? 'bg-emerald-500' : dealStatusInfo.value === 'pending' ? 'bg-amber-500' : dealStatusInfo.value === 'declined' ? 'bg-gray-400' : 'bg-rose-500'}`}></span>
+                                <span className="truncate">{dealStatusInfo.label}</span>
                               </span>
-                              <span className={`text-xs font-bold ${itemProfit >= 0 ? 'text-indigo-600' : 'text-rose-600'} border-t border-slate-100 pt-1 mt-1 w-full text-right`} title="กำไรสุทธิ">
-                                {itemProfit >= 0 ? '+' : ''}{itemProfit.toLocaleString()}
+                              <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border w-full max-w-[140px] truncate ${transportStatusInfo.color}`}>
+                                <Truck className="w-3 h-3 shrink-0" />
+                                <span className="truncate">{transportStatusInfo.label}</span>
                               </span>
                             </div>
-                        </td>
-                        <td className="px-6 py-4 align-top">
-                            <div className="text-sm text-slate-600 max-w-[120px] whitespace-normal break-words" title={item.note}>
-                              {item.note || '-'}
+                          </td>
+                          <td className="px-4 py-4 align-top text-right truncate">
+                              <div className="flex flex-col gap-1 items-end w-full">
+                                <span className="text-sm font-black text-slate-800 truncate" title="ยอดเรียกเก็บสุทธิ">
+                                  ฿{itemReceivable.toLocaleString()}
+                                </span>
+                                <div className="text-xs text-slate-400 flex gap-1 items-center justify-end w-full">
+                                    <span className="text-emerald-600 truncate" title="ค่าจ้าง">{item.wage.toLocaleString()}</span>
+                                    {itemSupport > 0 && <span className="text-blue-500 truncate" title="สนับสนุน">+{itemSupport.toLocaleString()}</span>}
+                                </div>
+                                <span className="text-xs text-rose-500 font-medium flex items-center justify-end gap-1 w-full" title="รายจ่าย">
+                                  <TrendingDown className="w-3 h-3 shrink-0" /> -{itemExpenses.toLocaleString()}
+                                </span>
+                                <span className={`text-xs font-bold ${itemProfit >= 0 ? 'text-indigo-600' : 'text-rose-600'} border-t border-slate-100 pt-1 mt-1 w-full text-right truncate`} title="กำไรสุทธิ">
+                                  {itemProfit >= 0 ? '+' : ''}{itemProfit.toLocaleString()}
+                                </span>
+                              </div>
+                          </td>
+                          <td className="px-4 py-4 align-top">
+                              <div className="text-sm text-slate-600 truncate" title={item.note}>
+                                {item.note || '-'}
+                              </div>
+                          </td>
+                          <td className="px-2 py-4 align-top text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                onClick={(e) => handleEditFromTable(e, item)}
+                                className="p-2 bg-white border border-slate-200 text-indigo-600 hover:bg-indigo-50 rounded-lg transition shadow-sm"
+                                title="แก้ไข"
+                              >
+                                <Edit className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={(e) => handleDeleteFromTable(e, item.id)}
+                                className="p-2 bg-white border border-slate-200 text-rose-500 hover:bg-rose-50 rounded-lg transition shadow-sm"
+                                title="ลบรายการ"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
                             </div>
-                        </td>
-                        <td className="px-6 py-4 align-top text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={(e) => handleEditFromTable(e, item)}
-                              className="p-2 bg-white border border-slate-200 text-indigo-600 hover:bg-indigo-50 rounded-lg transition shadow-sm"
-                              title="แก้ไข"
-                            >
-                              <Edit className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={(e) => handleDeleteFromTable(e, item.id)}
-                              className="p-2 bg-white border border-slate-200 text-rose-500 hover:bg-rose-50 rounded-lg transition shadow-sm"
-                              title="ลบรายการ"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
             
             {limit === 0 && isLoadingMore && (
@@ -3267,6 +3293,7 @@ const App = () => {
                       onChange={(e) => setFilterTransport(e.target.value)}
                   >
                       <option value="all">ขนส่ง (ทั้งหมด)</option>
+                      <option value="active_only">กำลังดำเนินการ (Active)</option> {/* Added Option */}
                       {transportStatuses.map((status, i) => (
                         <option key={i} value={status.value}>{status.label}</option>
                       ))}
@@ -3337,6 +3364,7 @@ const App = () => {
                         onChange={(e) => setFilterTransport(e.target.value)}
                    >
                         <option value="all">ขนส่ง (ทั้งหมด)</option>
+                        <option value="active_only">กำลังดำเนินการ (Active)</option> {/* Added Option */}
                         {transportStatuses.map((s, i) => <option key={i} value={s.value}>{s.label}</option>)}
                    </select>
                    <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -3461,6 +3489,9 @@ const App = () => {
         );
 
       case 'Analytics':
+        // [FIX] Reverted to using filteredAndSortedActivities so cards match the table exactly.
+        // When a filter is applied (e.g., clicking "Active"), the cards will update to reflect ONLY the visible data.
+        
         const currentRevenue = filteredAndSortedActivities.reduce((sum, item) => {
           const isCancelledOrIssue = item.dealStatus === 'cancelled' || item.transportStatus === 'issue';
           return sum + (isCancelledOrIssue ? 0 : (item.wage || 0));
@@ -3595,37 +3626,55 @@ const App = () => {
              </div>
 
              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 px-4 sm:px-8 lg:px-10">
-                <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-indigo-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
+                <div 
+                    onClick={resetFilters}
+                    className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-indigo-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300 cursor-pointer active:scale-95"
+                >
                      <div className="mb-2 p-2 bg-slate-50 text-slate-500 rounded-full"><Folder className="w-5 h-5" /></div>
                      <div className="text-2xl font-black text-slate-800">{totalProjects}</div>
                      <div className="text-xs font-bold text-slate-500 mt-1">โครงการทั้งหมด</div>
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-emerald-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
+                <div 
+                    onClick={() => { setFilterStatus('confirmed'); setFilterTransport('delivered'); }}
+                    className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-emerald-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300 cursor-pointer active:scale-95"
+                >
                      <div className="mb-2 p-2 bg-emerald-50 text-emerald-500 rounded-full"><CheckCircle className="w-5 h-5" /></div>
                      <div className="text-2xl font-black text-emerald-600">{completedProjects}</div>
                      <div className="text-xs font-bold text-emerald-500 mt-1">งานเสร็จสิ้น</div>
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-blue-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
+                <div 
+                    onClick={() => { setFilterStatus('confirmed'); setFilterTransport('active_only'); }}
+                    className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-blue-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300 cursor-pointer active:scale-95"
+                >
                      <div className="mb-2 p-2 bg-blue-50 text-blue-500 rounded-full"><Activity className="w-5 h-5" /></div>
                      <div className="text-2xl font-black text-blue-600">{activeProjects}</div>
                      <div className="text-xs font-bold text-blue-500 mt-1">กำลังดำเนินการ</div>
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-amber-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
+                <div 
+                    onClick={() => { setFilterStatus('pending'); setFilterTransport('all'); }}
+                    className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-amber-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300 cursor-pointer active:scale-95"
+                >
                      <div className="mb-2 p-2 bg-amber-50 text-amber-500 rounded-full"><Clock className="w-5 h-5" /></div>
                      <div className="text-2xl font-black text-amber-600">{pendingProjects}</div>
                      <div className="text-xs font-bold text-amber-500 mt-1">รอดำเนินการ</div>
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-rose-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
+                <div 
+                    onClick={() => { setFilterStatus('cancelled'); setFilterTransport('all'); }}
+                    className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-rose-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300 cursor-pointer active:scale-95"
+                >
                      <div className="mb-2 p-2 bg-rose-50 text-rose-500 rounded-full"><AlertTriangle className="w-5 h-5" /></div>
                      <div className="text-2xl font-black text-rose-600">{issueProjects}</div>
                      <div className="text-xs font-bold text-rose-500 mt-1">ยกเลิก/มีปัญหา</div>
                 </div>
 
-                 <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-gray-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300">
+                 <div 
+                    onClick={() => { setFilterStatus('declined'); setFilterTransport('all'); }}
+                    className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col items-center justify-center text-center hover:border-gray-200 hover:shadow-md hover:-translate-y-1 transition-all duration-300 cursor-pointer active:scale-95"
+                >
                      <div className="mb-2 p-2 bg-gray-50 text-gray-400 rounded-full"><ThumbsDown className="w-5 h-5" /></div>
                      <div className="text-2xl font-black text-gray-500">{declinedProjects}</div>
                      <div className="text-xs font-bold text-gray-400 mt-1">ลูกค้าไม่อนุมัติ</div>
@@ -3980,17 +4029,17 @@ const App = () => {
                       <p className="text-sm text-slate-500 mb-3">
                           ระบุ Folder ID ของ Google Drive ที่ต้องการให้บันทึกรูปภาพ (ต้องเปิดแชร์สิทธิ์ Editor ให้กับอีเมลที่รัน Script)
                       </p>
-                      <div className="flex gap-2">
+                      <div className="flex flex-col sm:flex-row gap-3">
                           <input
                               type="text"
                               placeholder="Google Drive Folder ID (e.g., 1xYz...)"
                               value={driveFolderId}
                               onChange={(e) => setDriveFolderId(e.target.value)}
-                              className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                              className="w-full sm:flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all min-w-0"
                           />
                           <button
                               onClick={() => saveSystemSettings('drive_folder_id', driveFolderId)}
-                              className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition flex items-center gap-2 shrink-0"
+                              className="w-full sm:w-auto px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition flex items-center justify-center gap-2 shrink-0"
                           >
                               <Save className="w-4 h-4" /> บันทึก
                           </button>
@@ -4086,6 +4135,10 @@ const App = () => {
         }
         .safe-area-bottom {
           padding-bottom: env(safe-area-inset-bottom);
+        }
+        /* Fix for Modal Footer to have proper spacing above Safe Area */
+        .safe-area-bottom-modal {
+          padding-bottom: calc(1rem + env(safe-area-inset-bottom));
         }
 
         /* --- Space-Themed Staggered Animation (New) --- */
@@ -4865,33 +4918,60 @@ const App = () => {
                          </div>
                      </div>
 
-                     {/* Summary Section */}
-                     <div className="flex flex-col sm:flex-row justify-end gap-4 sm:gap-6 mt-6">
-                         <div className="bg-indigo-50 p-4 rounded-2xl min-w-[180px] flex-1 sm:flex-none border border-indigo-100">
-                            <p className="text-sm font-bold text-indigo-800 mb-1">ยอดเรียกเก็บลูกค้าสุทธิ</p>
-                            <p className="text-2xl font-black text-indigo-900 tracking-tight">฿{((parseFloat(wage) || 0) + (customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0))).toLocaleString()}</p>
-                            <p className="text-[10px] text-indigo-600 mt-1">
-                               (ค่าจ้าง {parseFloat(wage).toLocaleString()} + สนับสนุน {(customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)).toLocaleString()})
+                     {/* Summary Section - Redesigned Grid Layout for Long Numbers */}
+                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+                         <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100 flex flex-col justify-between">
+                            <div>
+                                <p className="text-sm font-bold text-indigo-800 mb-1">ยอดเรียกเก็บสุทธิ</p>
+                                <p className="text-[10px] text-indigo-600 mb-2">
+                                (ค่าจ้าง + สนับสนุน)
+                                </p>
+                            </div>
+                            <p className={`font-black text-indigo-900 tracking-tight break-all leading-tight ${((parseFloat(wage) || 0) + (customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0))).toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
+                                ฿{((parseFloat(wage) || 0) + (customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0))).toLocaleString()}
                             </p>
                          </div>
 
-                         <div className="bg-emerald-50 p-4 rounded-2xl min-w-[180px] flex-1 sm:flex-none">
-                            <p className="text-sm font-bold text-emerald-600 mb-1">รายได้ (ค่าจ้าง)</p>
-                            <p className="text-2xl font-black text-emerald-700 tracking-tight">฿{(parseFloat(wage) || 0).toLocaleString()}</p>
+                         <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 flex flex-col justify-between">
+                            <p className="text-sm font-bold text-emerald-600 mb-2">รายได้ (ค่าจ้าง)</p>
+                            <p className={`font-black text-emerald-700 tracking-tight break-all leading-tight ${wage.toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
+                                ฿{(parseFloat(wage) || 0).toLocaleString()}
+                            </p>
                          </div>
 
-                         <div className="bg-slate-50 p-4 rounded-2xl min-w-[180px] flex-1 sm:flex-none">
-                            <p className="text-sm font-bold text-slate-500 mb-1">รวมรายจ่าย</p>
-                            <p className="text-2xl font-black text-rose-600 tracking-tight">฿{totalExpenses.toLocaleString()}</p>
+                         <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col justify-between">
+                            <p className="text-sm font-bold text-slate-500 mb-2">รวมรายจ่าย</p>
+                            <p className={`font-black text-rose-600 tracking-tight break-all leading-tight ${totalExpenses.toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
+                                ฿{totalExpenses.toLocaleString()}
+                            </p>
                          </div>
                          
-                         <div className="bg-indigo-50 p-4 rounded-2xl min-w-[180px] flex-1 sm:flex-none">
-                            <p className="text-sm font-bold text-indigo-500 mb-1">กำไรสุทธิ</p>
-                            <p className={`text-2xl font-black tracking-tight ${profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                         <div className="bg-indigo-600 text-white p-4 rounded-2xl shadow-lg shadow-indigo-200 flex flex-col justify-between">
+                            <p className="text-sm font-bold text-indigo-100 mb-2">กำไรสุทธิ</p>
+                            <p className={`font-black tracking-tight break-all leading-tight ${profit.toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
                               {profit >= 0 ? '+' : ''}฿{profit.toLocaleString()}
                             </p>
                          </div>
                      </div>
+
+                     {/* Quick Save Button for Finance Section (View Only Mode) */}
+                     {viewOnlyMode && (
+                        <div className="mt-4 flex justify-end animate-in fade-in slide-in-from-top-2 duration-300">
+                            <div className="flex items-center gap-3 bg-amber-50 border border-amber-100 p-2 pl-4 rounded-2xl">
+                                <span className="text-xs font-bold text-amber-700">
+                                    <AlertCircle className="w-3 h-3 inline mr-1 mb-0.5" />
+                                    แก้ไขยอดเงินแล้ว อย่าลืมกดบันทึก
+                                </span>
+                                <button
+                                    onClick={handleSaveProject}
+                                    className="px-5 py-2 bg-emerald-600 text-white text-sm font-bold rounded-xl shadow-md shadow-emerald-200 hover:bg-emerald-700 hover:-translate-y-0.5 transition-all flex items-center gap-2"
+                                >
+                                    <Save className="w-4 h-4" />
+                                    บันทึกยอดเงิน
+                                </button>
+                            </div>
+                        </div>
+                     )}
                  </div>
                  
                  {/* ส่วนที่ 4: หมายเหตุ (Note) */}
@@ -4914,32 +4994,46 @@ const App = () => {
                  </div>
              </div>
 
-             {/* Footer Actions - Compact for Mobile */}
-             <div className="p-4 sm:p-8 border-t border-slate-100 bg-white sticky bottom-0 z-20 flex justify-between gap-3 sm:gap-4">
-                 {/* Delete Button (Only Show in Edit Mode) */}
-                 {editingId && (
-                   <button
-                     onClick={handleDeleteProject}
-                     className="px-4 py-3 sm:px-6 sm:py-4 bg-rose-50 text-rose-600 rounded-xl sm:rounded-2xl font-bold hover:bg-rose-100 transition-colors flex items-center gap-2 text-sm sm:text-lg"
-                   >
-                     <Trash2 className="w-5 h-5" />
-                     <span className="hidden sm:inline">ลบโครงการ</span>
-                   </button>
-                 )}
-                 
-                 <div className="flex gap-3 sm:gap-4 ml-auto w-full md:w-auto">
-                   <button
-                     onClick={closeModal}
-                     className="flex-1 px-4 py-3 sm:px-8 sm:py-4 bg-slate-100 text-slate-600 rounded-xl sm:rounded-2xl font-bold hover:bg-slate-200 transition-colors text-sm sm:text-lg"
-                   >
-                     {viewOnlyMode ? 'ปิด' : 'ยกเลิก'}
-                   </button>
-                   <button
-                     onClick={handleSaveProject}
-                     className="flex-[2] px-4 py-3 sm:px-10 sm:py-4 bg-indigo-600 text-white rounded-xl sm:rounded-2xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-200 hover:-translate-y-0.5 transition-all text-sm sm:text-lg"
-                   >
-                     {editingId ? 'บันทึก' : 'บันทึก'}
-                   </button>
+             {/* Footer Actions - Responsive: Mobile (35/65) | PC (Split Left/Right) */}
+             <div className="px-4 pt-4 sm:px-8 sm:py-6 border-t border-slate-100 bg-white/90 backdrop-blur-xl sticky bottom-0 z-30 safe-area-bottom-modal">
+                 <div className="flex items-center justify-center sm:justify-between gap-3 w-full">
+                     
+                     {/* Left Side: Delete Button (35% on Mobile, Auto on PC) */}
+                     {/* Using a conditional rendering for the wrapper to maintain layout */}
+                     {editingId ? (
+                        <button
+                             onClick={handleDeleteProject}
+                             className="w-[35%] sm:w-auto group flex items-center justify-center gap-2 py-3.5 sm:px-6 rounded-2xl text-rose-500 bg-rose-50 hover:bg-rose-100 transition-all duration-300 border border-transparent hover:border-rose-100 active:scale-95 shadow-sm shrink-0"
+                             title="ลบรายการ"
+                           >
+                             <Trash2 className="w-5 h-5 shrink-0" />
+                             <span className="font-bold text-sm hidden sm:inline">ลบรายการ</span>
+                             <span className="font-bold text-sm sm:hidden">ลบ</span>
+                        </button>
+                     ) : (
+                        <div className="hidden sm:block"></div> /* Spacer for PC alignment if needed */
+                     )}
+
+                     {/* Right Side: Main Actions (Remaining width on Mobile, Auto/Right on PC) */}
+                     <div className={`${editingId ? 'flex-1' : 'w-full'} sm:flex-none sm:w-auto sm:ml-auto`}>
+                         {viewOnlyMode ? (
+                            <button
+                                onClick={() => setViewOnlyMode(false)}
+                                className="w-full sm:w-auto py-3.5 px-6 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-2xl font-bold hover:bg-indigo-100 hover:border-indigo-200 hover:-translate-y-0.5 shadow-sm hover:shadow-md transition-all duration-200 flex items-center justify-center gap-2 active:scale-95"
+                            >
+                                <Edit className="w-5 h-5" />
+                                <span>แก้ไข</span>
+                            </button>
+                         ) : (
+                            <button
+                                onClick={handleSaveProject}
+                                className="w-full sm:w-auto py-3.5 px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:shadow-2xl hover:-translate-y-1 hover:scale-[1.02] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95"
+                            >
+                                <Save className="w-5 h-5" />
+                                <span>บันทึก</span>
+                            </button>
+                         )}
+                     </div>
                  </div>
              </div>
            </div>
