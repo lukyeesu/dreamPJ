@@ -72,12 +72,23 @@ import {
   Eye,
   EyeOff,
   LogIn,
-  UserPlus
+  UserPlus,
+  Image as ImageIcon,
+  UploadCloud,
+  HardDrive,
+  Maximize2,
+  ZoomIn,
+  ZoomOut,
+  Share2,
+  Copy,
+  Printer,
+  Link as LinkIcon,
+  PackageCheck
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
 // นำ Web App URL ที่ได้จากการ Deploy Apps Script มาวางที่นี่
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzVAcljQwrnYwvzZ93d7RDIKpS2ctFDklrcq-HJzOgjFb0gvg1sNhxp3OiuZJ9CTXxX/exec"; 
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwwbLiohFgwdwHCqAScpPPfuNMrJPlLn2XB9PV5CPKIB8paFYd0J1ZXyOP5C2bGD0ZgyA/exec"; 
 // ---------------------
 
 const navItems = [
@@ -105,6 +116,18 @@ const systemStatusTypes = [
   { value: 'cancelled', label: 'ยกเลิก/มีปัญหา', color: 'text-rose-600 bg-rose-50' },
   { value: 'declined', label: 'ลูกค้าไม่อนุมัติ', color: 'text-gray-600 bg-gray-50' }
 ];
+
+const processImageUrl = (url) => {
+  if (!url) return null;
+  if (url.startsWith('data:')) return url;
+  if (url.includes('drive.google.com') && url.includes('id=')) {
+      const idMatch = url.match(/id=([a-zA-Z0-9_-]+)/);
+      if (idMatch && idMatch[1]) {
+          return `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w4000`;
+      }
+  }
+  return url;
+};
 
 const formatDate = (isoString) => {
   if (!isoString) return "";
@@ -135,7 +158,576 @@ const renderDeliveryTime = (item) => {
   return <span>{end || item.deliveryDate || '-'}</span>;
 };
 
-// --- Custom Components ---
+const ImageViewer = ({ src, onClose }) => {
+  const [scale, setScale] = useState(1);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [startPos, setStartPos] = useState({ x: 0, y: 0 });
+  const [initialDistance, setInitialDistance] = useState(0);
+
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    const handleWheel = (e) => {
+      e.preventDefault();
+      const newScale = Math.max(1, Math.min(scale + (e.deltaY * -0.01), 5));
+      setScale(newScale);
+    };
+    
+    const container = containerRef.current;
+    if (container) {
+       container.addEventListener('wheel', handleWheel, { passive: false });
+    }
+    return () => {
+        if(container) container.removeEventListener('wheel', handleWheel);
+    }
+  }, [scale]);
+
+  const handleTouchStart = (e) => {
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].pageX - e.touches[1].pageX,
+        e.touches[0].pageY - e.touches[1].pageY
+      );
+      setInitialDistance(dist);
+    } else if (e.touches.length === 1 && scale > 1) {
+       setIsDragging(true);
+       setStartPos({ x: e.touches[0].pageX - position.x, y: e.touches[0].pageY - position.y });
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].pageX - e.touches[1].pageX,
+        e.touches[0].pageY - e.touches[1].pageY
+      );
+      if (initialDistance > 0) {
+        const delta = dist - initialDistance;
+        const newScale = Math.max(1, Math.min(scale + (delta * 0.01), 5));
+        setScale(newScale);
+        setInitialDistance(dist);
+      }
+    } else if (e.touches.length === 1 && isDragging && scale > 1) {
+      e.preventDefault();
+      setPosition({
+        x: e.touches[0].pageX - startPos.x,
+        y: e.touches[0].pageY - startPos.y
+      });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsDragging(false);
+    setInitialDistance(0);
+  };
+
+  const handleMouseDown = (e) => {
+     if (scale > 1) {
+         setIsDragging(true);
+         setStartPos({ x: e.clientX - position.x, y: e.clientY - position.y });
+     }
+  };
+
+  const handleMouseMove = (e) => {
+      if (isDragging && scale > 1) {
+          setPosition({ x: e.clientX - startPos.x, y: e.clientY - startPos.y });
+      }
+  };
+
+  const handleMouseUp = () => setIsDragging(false);
+
+  useEffect(() => {
+     if (scale === 1) setPosition({ x: 0, y: 0 });
+  }, [scale]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col animate-in fade-in duration-300">
+       <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-50 bg-gradient-to-b from-black/50 to-transparent">
+          <div className="text-white/80 text-sm font-bold flex items-center gap-2">
+             <ImageIcon className="w-4 h-4" />
+             Preview
+          </div>
+          <div className="flex items-center gap-4">
+             <div className="flex gap-2 bg-white/10 rounded-full p-1 backdrop-blur-md">
+                <button 
+                    onClick={() => setScale(Math.max(1, scale - 0.5))}
+                    className="p-2 text-white hover:bg-white/20 rounded-full transition"
+                >
+                    <ZoomOut className="w-5 h-5" />
+                </button>
+                <button 
+                    onClick={() => setScale(Math.min(5, scale + 0.5))}
+                    className="p-2 text-white hover:bg-white/20 rounded-full transition"
+                >
+                    <ZoomIn className="w-5 h-5" />
+                </button>
+             </div>
+             <button onClick={onClose} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition">
+                <X className="w-6 h-6" />
+             </button>
+          </div>
+       </div>
+
+       <div 
+          ref={containerRef}
+          className="flex-1 flex items-center justify-center overflow-hidden cursor-move touch-none"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+       >
+          <img 
+              src={src} 
+              alt="Full Preview"
+              style={{ 
+                  transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
+                  transition: isDragging ? 'none' : 'transform 0.2s ease-out',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  objectFit: 'contain'
+              }}
+              draggable={false}
+          />
+       </div>
+       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white/50 text-xs font-medium pointer-events-none bg-black/30 px-3 py-1 rounded-full backdrop-blur-sm">
+          {scale === 1 ? 'Pinch or Scroll to Zoom' : `${Math.round(scale * 100)}%`}
+       </div>
+    </div>,
+    document.body
+  );
+};
+
+// --- Customer Tracking View ---
+const CustomerTrackingView = ({ data }) => {
+  if (!data) return null;
+
+  // คำนวณยอดเรียกเก็บสุทธิ
+  const wage = parseFloat(data.wage) || 0;
+  const support = data.customerSupport ? data.customerSupport.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) : 0;
+  const netReceivable = wage + support;
+
+  // Helper เพื่อกำหนดสถานะ Timeline
+  const getStepStatus = (step) => {
+    // Logic ง่ายๆ เพื่อจำลอง Timeline จาก status
+    const deal = data.dealStatus || 'pending';
+    const transport = data.transportStatus || 'pending';
+
+    // Step 1: รับเรื่อง (Always true if data exists)
+    if (step === 1) return 'completed';
+
+    // Step 2: ดำเนินการ (Confirmed/Active deal)
+    if (step === 2) {
+       if (deal === 'confirmed' || deal === 'active' || deal === 'completed') return 'completed';
+       if (deal === 'pending') return 'current';
+       return 'pending';
+    }
+
+    // Step 3: กำลังจัดส่ง/ติดตั้ง (Active Transport)
+    if (step === 3) {
+       if (transport === 'delivering' || transport === 'installed' || transport === 'completed' || transport === 'delivered') return 'completed';
+       if ((deal === 'confirmed' || deal === 'active') && transport !== 'pending') return 'current';
+       return 'pending';
+    }
+
+    // Step 4: เสร็จสิ้น (Completed/Delivered)
+    if (step === 4) {
+       if (deal === 'completed' || transport === 'delivered' || transport === 'completed') return 'completed';
+       return 'pending';
+    }
+    return 'pending';
+  };
+
+  const steps = [
+    { id: 1, label: 'รับเรื่อง', icon: Clipboard },
+    { id: 2, label: 'ดำเนินการ', icon: Activity },
+    { id: 3, label: 'จัดส่ง/ติดตั้ง', icon: Truck },
+    { id: 4, label: 'เสร็จสิ้น', icon: CheckCircle },
+  ];
+
+  return (
+    <div className="min-h-screen bg-slate-50 pb-12">
+       {/* Mobile Header-like Card */}
+       <div className="bg-indigo-600 text-white p-6 pb-12 rounded-b-[2.5rem] shadow-lg shadow-indigo-200 relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-8 opacity-10">
+             <PackageCheck className="w-32 h-32 transform rotate-12" />
+          </div>
+          <div className="relative z-10 flex flex-col items-center text-center gap-2 mt-4">
+             <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center mb-2 shadow-inner border border-white/10">
+                <Search className="w-6 h-6 text-white" />
+             </div>
+             <h1 className="text-2xl font-black tracking-tight">ติดตามสถานะงาน</h1>
+             <p className="text-indigo-100 text-sm font-medium">Project Tracking System</p>
+             <div className="mt-4 bg-white/10 backdrop-blur-sm px-4 py-1.5 rounded-full border border-white/20 text-xs font-bold text-indigo-50">
+                ID: {data.id}
+             </div>
+          </div>
+       </div>
+
+       <div className="max-w-md mx-auto px-4 -mt-8 relative z-20 space-y-6">
+          
+          {/* Status Card */}
+          <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+             <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 text-center">สถานะปัจจุบัน</h2>
+             <div className="flex justify-between items-start relative px-2">
+                {/* Connecting Line */}
+                <div className="absolute top-4 left-4 right-4 h-0.5 bg-slate-100 -z-10"></div>
+                
+                {steps.map((step, idx) => {
+                   const status = getStepStatus(step.id);
+                   let colorClass = 'bg-slate-100 text-slate-400 border-slate-200'; // pending
+                   if (status === 'completed') colorClass = 'bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-200';
+                   if (status === 'current') colorClass = 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200 scale-110';
+
+                   return (
+                      <div key={step.id} className="flex flex-col items-center gap-2">
+                         <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all duration-500 ${colorClass}`}>
+                            <step.icon className="w-4 h-4" />
+                         </div>
+                         <span className={`text-[10px] font-bold ${status === 'current' ? 'text-indigo-600' : 'text-slate-400'}`}>
+                            {step.label}
+                         </span>
+                      </div>
+                   );
+                })}
+             </div>
+             <div className="mt-6 text-center">
+                <span className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold ${
+                    data.dealStatus === 'cancelled' ? 'bg-rose-50 text-rose-600' : 'bg-slate-50 text-slate-600'
+                }`}>
+                    {data.dealStatus === 'cancelled' ? <AlertCircle className="w-4 h-4"/> : <Activity className="w-4 h-4 text-indigo-500"/>}
+                    {data.dealStatus === 'cancelled' ? 'ยกเลิก/มีปัญหา' : `สถานะ: ${data.dealStatus || 'กำลังดำเนินการ'}`}
+                </span>
+             </div>
+          </div>
+
+          {/* Project Details (Part 1) */}
+          <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+             <h3 className="text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-indigo-600" />
+                รายละเอียดงาน
+             </h3>
+             <div className="space-y-4">
+                <div>
+                   <p className="text-xs text-slate-400 font-bold mb-1">ชื่อโครงการ</p>
+                   <p className="text-base font-bold text-slate-800 leading-tight">{data.name}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                   <div>
+                      <p className="text-xs text-slate-400 font-bold mb-1">วันที่เริ่ม</p>
+                      <p className="text-sm font-bold text-slate-600">{formatDate(data.rawDateTime)}</p>
+                   </div>
+                   <div>
+                      <p className="text-xs text-slate-400 font-bold mb-1">ศิลปิน</p>
+                      <p className="text-sm font-bold text-slate-600">{data.artist}</p>
+                   </div>
+                </div>
+                <div>
+                   <p className="text-xs text-slate-400 font-bold mb-1">ลูกค้า</p>
+                   <p className="text-sm font-bold text-slate-600">{data.customer}</p>
+                </div>
+             </div>
+          </div>
+
+          {/* Delivery & Location (Part 2) */}
+          <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+             <h3 className="text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
+                <Truck className="w-5 h-5 text-emerald-600" />
+                การจัดส่ง & สถานที่
+             </h3>
+             <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                <div className="flex items-start gap-3">
+                   <Clock className="w-5 h-5 text-indigo-500 shrink-0 mt-0.5" />
+                   <div>
+                      <p className="text-xs text-slate-400 font-bold">กำหนดส่ง</p>
+                      <div className="text-sm font-bold text-slate-700">{renderDeliveryTime(data)}</div>
+                   </div>
+                </div>
+                <div className="flex items-start gap-3">
+                   <MapPin className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+                   <div>
+                      <p className="text-xs text-slate-400 font-bold">สถานที่</p>
+                      <p className="text-sm font-bold text-slate-700">{data.location || '-'}</p>
+                      {data.mapLink && (
+                         <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1">
+                            <ExternalLink className="w-3 h-3" /> เปิดแผนที่
+                         </a>
+                      )}
+                   </div>
+                </div>
+                {(data.recipient || data.recipientPhone) && (
+                   <div className="flex items-start gap-3 pt-2 border-t border-slate-200 mt-2">
+                      <User className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+                      <div>
+                         <p className="text-xs text-slate-400 font-bold">ผู้รับ</p>
+                         <p className="text-sm font-bold text-slate-700">{data.recipient || '-'}</p>
+                         <p className="text-xs font-medium text-slate-500">{data.recipientPhone}</p>
+                      </div>
+                   </div>
+                )}
+             </div>
+          </div>
+
+          {/* Images */}
+          {data.image && (
+             <div className="bg-white p-4 rounded-[2rem] shadow-sm border border-slate-100">
+                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3 px-2 flex items-center gap-2">
+                   <ImageIcon className="w-4 h-4" /> รูปภาพอ้างอิง
+                </h3>
+                <div className="rounded-2xl overflow-hidden border border-slate-100 bg-slate-50">
+                   <img src={processImageUrl(data.image)} alt="Reference" className="w-full h-auto object-contain max-h-80" />
+                </div>
+             </div>
+          )}
+
+          {/* Net Amount */}
+          <div className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white p-6 rounded-[2rem] shadow-lg shadow-indigo-200">
+             <div className="flex justify-between items-center">
+                <div>
+                   <p className="text-indigo-200 text-xs font-bold uppercase tracking-wider mb-1">ยอดชำระสุทธิ</p>
+                   <p className="text-xs text-indigo-100 opacity-80">Net Receivable</p>
+                </div>
+                <div className="text-right">
+                   <p className="text-3xl font-black tracking-tight">฿{netReceivable.toLocaleString()}</p>
+                </div>
+             </div>
+          </div>
+
+          <div className="text-center pb-8">
+             <p className="text-xs text-slate-400">Powered by NexusPlan</p>
+          </div>
+
+       </div>
+    </div>
+  );
+};
+
+const SharePreviewModal = ({ data, onClose }) => {
+  const [isCopied, setIsCopied] = useState(false);
+  const [isLinkCopied, setIsLinkCopied] = useState(false); // New state for link copy
+
+  // คำนวณยอดเรียกเก็บสุทธิ
+  const wage = parseFloat(data.wage) || 0;
+  const support = data.customerSupport ? data.customerSupport.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) : 0;
+  const netReceivable = wage + support;
+
+  const handleCopyText = () => {
+    const text = `
+📋 *รายละเอียดงาน (Job Summary)*
+🆔 ${data.id}
+📌 โครงการ: ${data.name}
+📅 วันที่: ${formatDate(data.rawDateTime)}
+🎭 ศิลปิน: ${data.artist}
+👤 ลูกค้า: ${data.customer}
+
+🚚 *การจัดส่ง & สถานที่*
+⏰ กำหนดส่ง: ${renderDeliveryTime(data)?.props?.children?.[0]?.props?.children || renderDeliveryTime(data)?.props?.children || '-'}
+📍 สถานที่: ${data.location || '-'}
+🗺️ แผนที่: ${data.mapLink || '-'}
+📞 ผู้รับ: ${data.recipient || '-'} (${data.recipientPhone || '-'})
+
+💰 *ยอดเรียกเก็บสุทธิ: ฿${netReceivable.toLocaleString()}*
+    `.trim();
+
+    try {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        textArea.style.top = "0";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        if (successful) {
+            setIsCopied(true);
+            setTimeout(() => setIsCopied(false), 2000);
+        }
+    } catch (err) {
+        console.error('Fallback: Oops, unable to copy', err);
+    }
+  };
+
+  const handleCopyLink = () => {
+      // สร้าง Link โดยอิงจาก URL ปัจจุบัน และเพิ่ม Query Param ?tracking=ID
+      // FIX: ใช้ URL Object เพื่อจัดการ Path และ Origin ให้ถูกต้อง ป้องกันปัญหา URL ซ้อนกัน
+      try {
+        const urlObj = new URL(window.location.href);
+        urlObj.searchParams.set('tracking', data.id);
+        const url = urlObj.toString();
+      
+        const textArea = document.createElement("textarea");
+        textArea.value = url;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        textArea.style.top = "0";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        
+        if (successful) {
+            setIsLinkCopied(true);
+            setTimeout(() => setIsLinkCopied(false), 2000);
+        }
+      } catch (err) {
+          console.error('Unable to copy link', err);
+      }
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 print:p-0">
+      <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200 print:shadow-none print:w-full print:max-w-none print:h-auto print:rounded-none">
+        
+        <div className="px-6 py-4 bg-indigo-600 text-white flex justify-between items-center print:hidden">
+          <div className="flex items-center gap-2">
+            <Share2 className="w-5 h-5" />
+            <span className="font-bold text-lg">สำหรับลูกค้า (Customer View)</span>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-white/20 rounded-full transition">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 overflow-y-auto custom-scrollbar bg-slate-50 print:bg-white print:p-0">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 print:border-none print:shadow-none">
+            
+            <div className="flex justify-between items-start mb-6 border-b border-slate-100 pb-4">
+               <div>
+                  <h2 className="text-xl font-black text-slate-800 leading-tight">{data.name}</h2>
+                  <p className="text-slate-500 text-sm mt-1">ID: <span className="font-mono font-bold text-indigo-600">{data.id}</span></p>
+               </div>
+               <div className="text-right">
+                  <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold border border-emerald-100">
+                    ใบสรุปงาน
+                  </span>
+               </div>
+            </div>
+
+            <div className="space-y-4 mb-6">
+               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                  <FileText className="w-4 h-4" /> ข้อมูลทั่วไป
+               </h3>
+               <div className="grid grid-cols-2 gap-y-4 gap-x-2 text-sm">
+                  <div>
+                    <p className="text-slate-400 text-xs">วันที่</p>
+                    <p className="font-bold text-slate-700">{formatDate(data.rawDateTime)}</p>
+                  </div>
+                   <div>
+                    <p className="text-slate-400 text-xs">ศิลปิน</p>
+                    <p className="font-bold text-slate-700">{data.artist}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-slate-400 text-xs">ลูกค้า</p>
+                    <p className="font-bold text-slate-700">{data.customer}</p>
+                  </div>
+               </div>
+            </div>
+
+            <div className="space-y-4 mb-6">
+               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                  <MapPin className="w-4 h-4" /> การจัดส่ง & สถานที่
+               </h3>
+               <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                  <div className="flex items-start gap-3">
+                     <Clock className="w-5 h-5 text-indigo-500 shrink-0 mt-0.5" />
+                     <div>
+                        <p className="text-xs text-slate-400 font-bold">กำหนดส่ง</p>
+                        <div className="text-sm font-bold text-slate-700">{renderDeliveryTime(data)}</div>
+                     </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                     <MapPin className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+                     <div>
+                        <p className="text-xs text-slate-400 font-bold">สถานที่</p>
+                        <p className="text-sm font-bold text-slate-700">{data.location || '-'}</p>
+                        {data.mapLink && (
+                           <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1">
+                              <ExternalLink className="w-3 h-3" /> เปิดแผนที่
+                           </a>
+                        )}
+                     </div>
+                  </div>
+                  {(data.recipient || data.recipientPhone) && (
+                     <div className="flex items-start gap-3 pt-2 border-t border-slate-200 mt-2">
+                        <User className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+                        <div>
+                           <p className="text-xs text-slate-400 font-bold">ผู้รับ</p>
+                           <p className="text-sm font-bold text-slate-700">{data.recipient || '-'}</p>
+                           <p className="text-xs font-medium text-slate-500">{data.recipientPhone}</p>
+                        </div>
+                     </div>
+                  )}
+               </div>
+            </div>
+
+            {data.image && (
+               <div className="mb-6">
+                  <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2 mb-3">
+                     <ImageIcon className="w-4 h-4" /> รูปภาพอ้างอิง
+                  </h3>
+                  <div className="rounded-xl overflow-hidden border border-slate-200">
+                     <img src={processImageUrl(data.image)} alt="Project Ref" className="w-full h-auto object-contain max-h-64 bg-slate-50" />
+                  </div>
+               </div>
+            )}
+
+            <div className="mt-6 pt-6 border-t-2 border-dashed border-slate-200">
+               <div className="bg-indigo-600 text-white p-5 rounded-2xl shadow-lg shadow-indigo-200 flex justify-between items-center">
+                  <div>
+                     <p className="text-indigo-200 text-xs font-bold uppercase tracking-wider">ยอดเรียกเก็บสุทธิ</p>
+                     <p className="text-xs text-indigo-100 opacity-80 mt-1">Net Receivable</p>
+                  </div>
+                  <div className="text-right">
+                     <p className="text-3xl font-black tracking-tight">฿{netReceivable.toLocaleString()}</p>
+                  </div>
+               </div>
+            </div>
+
+          </div>
+        </div>
+
+        {/* Buttons Action Area */}
+        <div className="p-4 bg-white border-t border-slate-100 flex flex-col gap-3 print:hidden">
+           <div className="flex gap-3">
+               <button 
+                 onClick={handleCopyLink}
+                 className={`flex-1 py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${isLinkCopied ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+               >
+                 {isLinkCopied ? <Check className="w-5 h-5" /> : <LinkIcon className="w-5 h-5" />}
+                 {isLinkCopied ? 'คัดลอกลิงก์แล้ว' : 'คัดลอกลิงก์ติดตาม'}
+               </button>
+               <button 
+                 onClick={handleCopyText}
+                 className={`flex-1 py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${isCopied ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+               >
+                 {isCopied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+                 {isCopied ? 'คัดลอกข้อความแล้ว' : 'คัดลอกข้อความ'}
+               </button>
+           </div>
+           <button 
+             onClick={handlePrint}
+             className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2"
+           >
+             <Printer className="w-5 h-5" />
+             พิมพ์ / บันทึก PDF
+           </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
 
 const Toast = ({ message, type, onClose }) => {
   useEffect(() => {
@@ -190,7 +782,6 @@ const LoadingOverlay = () => createPortal(
   document.body
 );
 
-// --- Login Screen Component ---
 const LoginScreen = ({ onLogin, isLoading, loginError }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -397,8 +988,8 @@ const ModernDateTimePicker = ({ value, onChange, placeholder, hasTime = true, mi
       const rect = wrapperRef.current.getBoundingClientRect();
       const screenWidth = window.innerWidth;
       const screenHeight = window.innerHeight;
-      const popupWidth = 320; // Max width
-      const popupHeight = 380; // Estimated height
+      const popupWidth = 320; 
+      const popupHeight = 380; 
 
       let top = rect.bottom + 4;
       let left = rect.left;
@@ -808,16 +1399,16 @@ const ListManager = ({ title, items, onAdd, onDelete, placeholder, icon: Icon, o
   const handleAdd = () => {
     if (newItem.trim()) {
         const newItems = [...items, newItem];
-        onAdd(newItem); // Update local state immediately
-        onSave(newItems); // Trigger save to sheet
+        onAdd(newItem);
+        onSave(newItems);
         setNewItem('');
     }
   };
 
   const handleDelete = (index) => {
       const newItems = items.filter((_, i) => i !== index);
-      onDelete(index); // Update local
-      onSave(newItems); // Trigger save
+      onDelete(index);
+      onSave(newItems);
   };
 
   return (
@@ -898,7 +1489,7 @@ const AdvancedListManager = ({ title, items, onUpdate, placeholder, icon: Icon, 
     }
     
     onUpdate(updatedItems);
-    onSave(updatedItems); // Save to sheet
+    onSave(updatedItems);
 
     setNewItemLabel('');
     setSelectedColor(colorPresets[0].value);
@@ -925,7 +1516,7 @@ const AdvancedListManager = ({ title, items, onUpdate, placeholder, icon: Icon, 
     const handleDelete = (index) => {
       const updatedItems = items.filter((_, i) => i !== index);
       onUpdate(updatedItems);
-      onSave(updatedItems); // Save to sheet
+      onSave(updatedItems);
       if (isEditing && editIndex === index) {
         cancelEdit();
       }
@@ -951,7 +1542,7 @@ const AdvancedListManager = ({ title, items, onUpdate, placeholder, icon: Icon, 
 
   const onDragEnd = () => {
     if (draggedItemIndex !== null) {
-       onSave(items); // Save after drag sort
+       onSave(items); 
     }
     setDraggedItemIndex(null);
   };
@@ -1219,8 +1810,6 @@ const SortableHeader = ({ label, sortKey, sortConfig, handleSort, alignRight = f
 
 const App = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  
-  // --- Persist Sidebar State ---
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('nexus_sidebar_collapsed');
     return saved === 'true';
@@ -1235,7 +1824,7 @@ const App = () => {
   useEffect(() => {
     const currentTab = navItems.find(item => item.name === activeTab);
     if (currentTab) {
-      document.title = `${currentTab.label} - ลูกหยีสร้างเองอะค้าบบบบ`;
+      document.title = `${currentTab.label} - NexusPlan`;
     } else {
       document.title = "NexusPlan Dashboard";
     }
@@ -1244,11 +1833,9 @@ const App = () => {
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [isSaving, setIsSaving] = useState(false); 
 
-  // --- Infinite Scroll State ---
   const [visibleCount, setVisibleCount] = useState(20);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  // --- Animation State ---
   const [animateCharts, setAnimateCharts] = useState(false);
 
   useEffect(() => {
@@ -1257,7 +1844,6 @@ const App = () => {
      return () => clearTimeout(timer);
   }, [activeTab]);
 
-  // --- Login State ---
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authorizedUsers, setAuthorizedUsers] = useState([
     {
@@ -1280,9 +1866,10 @@ const App = () => {
   const [loginError, setLoginError] = useState('');
   const [userProfile, setUserProfile] = useState(null);
 
-  // --- New User State for Settings ---
   const [newUser, setNewUser] = useState({ username: '', password: '', name: '', role: '', email: '', phone: '' });
   const [isAddingUser, setIsAddingUser] = useState(false);
+
+  const [driveFolderId, setDriveFolderId] = useState('');
 
   const [projectCategories, setProjectCategories] = useState([]);
   const [expenseCategories, setExpenseCategories] = useState([]);
@@ -1297,12 +1884,17 @@ const App = () => {
   const [isModalClosing, setIsModalClosing] = useState(false);
   const [viewOnlyMode, setViewOnlyMode] = useState(false);
   const [isMobileFilterExpanded, setIsMobileFilterExpanded] = useState(false);
+  
+  // Share Data State
+  const [shareData, setShareData] = useState(null);
 
   const [editingId, setEditingId] = useState(null);
   const part3Ref = useRef(null);
 
   const [deleteConfirm, setDeleteConfirm] = useState({ show: false, id: null, fromModal: false });
   const [isDeleteClosing, setIsDeleteClosing] = useState(false);
+
+  const [previewImage, setPreviewImage] = useState(null);
 
   const [sortConfig, setSortConfig] = useState({ key: 'id', direction: 'desc' });
   const [searchTerm, setSearchTerm] = useState('');
@@ -1314,6 +1906,9 @@ const App = () => {
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterTransport, setFilterTransport] = useState('all');
+
+  // Tracking State
+  const [trackingId, setTrackingId] = useState(null);
 
   useEffect(() => {
     setVisibleCount(20);
@@ -1344,6 +1939,7 @@ const App = () => {
   const [recipientPhone, setRecipientPhone] = useState('');
   const [locationName, setLocationName] = useState('');
   const [mapLink, setMapLink] = useState('');
+  const [uploadedImage, setUploadedImage] = useState(null);
 
   const [note, setNote] = useState('');
 
@@ -1366,6 +1962,15 @@ const App = () => {
     }
   }, []);
 
+  // Parse URL for tracking ID
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const trackId = searchParams.get('tracking');
+    if (trackId) {
+        setTrackingId(trackId);
+    }
+  }, []);
+
   const fetchSettings = async () => {
     if (!GOOGLE_SCRIPT_URL) return;
     try {
@@ -1380,6 +1985,7 @@ const App = () => {
             if (data.expense_categories) setExpenseCategories(data.expense_categories);
             if (data.deal_statuses) setDealStatuses(data.deal_statuses);
             if (data.transport_statuses) setTransportStatuses(data.transport_statuses);
+            if (data.drive_folder_id) setDriveFolderId(data.drive_folder_id);
             
             if (data.app_credentials) {
                 let creds = data.app_credentials;
@@ -1464,13 +2070,14 @@ const App = () => {
   };
 
   useEffect(() => {
-    if (isLoggedIn) {
+    if (isLoggedIn || trackingId) {
         fetchProjects();
     }
-  }, [isLoggedIn]);
+  }, [isLoggedIn, trackingId]);
 
   const saveSystemSettings = async (key, value) => {
       if (!GOOGLE_SCRIPT_URL) return;
+      setIsSaving(true);
       try {
           await fetch(GOOGLE_SCRIPT_URL, {
               method: 'POST',
@@ -1482,9 +2089,15 @@ const App = () => {
           if (key === 'app_credentials') {
               setAuthorizedUsers(value);
           }
+          if (key === 'drive_folder_id') {
+              setDriveFolderId(value);
+          }
+          showToast("บันทึกการตั้งค่าสำเร็จ", "success");
       } catch (error) {
           console.error("Error saving settings:", error);
           showToast("บันทึกการตั้งค่าไม่สำเร็จ", "error");
+      } finally {
+          setIsSaving(false);
       }
   };
 
@@ -1618,6 +2231,84 @@ const App = () => {
     }
   };
 
+  // --- Image Handling Logic ---
+  const compressImage = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 1024; // Resize if width > 1024
+          const scaleSize = MAX_WIDTH / img.width;
+          
+          if (scaleSize < 1) {
+              canvas.width = MAX_WIDTH;
+              canvas.height = img.height * scaleSize;
+          } else {
+              canvas.width = img.width;
+              canvas.height = img.height;
+          }
+          
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          
+          // Compress quality to 0.7
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+          resolve(dataUrl);
+        };
+        img.onerror = (err) => reject(err);
+      };
+      reader.onerror = (err) => reject(err);
+    });
+  };
+
+  const toBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = error => reject(error);
+  });
+
+  const handleImageUpload = async (file) => {
+      setIsSaving(true);
+      try {
+          if (!file.type.startsWith('image/')) {
+              throw new Error('กรุณาอัพโหลดไฟล์รูปภาพเท่านั้น');
+          }
+          
+          let processedFile = file;
+          // Check size > 5MB (5 * 1024 * 1024)
+          if (file.size > 5 * 1024 * 1024) {
+               showToast("กำลังลดขนาดไฟล์รูปภาพ...", "success");
+               processedFile = await compressImage(file);
+          } else {
+               processedFile = await toBase64(file);
+          }
+          
+          setUploadedImage(processedFile);
+          showToast("อัพโหลดรูปภาพพร้อมบันทึก", "success");
+      } catch (error) {
+          console.error(error);
+          showToast(error.message || "เกิดข้อผิดพลาดในการอัพโหลดรูปภาพ", "error");
+      } finally {
+          setIsSaving(false);
+      }
+  };
+
+  const onDrop = (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      if (file) handleImageUpload(file);
+  };
+
+  const onDragOverImg = (e) => {
+      e.preventDefault();
+  };
+
+
   useEffect(() => {
     if (isAddModalOpen && viewOnlyMode && part3Ref.current) {
       setTimeout(() => {
@@ -1647,7 +2338,6 @@ const App = () => {
       let matchesDate = true;
       if (item.rawDateTime) {
           const itemDateStr = item.rawDateTime.split('T')[0];
-          
           if (dateFilterMode === 'date' && filterDate) {
               matchesDate = itemDateStr === filterDate;
           } else if (dateFilterMode === 'month' && filterDate) {
@@ -1722,6 +2412,7 @@ const App = () => {
     return items;
   }, [allActivities, sortConfig]);
 
+  // ... (getDealType, getTransportType, stats, resetFilters, closeModal, closeDeleteModal, handlers remain same) ...
   const getDealType = (val) => dealStatuses.find(s => s.value === val)?.type || 'pending';
   const getTransportType = (val) => transportStatuses.find(s => s.value === val)?.type || 'pending';
 
@@ -1774,7 +2465,7 @@ const App = () => {
     setTimeout(() => {
       setIsAddModalOpen(false);
       setIsModalClosing(false);
-    }, 300);
+    }, 300); // 300ms matches animation duration
   };
 
   const closeDeleteModal = () => {
@@ -1835,6 +2526,7 @@ const App = () => {
       setRecipientPhone(activity.recipientPhone || '');
       setLocationName(activity.location || '');
       setMapLink(activity.mapLink || '');
+      setUploadedImage(activity.image || null); // Load existing image
       setWage(activity.wage);
       setExpenses(activity.expenses && activity.expenses.length > 0 ? activity.expenses : [{ category: '', detail: '', price: 0 }]);
       setCustomerSupportItems(activity.customerSupport && activity.customerSupport.length > 0 ? activity.customerSupport : [{ detail: '', price: 0 }]);
@@ -1870,6 +2562,7 @@ const App = () => {
       setRecipientPhone('');
       setLocationName('');
       setMapLink('');
+      setUploadedImage(null);
       setNote('');
       setWage(0);
       setExpenses([{ category: '', detail: '', price: 0 }]);
@@ -1929,7 +2622,8 @@ const App = () => {
       recipient: recipientName,
       recipientPhone: recipientPhone,
       location: locationName,
-      mapLink: mapLink
+      mapLink: mapLink,
+      image: uploadedImage // Add image data
     };
 
     if (GOOGLE_SCRIPT_URL) {
@@ -1955,7 +2649,13 @@ const App = () => {
           fetchProjects(); 
           return;
         } else {
-          showToast("ไม่สามารถบันทึกข้อมูลได้: " + result.message, 'error');
+          // --- ส่วนที่ปรับปรุง: ตรวจสอบและแปล Error เรื่องสิทธิ์ Google Script ---
+          let displayMsg = result.message;
+          if (displayMsg && (displayMsg.includes("DriveApp") || displayMsg.includes("permission") || displayMsg.includes("อนุญาต"))) {
+             displayMsg = "สิทธิ์ Google Drive ไม่ถูกต้อง: กรุณาเปิด Apps Script > กด Run ฟังก์ชันเพื่อขอสิทธิ์ (Authorize) > และ Deploy ใหม่อีกครั้ง";
+          }
+          // -----------------------------------------------------------------
+          showToast("ไม่สามารถบันทึกข้อมูลได้: " + displayMsg, 'error');
         }
       } catch (error) {
         showToast("เกิดข้อผิดพลาดในการเชื่อมต่อ: " + error.message, 'error');
@@ -1971,7 +2671,7 @@ const App = () => {
     }
     setIsSaving(false);
   };
-
+  
   const handleDeleteProject = () => {
     if (editingId) {
       setDeleteConfirm({ show: true, id: editingId, fromModal: true });
@@ -1986,11 +2686,20 @@ const App = () => {
   const executeDelete = async () => {
     if (deleteConfirm.id) {
       setIsSaving(true);
+
+      // ค้นหารายการที่จะลบ เพื่อเอาข้อมูลรูปภาพส่งไปให้ Backend ลบไฟล์
+      const itemToDelete = allActivities.find(item => item.id === deleteConfirm.id);
+      const imageInfo = itemToDelete ? itemToDelete.image : null;
+
       if (GOOGLE_SCRIPT_URL) {
          try {
            const response = await fetch(GOOGLE_SCRIPT_URL, {
              method: 'POST',
-             body: JSON.stringify({ action: 'delete', id: deleteConfirm.id })
+             body: JSON.stringify({ 
+                action: 'delete', 
+                id: deleteConfirm.id,
+                image: imageInfo // ส่งข้อมูลรูปภาพไปด้วยเพื่อให้ Backend ลบไฟล์บน Drive
+             })
            });
            const result = await response.json();
            if (result.status === 'success') {
@@ -2050,6 +2759,7 @@ const App = () => {
     setCustomerSupportItems(newItems);
   };
 
+  // ... (DonutChart, renderTable, renderFilterCard remain same) ...
   const DonutChart = ({ data }) => {
     const total = data.reduce((sum, item) => sum + item.count, 0);
     const radius = 35;
@@ -2121,7 +2831,7 @@ const App = () => {
        </div>
     );
   };
-
+  
   const renderTable = (limit = 0, customData = null) => {
     const sourceData = limit > 0 ? (customData || sortedActivitiesForOverview) : (customData || filteredAndSortedActivities);
     const displayLimit = limit > 0 ? limit : visibleCount;
@@ -2325,7 +3035,7 @@ const App = () => {
                         className="hover:bg-slate-50/80 transition-colors group cursor-pointer space-row-animation"
                         style={{ animationDelay: `${animDelay}ms` }}
                       >
-                        <td className="px-6 py-4 align-top">
+                         <td className="px-6 py-4 align-top">
                           <div className="flex flex-col gap-1">
                             <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit">{item.id}</span>
                             <div className="flex items-center gap-1.5 text-slate-500 text-xs mt-1">
@@ -2468,7 +3178,7 @@ const App = () => {
       </div>
     );
   };
-
+  
   const renderFilterCard = () => (
     <div
       className={`sticky top-0 z-40 bg-white/95 backdrop-blur-xl border-slate-200 transition-all duration-300 ease-in-out
@@ -2518,7 +3228,7 @@ const App = () => {
                         range={filterDateRange} setRange={setFilterDateRange}
                     />
                 </div>
-
+                {/* ... Filters Mobile ... */}
                 <div className="relative min-w-[140px] bg-white border border-slate-200 rounded-xl shadow-sm shrink-0 h-10">
                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Tag className="w-3.5 h-3.5" /></div>
                   <select
@@ -2592,6 +3302,7 @@ const App = () => {
           </div>
 
           <div className="flex gap-3 h-[48px]">
+              {/* ... Desktop Filters ... */}
               <div className="relative flex-1 bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-sm group">
                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Tag className="w-4 h-4" /></div>
                    <select
@@ -2644,10 +3355,41 @@ const App = () => {
   );
 
   const renderContent = () => {
+    // 1. ถ้ามี Tracking ID ให้แสดงหน้า Tracking View โดยไม่ต้อง Login
+    if (trackingId) {
+        if (isLoading && allActivities.length === 0) {
+            return (
+                <div className="flex flex-col items-center justify-center h-screen w-full bg-slate-50">
+                    <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
+                    <p className="text-slate-500 font-bold text-lg animate-pulse">กำลังค้นหาข้อมูลพัสดุ...</p>
+                </div>
+            );
+        }
+        
+        const trackData = allActivities.find(item => item.id === trackingId);
+        
+        if (!trackData) {
+             return (
+                <div className="flex flex-col items-center justify-center h-screen w-full bg-slate-50 px-4 text-center">
+                    <div className="p-4 bg-slate-200 rounded-full text-slate-500 mb-4">
+                       <Search className="w-12 h-12" />
+                    </div>
+                    <h2 className="text-2xl font-black text-slate-800 mb-2">ไม่พบข้อมูลงาน</h2>
+                    <p className="text-slate-500 mb-6">รหัสติดตาม: <span className="font-mono font-bold text-indigo-600">{trackingId}</span> ไม่ถูกต้อง หรือถูกลบไปแล้ว</p>
+                    <button onClick={() => window.location.search = ''} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-200">
+                        กลับหน้าหลัก
+                    </button>
+                </div>
+             );
+        }
+
+        return <CustomerTrackingView data={trackData} />;
+    }
+
+    // 2. ถ้าไม่มี Tracking ID ก็เข้า Flow ปกติ (Login -> Dashboard)
     if (!isLoggedIn) {
         return <LoginScreen onLogin={handleLogin} isLoading={isLoading} loginError={loginError} />;
     }
-
     if (isLoading && allActivities.length === 0) {
       return (
         <div className="flex flex-col items-center justify-center h-[calc(100vh-80px)] w-full">
@@ -2656,7 +3398,8 @@ const App = () => {
         </div>
       );
     }
-
+    
+    // ... existing no URL check ...
     if (!GOOGLE_SCRIPT_URL) {
       return (
         <div className="flex flex-col items-center justify-center h-[calc(100vh-80px)] w-full px-4 text-center">
@@ -3227,6 +3970,34 @@ const App = () => {
                   </div>
               </div>
 
+              {/* Added Google Drive Settings Section */}
+              <div className="mb-8">
+                  <h3 className="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
+                      <HardDrive className="w-5 h-5 text-blue-600" />
+                      ตั้งค่า Google Drive
+                  </h3>
+                  <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                      <p className="text-sm text-slate-500 mb-3">
+                          ระบุ Folder ID ของ Google Drive ที่ต้องการให้บันทึกรูปภาพ (ต้องเปิดแชร์สิทธิ์ Editor ให้กับอีเมลที่รัน Script)
+                      </p>
+                      <div className="flex gap-2">
+                          <input
+                              type="text"
+                              placeholder="Google Drive Folder ID (e.g., 1xYz...)"
+                              value={driveFolderId}
+                              onChange={(e) => setDriveFolderId(e.target.value)}
+                              className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                          />
+                          <button
+                              onClick={() => saveSystemSettings('drive_folder_id', driveFolderId)}
+                              className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition flex items-center gap-2 shrink-0"
+                          >
+                              <Save className="w-4 h-4" /> บันทึก
+                          </button>
+                      </div>
+                  </div>
+              </div>
+
               <h3 className="text-xl font-bold text-slate-900 mb-4">ตั้งค่าตัวเลือกระบบ (System Options)</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <ListManager
@@ -3289,8 +4060,22 @@ const App = () => {
           0% { opacity: 0; transform: scale(0.95) translateY(10px); filter: blur(2px); }
           100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
         }
+        @keyframes modalExit {
+          0% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+          100% { opacity: 0; transform: scale(0.95) translateY(10px); filter: blur(2px); }
+        }
+        @keyframes fadeOut {
+          from { opacity: 1; }
+          to { opacity: 0; }
+        }
         .modal-animate-in {
           animation: modalEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .modal-animate-out {
+          animation: modalExit 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+        .backdrop-animate-out {
+          animation: fadeOut 0.3s forwards;
         }
         .no-scrollbar::-webkit-scrollbar {
           display: none;
@@ -3326,11 +4111,21 @@ const App = () => {
       {/* --- Global Feedback Elements --- */}
       {isSaving && <LoadingOverlay />} 
       {toast.show && <Toast message={toast.message} type={toast.type} onClose={closeToast} />}
-      {/* ------------------------------- */}
+      {previewImage && <ImageViewer src={processImageUrl(previewImage)} onClose={() => setPreviewImage(null)} />}
+      
+      {/* Render SharePreviewModal when shareData exists */}
+      {shareData && (
+        <SharePreviewModal 
+          data={shareData} 
+          onClose={() => setShareData(null)} 
+        />
+      )}
 
-      {/* --- Desktop Sidebar (Restored) --- */}
-      {isLoggedIn && (
+      {/* --- Desktop Sidebar --- */}
+      {/* Only show sidebar if logged in AND NOT in tracking mode */}
+      {isLoggedIn && !trackingId && (
         <aside className={`hidden md:flex flex-col ${isSidebarCollapsed ? 'w-20' : 'w-72'} bg-white border-r border-slate-100 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-20 transition-all duration-300 relative`}>
+            {/* ... Sidebar Content ... */}
             <button
                 onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
                 className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 bg-white border border-slate-200 rounded-full shadow-sm text-slate-400 hover:text-indigo-600 transition-colors z-50"
@@ -3384,23 +4179,24 @@ const App = () => {
       )}
 
       {/* --- Mobile Bottom Navigation --- */}
-      {isLoggedIn && (
+      {/* Only show nav if logged in AND NOT in tracking mode */}
+      {isLoggedIn && !trackingId && (
         <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-200 z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] safe-area-bottom pb-safe">
             <div className="relative grid grid-cols-5 h-16 items-center">
-                {/* Sliding Background Indicator (วงกลมวิ่งตาม - จัดกึ่งกลางด้วย translate) */}
+                {/* Sliding Background Indicator */}
                 <div 
                     className="absolute top-2 bottom-2 bg-indigo-50 rounded-full transition-all duration-300 cubic-bezier(0.4, 0, 0.2, 1)"
                     style={{ 
                         left: `${(navItems.findIndex(i => i.name === activeTab) < 2 
                             ? (navItems.findIndex(i => i.name === activeTab) * 20) + 10 
-                            : ((navItems.findIndex(i => i.name === activeTab) + 1) * 20) + 10 // +1 ข้ามช่องกลาง
+                            : ((navItems.findIndex(i => i.name === activeTab) + 1) * 20) + 10 
                         )}%`, 
                         width: '48px',
                         transform: 'translateX(-50%)'
                     }}
                 />
 
-                {/* เมนูฝั่งซ้าย (2 อันแรก) */}
+                {/* เมนูฝั่งซ้าย */}
                 {navItems.slice(0, 2).map((item) => {
                     const isActive = activeTab === item.name;
                     return (
@@ -3418,7 +4214,7 @@ const App = () => {
                     );
                 })}
 
-                {/* ปุ่มเพิ่มโครงการ (ตรงกลาง) */}
+                {/* ปุ่มเพิ่มโครงการ */}
                 <div className="relative -top-6 flex justify-center z-20 pointer-events-none">
                      <button
                         onClick={() => openModal()}
@@ -3428,7 +4224,7 @@ const App = () => {
                      </button>
                 </div>
 
-                {/* เมนูฝั่งขวา (2 อันหลัง) */}
+                {/* เมนูฝั่งขวา */}
                 {navItems.slice(2, 4).map((item) => {
                     const isActive = activeTab === item.name;
                     return (
@@ -3450,7 +4246,8 @@ const App = () => {
       )}
 
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-        {isLoggedIn && (
+        {/* Only show header if logged in AND NOT in tracking mode */}
+        {isLoggedIn && !trackingId && (
             <header className="h-20 bg-white/80 backdrop-blur-xl border-b border-slate-100 flex items-center justify-between px-6 sm:px-8 z-10 sticky top-0">
             <div className="flex items-center gap-4">
                 <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
@@ -3458,7 +4255,6 @@ const App = () => {
                 </h1>
             </div>
 
-            {/* ซ่อนปุ่มเพิ่มบน Header ในโหมดมือถือ (hidden md:flex) */}
             <div className="hidden md:flex">
                 <button
                 onClick={() => openModal()}
@@ -3482,7 +4278,6 @@ const App = () => {
         </main>
       </div>
 
-      {/* ... (Modals: Delete and Add remain same) ... */}
       {/* Delete Confirmation Modal */}
       {deleteConfirm.show && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -3548,19 +4343,54 @@ const App = () => {
                       </p>
                    </div>
                  </div>
-                 <button
-                   onClick={closeModal}
-                   className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors"
-                 >
-                   <X className="w-5 h-5 sm:w-6 sm:h-6" />
-                 </button>
+                 
+                 {/* ส่วนปุ่มปิดและปุ่ม Share (เพิ่มปุ่ม Share ตรงนี้) */}
+                 <div className="flex items-center gap-2">
+                   {editingId && (
+                       <button
+                         onClick={() => {
+                            // รวบรวมข้อมูลปัจจุบันเพื่อส่งไปยัง Share Modal
+                            const currentData = {
+                                id: currentId,
+                                name: projectName,
+                                rawDateTime: projectDateTime,
+                                artist: artistName,
+                                customer: customerName,
+                                rawDeliveryStart: deliveryStart,
+                                rawDeliveryEnd: deliveryEnd,
+                                rawDeliveryDateTime: deliveryEnd,
+                                location: locationName,
+                                mapLink: mapLink,
+                                recipient: recipientName,
+                                recipientPhone: recipientPhone,
+                                image: uploadedImage,
+                                wage: wage,
+                                customerSupport: customerSupportItems,
+                                dealStatus: dealStatus, // เพิ่ม status ส่งไปด้วย
+                                transportStatus: transportStatus
+                            };
+                            setShareData(currentData);
+                         }}
+                         className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl transition-colors flex items-center gap-2 group"
+                         title="แชร์ข้อมูลให้ลูกค้า"
+                       >
+                         <Share2 className="w-5 h-5 sm:w-6 sm:h-6" />
+                         <span className="text-xs font-bold hidden sm:inline">แชร์</span>
+                       </button>
+                   )}
+                   <button
+                     onClick={closeModal}
+                     className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors"
+                   >
+                     <X className="w-5 h-5 sm:w-6 sm:h-6" />
+                   </button>
+                 </div>
              </div>
 
              {/* Scrollable Body - Compact Padding */}
              <div className="flex-1 overflow-y-auto p-4 sm:p-8 custom-scrollbar">
                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
-                   {/* ... (Rest of Form - same structure as before) ... */}
-                   {/* ส่วนที่ 1: งาน/โปรเจค */}
+                   {/* ... (Section 1 - Work/Project) ... */}
                    <div className="space-y-6">
                        <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
                           <span className="bg-slate-900 text-white w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold">1</span>
@@ -3602,7 +4432,7 @@ const App = () => {
                              />
                            </div>
                            
-                           {/* ส่วนลูกค้าที่มี Autocomplete & Auto-fill */}
+                           {/* ส่วนลูกค้า */}
                            <div className="space-y-2">
                              <label className="text-sm font-bold text-slate-700 ml-1">ลูกค้า</label>
                              <input
@@ -3611,7 +4441,7 @@ const App = () => {
                                placeholder="ชื่อลูกค้า (พิมพ์เพื่อค้นหา)"
                                value={customerName}
                                disabled={viewOnlyMode}
-                               onChange={handleCustomerChange} // ใช้ฟังก์ชันนี้เพื่อ Auto-fill
+                               onChange={handleCustomerChange} 
                                className={`w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium mb-3 ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
                              />
                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -3711,11 +4541,11 @@ const App = () => {
                         </div>
                    </div>
 
-                   {/* ส่วนที่ 2: กำหนดส่ง */}
+                   {/* ส่วนที่ 2: กำหนดส่ง & รูปภาพ */}
                    <div className="space-y-6">
                        <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
                           <span className="bg-slate-900 text-white w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold">2</span>
-                          <h4 className="font-bold text-slate-800 text-lg">กำหนดส่ง & สถานที่</h4>
+                          <h4 className="font-bold text-slate-800 text-lg">กำหนดส่ง & สถานที่ & รูปภาพ</h4>
                        </div>
                        
                        <div className="space-y-4">
@@ -3813,6 +4643,91 @@ const App = () => {
                                 </div>
                               </div>
                            </div>
+
+                           {/* Image Upload Area Moved Here */}
+                          <div className="space-y-2 pt-2 border-t border-slate-100">
+                             <label className="text-sm font-bold text-slate-700 ml-1">รูปภาพอ้างอิง</label>
+                             {!viewOnlyMode ? (
+                               <div 
+                                 className="w-full border-2 border-dashed border-slate-200 rounded-2xl p-4 flex flex-col items-center justify-center text-center hover:border-indigo-400 hover:bg-indigo-50/30 transition-all cursor-pointer group"
+                                 onDrop={onDrop}
+                                 onDragOver={onDragOverImg}
+                                 onClick={() => document.getElementById('image-upload').click()}
+                               >
+                                  <input 
+                                    type="file" 
+                                    id="image-upload" 
+                                    className="hidden" 
+                                    accept="image/*"
+                                    onChange={(e) => e.target.files[0] && handleImageUpload(e.target.files[0])}
+                                  />
+                                  {uploadedImage ? (
+                                     <div 
+                                        className="relative w-full h-48 rounded-xl overflow-hidden shadow-sm border border-slate-100 group/img"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setPreviewImage(uploadedImage);
+                                        }}
+                                     >
+                                         <img 
+                                            src={processImageUrl(uploadedImage)} 
+                                            alt="Preview" 
+                                            className="w-full h-full object-contain bg-slate-50" 
+                                            referrerPolicy="no-referrer"
+                                            onError={(e) => {
+                                                e.target.onerror = null;
+                                                e.target.src = "https://placehold.co/400x300?text=Image+Load+Error";
+                                            }}
+                                         />
+                                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                              <Maximize2 className="w-6 h-6 text-white" />
+                                              <span className="text-white font-bold text-sm">ดูรูปขยาย</span>
+                                         </div>
+                                         <button 
+                                            onClick={(e) => { e.stopPropagation(); setUploadedImage(null); }}
+                                            className="absolute top-2 right-2 p-1.5 bg-white/80 backdrop-blur-sm text-rose-500 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition shadow-sm z-10"
+                                         >
+                                            <Trash2 className="w-4 h-4" />
+                                         </button>
+                                     </div>
+                                  ) : (
+                                     <div className="py-6 flex flex-col items-center">
+                                         <div className="p-3 bg-indigo-50 text-indigo-500 rounded-full mb-3 group-hover:scale-110 transition-transform">
+                                            <UploadCloud className="w-6 h-6" />
+                                         </div>
+                                         <p className="text-sm font-bold text-slate-600">คลิกเพื่ออัพโหลด หรือลากไฟล์มาวาง</p>
+                                         <p className="text-xs text-slate-400 mt-1">รองรับ JPG, PNG (Max 5MB)</p>
+                                     </div>
+                                  )}
+                               </div>
+                             ) : (
+                                uploadedImage ? (
+                                   <div 
+                                        className="w-full h-64 rounded-2xl overflow-hidden shadow-sm border border-slate-100 bg-slate-50 cursor-zoom-in relative group"
+                                        onClick={() => setPreviewImage(uploadedImage)}
+                                   >
+                                       <img 
+                                          src={processImageUrl(uploadedImage)} 
+                                          alt="Preview" 
+                                          className="w-full h-full object-contain" 
+                                          referrerPolicy="no-referrer"
+                                          onError={(e) => {
+                                              e.target.onerror = null;
+                                              e.target.src = "https://placehold.co/400x300?text=Image+Load+Error";
+                                          }}
+                                       />
+                                       <div className="absolute bottom-3 right-3 bg-black/50 backdrop-blur-sm p-1.5 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                                           <Maximize2 className="w-4 h-4" />
+                                       </div>
+                                   </div>
+                                ) : (
+                                   <div className="w-full px-4 py-8 bg-slate-50 border border-slate-200 rounded-xl text-slate-400 italic text-sm flex flex-col items-center gap-2">
+                                       <ImageIcon className="w-8 h-8 opacity-50" />
+                                       <span>ไม่มีรูปภาพ</span>
+                                   </div>
+                                )
+                             )}
+                          </div>
 
                         </div>
                    </div>
