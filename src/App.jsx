@@ -328,6 +328,76 @@ const ImageViewer = ({ src, onClose }) => {
   );
 };
 
+// [NEW] Shop Footer Component (Compact & Centered 100px Height, Adjustable Width)
+const ShopFooter = ({ shopInfo, maxWidthClass = "max-w-7xl" }) => {
+  if (!shopInfo) return null;
+
+  return (
+    <footer className="bg-white border-t border-slate-200 mt-auto pb-safe w-full">
+      <div className={`${maxWidthClass} mx-auto px-4 w-full h-auto md:h-[100px] flex flex-col md:flex-row items-center justify-between gap-2 py-3 md:py-0`}>
+          {/* Left: Brand & Contact Info */}
+          {/* Modified: flex-row + wrap on mobile to put contacts on same line as brand */}
+          <div className="flex flex-row flex-wrap items-center justify-center md:justify-start md:flex-col md:items-start gap-x-4 gap-y-1">
+              <div className="flex items-center gap-2 text-slate-700">
+                  <div className="p-1.5 bg-slate-100 text-slate-600 rounded-lg">
+                      <StoreIcon className="w-4 h-4" />
+                  </div>
+                  <span className="text-sm font-bold">{shopInfo.shopName || 'ร้านค้า'}</span>
+              </div>
+              
+              <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
+                  {shopInfo.phone && (
+                      <a href={`tel:${shopInfo.phone}`} className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors">
+                          <Phone className="w-3.5 h-3.5" /> 
+                          {shopInfo.phone}
+                      </a>
+                  )}
+                  {shopInfo.email && (
+                      <a href={`mailto:${shopInfo.email}`} className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors">
+                          <Mail className="w-3.5 h-3.5" /> 
+                          {shopInfo.email}
+                      </a>
+                  )}
+              </div>
+          </div>
+          
+          {/* Right: Socials & Address (No Labels, Compact) */}
+          {/* Modified: flex-col (Mobile: Addr->Icon), md:flex-col-reverse (PC: Icon->Addr) */}
+          <div className="flex flex-col md:flex-col-reverse items-center md:items-end gap-1.5">
+              {shopInfo.address && (
+                  <p className="text-xs font-medium text-slate-500 text-center md:text-right leading-tight max-w-[300px] line-clamp-1">
+                      {shopInfo.address}
+                  </p>
+              )}
+
+              <div className="flex items-center gap-3">
+                  {shopInfo.line && (
+                      <a href={shopInfo.line} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-[#06C755] transition-all hover:scale-110">
+                          <MessageCircle className="w-5 h-5 fill-current" />
+                      </a>
+                  )}
+                  {shopInfo.facebook && (
+                      <a href={shopInfo.facebook} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-[#1877F2] transition-all hover:scale-110">
+                          <Facebook className="w-5 h-5 fill-current" />
+                      </a>
+                  )}
+                  {shopInfo.instagram && (
+                      <a href={shopInfo.instagram} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-[#C13584] transition-all hover:scale-110">
+                          <Instagram className="w-5 h-5" />
+                      </a>
+                  )}
+                  {shopInfo.tiktok && (
+                      <a href={shopInfo.tiktok} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-black transition-all hover:scale-110">
+                          <Music2 className="w-5 h-5" />
+                      </a>
+                  )}
+              </div>
+          </div>
+      </div>
+    </footer>
+  );
+};
+
 // --- Customer Quotation View (New Component) ---
 const CustomerQuotationView = ({ data, shopInfo }) => {
   const [previewImage, setPreviewImage] = useState(null);
@@ -345,7 +415,7 @@ const CustomerQuotationView = ({ data, shopInfo }) => {
   const dealStatusInfo = systemStatusTypes.find(s => s.value === data.dealStatus) || { label: data.dealStatus, color: 'bg-slate-100 text-slate-500' };
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-safe font-sans">
+    <div className="min-h-screen bg-slate-50 pb-safe font-sans flex flex-col">
        {previewImage && <ImageViewer src={processImageUrl(previewImage)} onClose={() => setPreviewImage(null)} />}
 
        {/* Compact Header */}
@@ -364,7 +434,7 @@ const CustomerQuotationView = ({ data, shopInfo }) => {
           </div>
        </div>
 
-       <div className="max-w-md md:max-w-6xl mx-auto px-4 relative z-10 space-y-3 -mt-6 md:-mt-20 md:space-y-0 md:grid md:grid-cols-12 md:gap-8">
+       <div className="max-w-md md:max-w-6xl mx-auto px-4 relative z-10 space-y-3 -mt-6 md:-mt-20 md:space-y-0 md:grid md:grid-cols-12 md:gap-8 mb-3 md:mb-0">
           
           {/* LEFT COLUMN (Desktop): Main Info & Details */}
           <div className="md:col-span-7 space-y-3 md:space-y-6">
@@ -519,80 +589,19 @@ const CustomerQuotationView = ({ data, shopInfo }) => {
                       </ul>
                   </div>
 
-                  {/* Net Total */}
-                  <div className="pt-4 border-t-2 border-slate-200 flex justify-between items-end bg-slate-100/50 -mx-5 -mb-5 p-5 rounded-b-2xl md:p-8 md:-mx-8 md:-mb-8 md:rounded-b-[2rem]">
-                      <div className="flex flex-col">
-                          <span className="text-sm font-bold text-slate-500 uppercase tracking-wider md:text-base">ยอดเรียกเก็บสุทธิ</span>
-                      </div>
-                      <span className="text-3xl font-black text-indigo-600 leading-none tabular-nums md:text-4xl">฿{netReceivable.toLocaleString()}</span>
+                  {/* Net Total - Adjusted padding/size for PC */}
+                  <div className="pt-4 border-t-2 border-slate-200 flex flex-col items-end bg-slate-100/50 -mx-5 -mb-5 p-5 rounded-b-2xl md:p-6 md:-mx-8 md:-mb-8 md:rounded-b-[2rem]">
+                      <span className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">ยอดเรียกเก็บสุทธิ</span>
+                      <span className="text-3xl font-black text-indigo-600 leading-none tabular-nums">฿{netReceivable.toLocaleString()}</span>
                   </div>
               </div>
           </div>
 
-          {/* Moved Shop Contact Card Here - Will appear at bottom on Mobile, Left-bottom on Desktop (Grid Flow) */}
-          {shopInfo && (
-            <div className="md:col-span-7">
-                <div className="bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-200 p-5 relative overflow-hidden md:p-8 md:rounded-[2rem]">
-                    <div className="absolute top-0 right-0 p-2 opacity-10 pointer-events-none">
-                        <StoreIcon className="w-24 h-24 transform rotate-12 md:w-48 md:h-48" />
-                    </div>
-                    <h3 className="text-sm font-bold uppercase tracking-wider mb-4 flex items-center justify-center gap-2 relative z-10 opacity-90 md:text-lg md:mb-6">
-                        <StoreIcon className="w-4 h-4 md:w-6 md:h-6" /> ข้อมูลติดต่อร้าน
-                    </h3>
-                    <div className="flex flex-col gap-4 relative z-10 md:gap-6">
-                        <div className="flex items-center justify-center gap-3 flex-wrap">
-                            {shopInfo.phone && (
-                                <a href={`tel:${shopInfo.phone}`} className="flex items-center gap-2 bg-white text-indigo-600 px-5 py-2.5 rounded-xl shadow-sm hover:bg-indigo-50 transition active:scale-95 md:px-8 md:py-3 md:text-lg">
-                                    <Phone className="w-5 h-5 md:w-6 md:h-6" />
-                                    <span className="text-base font-bold md:text-lg">{shopInfo.phone}</span>
-                                </a>
-                            )}
-                            {shopInfo.email && (
-                                <a href={`mailto:${shopInfo.email}`} className="flex items-center gap-2 bg-white/10 text-white px-5 py-2.5 rounded-xl border border-white/20 hover:bg-white/20 transition active:scale-95 md:px-8 md:py-3 md:text-lg">
-                                    <Mail className="w-5 h-5 md:w-6 md:h-6" />
-                                    <span className="text-base font-bold md:text-lg">Email</span>
-                                </a>
-                            )}
-                        </div>
-                        <div className="flex items-center justify-center gap-4 md:gap-6">
-                            {shopInfo.line && (
-                                <a href={shopInfo.line} target="_blank" rel="noreferrer" className="w-12 h-12 bg-[#06C755] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
-                                    <MessageCircle className="w-6 h-6 text-white fill-current md:w-8 md:h-8" />
-                                </a>
-                            )}
-                            {shopInfo.facebook && (
-                                <a href={shopInfo.facebook} target="_blank" rel="noreferrer" className="w-12 h-12 bg-[#1877F2] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
-                                    <Facebook className="w-6 h-6 text-white fill-current md:w-8 md:h-8" />
-                                </a>
-                            )}
-                            {shopInfo.instagram && (
-                                <a href={shopInfo.instagram} target="_blank" rel="noreferrer" className="w-12 h-12 bg-gradient-to-tr from-[#FFDC80] via-[#FD1D1D] to-[#C13584] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
-                                    <Instagram className="w-6 h-6 text-white md:w-8 md:h-8" />
-                                </a>
-                            )}
-                            {shopInfo.tiktok && (
-                                <a href={shopInfo.tiktok} target="_blank" rel="noreferrer" className="w-12 h-12 bg-black rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
-                                    <Music2 className="w-6 h-6 text-white md:w-8 md:h-8" />
-                                </a>
-                            )}
-                        </div>
-                        {shopInfo.address && (
-                            <div className="text-center mt-2 px-4">
-                                <p className="text-xs font-medium text-indigo-50 leading-relaxed md:text-sm md:max-w-lg md:mx-auto">
-                                    {shopInfo.address}
-                                </p>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-          )}
-
-          <div className="text-center pt-4 pb-8 md:col-span-12">
-             <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest md:text-xs">Powered by NexusPlan</p>
-          </div>
-
+          {/* Shop Contact Card Removed */}
        </div>
+
+       {/* Footer Section */}
+       <ShopFooter shopInfo={shopInfo} maxWidthClass="max-w-md md:max-w-6xl" />
     </div>
   );
 };
@@ -643,7 +652,7 @@ const CustomerTrackingView = ({ data, shopInfo }) => {
   const dealStatusInfo = systemStatusTypes.find(s => s.value === data.dealStatus) || { label: data.dealStatus, color: 'bg-slate-100 text-slate-500' };
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-safe font-sans">
+    <div className="min-h-screen bg-slate-50 pb-safe font-sans flex flex-col">
        {/* Image Viewer Portal */}
        {previewImage && <ImageViewer src={processImageUrl(previewImage)} onClose={() => setPreviewImage(null)} />}
 
@@ -663,7 +672,7 @@ const CustomerTrackingView = ({ data, shopInfo }) => {
           </div>
        </div>
 
-       <div className="max-w-md md:max-w-5xl mx-auto px-4 relative z-10 space-y-3 -mt-6 md:-mt-20 md:space-y-6">
+       <div className="max-w-md md:max-w-5xl mx-auto px-4 relative z-10 space-y-3 -mt-6 md:-mt-20 md:space-y-6 mb-3 md:mb-0">
           
           {/* Row 1: Main Card (Name, ID, Status, Image Preview, Timeline) */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col gap-6 relative md:p-8 md:rounded-[2rem] md:shadow-md">
@@ -715,7 +724,7 @@ const CustomerTrackingView = ({ data, shopInfo }) => {
                 <div className="px-0 md:flex-1 md:flex md:flex-col md:justify-center md:pt-4 w-full">
                    <div className="relative w-full pt-2 pb-1">
                         {/* Background Line - Positioned using percentages for better Grid alignment */}
-                        <div className="absolute left-[12.5%] right-[12.5%] top-[26px] h-0.5 bg-slate-100 -z-10 rounded-full md:top-[24px] md:h-1"></div>
+                        <div className="absolute left-[12.5%] right-[12.5%] top-[18px] h-0.5 bg-slate-100 -z-10 rounded-full md:top-[24px] md:h-1"></div>
 
                         <div className="grid grid-cols-4 w-full">
                             {steps.map((step, idx) => {
@@ -726,6 +735,13 @@ const CustomerTrackingView = ({ data, shopInfo }) => {
 
                                 return (
                                     <div key={step.id} className="flex flex-col items-center gap-3 relative group cursor-default">
+                                        {/* Next Arrow (>) */}
+                                        {idx < steps.length - 1 && (
+                                            <div className="absolute top-[18px] -right-0 md:top-[24px] transform -translate-y-1/2 translate-x-1/2 z-0">
+                                                <ChevronRight className="w-4 h-4 text-slate-300 md:w-5 md:h-5" />
+                                            </div>
+                                        )}
+
                                         <div className={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-500 z-10 ${colorClass} md:w-12 md:h-12`}>
                                             <step.icon className="w-4 h-4 md:w-6 md:h-6" strokeWidth={status === 'current' ? 2.5 : 2} />
                                         </div>
@@ -742,7 +758,7 @@ const CustomerTrackingView = ({ data, shopInfo }) => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-1 gap-3 md:gap-6">
               {/* Row 2: Combined Info Card (Compact 2 Columns) */}
               <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-2 gap-3 md:p-8 md:rounded-[2rem] md:shadow-md md:gap-8">
                  {/* Left Column: General Info */}
@@ -796,77 +812,13 @@ const CustomerTrackingView = ({ data, shopInfo }) => {
                  </div>
               </div>
 
-              {/* Row 3: Shop Contact Card (Compact Redesign) */}
-              {shopInfo && (
-                <div className="bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-200 p-5 relative overflow-hidden md:p-8 md:rounded-[2rem] md:flex md:flex-col md:justify-center">
-                    <div className="absolute top-0 right-0 p-2 opacity-10 pointer-events-none">
-                        <StoreIcon className="w-24 h-24 transform rotate-12 md:w-48 md:h-48" />
-                    </div>
-                    
-                    {/* Header of card */}
-                    <h3 className="text-sm font-bold uppercase tracking-wider mb-4 flex items-center justify-center gap-2 relative z-10 opacity-90 md:text-lg md:mb-6">
-                        <StoreIcon className="w-4 h-4 md:w-6 md:h-6" /> ข้อมูลติดต่อร้าน
-                    </h3>
-
-                    <div className="flex flex-col gap-4 relative z-10 md:gap-6">
-                        {/* Row 1: Phone & Email Buttons (Centered) */}
-                        <div className="flex items-center justify-center gap-3 flex-wrap">
-                            {shopInfo.phone && (
-                                <a href={`tel:${shopInfo.phone}`} className="flex items-center gap-2 bg-white text-indigo-600 px-5 py-2.5 rounded-xl shadow-sm hover:bg-indigo-50 transition active:scale-95 md:px-8 md:py-3 md:text-lg">
-                                    <Phone className="w-5 h-5 md:w-6 md:h-6" />
-                                    <span className="text-base font-bold md:text-lg">{shopInfo.phone}</span>
-                                </a>
-                            )}
-                            {shopInfo.email && (
-                                <a href={`mailto:${shopInfo.email}`} className="flex items-center gap-2 bg-white/10 text-white px-5 py-2.5 rounded-xl border border-white/20 hover:bg-white/20 transition active:scale-95 md:px-8 md:py-3 md:text-lg">
-                                    <Mail className="w-5 h-5 md:w-6 md:h-6" />
-                                    <span className="text-base font-bold md:text-lg">Email</span>
-                                </a>
-                            )}
-                        </div>
-
-                        {/* Row 2: Social Media Buttons (Centered Row) */}
-                        <div className="flex items-center justify-center gap-4 md:gap-6">
-                            {shopInfo.line && (
-                                <a href={shopInfo.line} target="_blank" rel="noreferrer" className="w-12 h-12 bg-[#06C755] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
-                                    <MessageCircle className="w-6 h-6 text-white fill-current md:w-8 md:h-8" />
-                                </a>
-                            )}
-                            {shopInfo.facebook && (
-                                <a href={shopInfo.facebook} target="_blank" rel="noreferrer" className="w-12 h-12 bg-[#1877F2] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
-                                    <Facebook className="w-6 h-6 text-white fill-current md:w-8 md:h-8" />
-                                </a>
-                            )}
-                            {shopInfo.instagram && (
-                                <a href={shopInfo.instagram} target="_blank" rel="noreferrer" className="w-12 h-12 bg-gradient-to-tr from-[#FFDC80] via-[#FD1D1D] to-[#C13584] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
-                                    <Instagram className="w-6 h-6 text-white md:w-8 md:h-8" />
-                                </a>
-                            )}
-                            {shopInfo.tiktok && (
-                                <a href={shopInfo.tiktok} target="_blank" rel="noreferrer" className="w-12 h-12 bg-black rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20 md:w-16 md:h-16">
-                                    <Music2 className="w-6 h-6 text-white md:w-8 md:h-8" />
-                                </a>
-                            )}
-                        </div>
-
-                        {/* Row 3: Address (Plain Text, Centered) */}
-                        {shopInfo.address && (
-                            <div className="text-center mt-2 px-4">
-                                <p className="text-xs font-medium text-indigo-50 leading-relaxed md:text-sm md:max-w-lg md:mx-auto">
-                                    {shopInfo.address}
-                                </p>
-                            </div>
-                        )}
-                    </div>
-                </div>
-              )}
-          </div>
-
-          <div className="text-center pt-4 pb-8 md:col-span-12">
-             <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest md:text-xs">Powered by NexusPlan</p>
+              {/* Shop Contact Card Removed */}
           </div>
 
        </div>
+
+       {/* Footer Section */}
+       <ShopFooter shopInfo={shopInfo} maxWidthClass="max-w-md md:max-w-5xl" />
     </div>
   );
 };
