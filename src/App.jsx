@@ -83,7 +83,11 @@ import {
   Copy,
   Printer,
   Link as LinkIcon,
-  PackageCheck
+  PackageCheck,
+  Facebook,
+  Instagram,
+  MessageCircle,
+  Music2
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -127,6 +131,29 @@ const processImageUrl = (url) => {
       }
   }
   return url;
+};
+
+// [MOVED] StoreIcon moved here to be defined before usage
+const StoreIcon = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2v0a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12v0a2 2 0 0 1-2-2V7"/>
+    </svg>
+);
+
+// [ADDED] Helper Function to generate secure tracking token
+const generateTrackingToken = (id, dateStr) => {
+  if (!id || !dateStr) return id;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return id;
+  
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear() + 543;
+  const HH = String(d.getHours()).padStart(2, '0');
+  const mn = String(d.getMinutes()).padStart(2, '0');
+  
+  // Format: ID + DDMMYYYYHHmm (e.g. P-0007100225690056)
+  return `${id}${dd}${mm}${yyyy}${HH}${mn}`;
 };
 
 const formatDate = (isoString) => {
@@ -302,38 +329,34 @@ const ImageViewer = ({ src, onClose }) => {
 };
 
 // --- Customer Tracking View ---
-const CustomerTrackingView = ({ data }) => {
-  if (!data) return null;
+const CustomerTrackingView = ({ data, shopInfo }) => {
+  const [previewImage, setPreviewImage] = useState(null); // Add local state for image preview
 
-  // คำนวณยอดเรียกเก็บสุทธิ
-  const wage = parseFloat(data.wage) || 0;
-  const support = data.customerSupport ? data.customerSupport.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) : 0;
-  const netReceivable = wage + support;
+  if (!data) return null;
 
   // Helper เพื่อกำหนดสถานะ Timeline
   const getStepStatus = (step) => {
-    // Logic ง่ายๆ เพื่อจำลอง Timeline จาก status
     const deal = data.dealStatus || 'pending';
     const transport = data.transportStatus || 'pending';
 
-    // Step 1: รับเรื่อง (Always true if data exists)
+    // Step 1: รับเรื่อง
     if (step === 1) return 'completed';
 
-    // Step 2: ดำเนินการ (Confirmed/Active deal)
+    // Step 2: ดำเนินการ
     if (step === 2) {
        if (deal === 'confirmed' || deal === 'active' || deal === 'completed') return 'completed';
        if (deal === 'pending') return 'current';
        return 'pending';
     }
 
-    // Step 3: กำลังจัดส่ง/ติดตั้ง (Active Transport)
+    // Step 3: จัดส่ง/ติดตั้ง
     if (step === 3) {
        if (transport === 'delivering' || transport === 'installed' || transport === 'completed' || transport === 'delivered') return 'completed';
        if ((deal === 'confirmed' || deal === 'active') && transport !== 'pending') return 'current';
        return 'pending';
     }
 
-    // Step 4: เสร็จสิ้น (Completed/Delivered)
+    // Step 4: เสร็จสิ้น
     if (step === 4) {
        if (deal === 'completed' || transport === 'delivered' || transport === 'completed') return 'completed';
        return 'pending';
@@ -344,164 +367,225 @@ const CustomerTrackingView = ({ data }) => {
   const steps = [
     { id: 1, label: 'รับเรื่อง', icon: Clipboard },
     { id: 2, label: 'ดำเนินการ', icon: Activity },
-    { id: 3, label: 'จัดส่ง/ติดตั้ง', icon: Truck },
+    { id: 3, label: 'จัดส่ง', icon: Truck },
     { id: 4, label: 'เสร็จสิ้น', icon: CheckCircle },
   ];
 
+  const dealStatusInfo = systemStatusTypes.find(s => s.value === data.dealStatus) || { label: data.dealStatus, color: 'bg-slate-100 text-slate-500' };
+
   return (
-    <div className="min-h-screen bg-slate-50 pb-safe">
-       {/* Responsive Header Card */}
-       <div className="bg-indigo-600 text-white p-6 pb-12 rounded-b-[2.5rem] shadow-lg shadow-indigo-200 relative overflow-hidden w-full">
-          <div className="absolute top-0 right-0 p-8 opacity-10">
-             <PackageCheck className="w-32 h-32 transform rotate-12" />
+    <div className="min-h-screen bg-slate-50 pb-safe font-sans">
+       {/* Image Viewer Portal */}
+       {previewImage && <ImageViewer src={processImageUrl(previewImage)} onClose={() => setPreviewImage(null)} />}
+
+       {/* Compact Header - Adjusted padding/margin to prevent overlap */}
+       <div className="bg-indigo-600 text-white pt-8 pb-10 px-4 rounded-b-[2rem] shadow-md shadow-indigo-200 relative overflow-hidden z-0">
+          <div className="absolute top-0 right-0 p-2 opacity-10">
+             <PackageCheck className="w-24 h-24 transform rotate-12" />
           </div>
-          <div className="relative z-10 flex flex-col items-center text-center gap-2 mt-4 max-w-4xl mx-auto">
-             <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center mb-2 shadow-inner border border-white/10">
-                <Search className="w-6 h-6 text-white" />
-             </div>
-             <h1 className="text-2xl font-black tracking-tight">ติดตามสถานะงาน</h1>
-             <p className="text-indigo-100 text-sm font-medium">Project Tracking System</p>
-             <div className="mt-4 bg-white/10 backdrop-blur-sm px-4 py-1.5 rounded-full border border-white/20 text-xs font-bold text-indigo-50">
-                ID: {data.id}
+          <div className="relative z-10 flex flex-col items-center text-center space-y-2">
+             <h1 className="text-5xl font-black tracking-tight leading-none drop-shadow-sm">
+                {shopInfo?.shopName || 'ติดตามสถานะงาน'}
+             </h1>
+             <div className="inline-flex items-center gap-1.5 bg-white/20 px-3 py-1 rounded-full backdrop-blur-md border border-white/10 shadow-sm">
+                <Search className="w-3.5 h-3.5 text-indigo-50" />
+                <p className="text-indigo-50 text-[10px] font-bold tracking-wide opacity-90">ระบบติดตามสถานะ (Tracking Status)</p>
              </div>
           </div>
        </div>
 
-       <div className="max-w-5xl mx-auto px-4 -mt-8 relative z-20 space-y-6 pb-12">
+       <div className="max-w-md mx-auto px-4 relative z-10 space-y-3 -mt-6">
           
-          {/* Status Card - Redesigned for better spacing and responsiveness */}
-          <div className="bg-white p-6 md:p-8 rounded-[2rem] shadow-sm border border-slate-100">
-             <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-6 text-center">สถานะปัจจุบัน</h2>
-             <div className="relative px-2 md:px-10">
-                {/* Connecting Line */}
-                <div className="absolute top-5 left-2 right-2 md:left-12 md:right-12 h-1 bg-slate-100 -z-10 rounded-full"></div>
-                
-                <div className="flex justify-between items-start w-full">
-                    {steps.map((step, idx) => {
-                    const status = getStepStatus(step.id);
-                    let colorClass = 'bg-slate-100 text-slate-400 border-slate-200'; // pending
-                    if (status === 'completed') colorClass = 'bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-200';
-                    if (status === 'current') colorClass = 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200 scale-110 ring-4 ring-indigo-50';
+          {/* Row 1: Main Card (Name, ID, Status, Image Preview, Timeline) */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-col gap-4 relative overflow-hidden">
+            
+            {/* Top Area: Info (Left) + Small Image Preview (Right) */}
+            <div className="flex justify-between items-start gap-3">
+                <div className="flex flex-col gap-2 min-w-0 flex-1">
+                    {/* Project Name */}
+                    <h3 className="text-lg font-black text-slate-800 leading-tight line-clamp-2">{data.name}</h3>
+                    
+                    {/* ID & Status Badge */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-md text-xs border border-indigo-100 whitespace-nowrap">
+                            {data.id}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 truncate ${dealStatusInfo.color}`}>
+                            {data.dealStatus === 'cancelled' ? <AlertCircle className="w-3 h-3"/> : <Activity className="w-3 h-3"/>}
+                            {dealStatusInfo.label}
+                        </span>
+                    </div>
+                </div>
 
-                    return (
-                        <div key={step.id} className="flex flex-col items-center gap-3 md:gap-4 flex-1">
-                            <div className={`w-10 h-10 md:w-14 md:h-14 rounded-full flex items-center justify-center border-2 transition-all duration-500 z-10 ${colorClass}`}>
-                                <step.icon className="w-5 h-5 md:w-7 md:h-7" strokeWidth={2.5} />
-                            </div>
-                            <span className={`text-[10px] md:text-sm font-bold text-center leading-tight px-1 ${status === 'current' ? 'text-indigo-600' : 'text-slate-400'}`}>
-                                {step.label}
-                            </span>
+                {/* Right: Small Image Preview */}
+                {data.image && (
+                    <div 
+                        className="w-16 h-16 shrink-0 rounded-xl overflow-hidden border border-slate-100 bg-slate-50 relative group cursor-pointer shadow-sm"
+                        onClick={() => setPreviewImage(data.image)}
+                    >
+                        <img 
+                            src={processImageUrl(data.image)} 
+                            alt="Preview" 
+                            className="w-full h-full object-cover" 
+                        />
+                        {/* Zoom Icon Overlay */}
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                             <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 drop-shadow-sm" />
                         </div>
-                    );
-                    })}
-                </div>
-             </div>
-             <div className="mt-8 text-center">
-                <span className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold shadow-sm border ${
-                    data.dealStatus === 'cancelled' ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-white text-slate-700 border-slate-200'
-                }`}>
-                    {data.dealStatus === 'cancelled' ? <AlertCircle className="w-4 h-4"/> : <Activity className="w-4 h-4 text-indigo-500"/>}
-                    {data.dealStatus === 'cancelled' ? 'ยกเลิก/มีปัญหา' : `สถานะ: ${data.dealStatus || 'กำลังดำเนินการ'}`}
-                </span>
-             </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Project Details (Part 1) */}
-            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 h-full">
-                <h3 className="text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-indigo-600" />
-                    รายละเอียดงาน
-                </h3>
-                <div className="space-y-4">
-                    <div>
-                    <p className="text-xs text-slate-400 font-bold mb-1">ชื่อโครงการ</p>
-                    <p className="text-base font-bold text-slate-800 leading-tight">{data.name}</p>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <p className="text-xs text-slate-400 font-bold mb-1">วันที่เริ่ม</p>
-                        <p className="text-sm font-bold text-slate-600">{formatDate(data.rawDateTime)}</p>
-                    </div>
-                    <div>
-                        <p className="text-xs text-slate-400 font-bold mb-1">ศิลปิน</p>
-                        <p className="text-sm font-bold text-slate-600">{data.artist}</p>
-                    </div>
-                    </div>
-                    <div>
-                    <p className="text-xs text-slate-400 font-bold mb-1">ลูกค้า</p>
-                    <p className="text-sm font-bold text-slate-600">{data.customer}</p>
-                    </div>
-                </div>
+                )}
             </div>
 
-            {/* Delivery & Location (Part 2) */}
-            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 h-full">
-                <h3 className="text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
-                    <Truck className="w-5 h-5 text-emerald-600" />
-                    การจัดส่ง & สถานที่
-                </h3>
-                <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                    <div className="flex items-start gap-3">
-                    <Clock className="w-5 h-5 text-indigo-500 shrink-0 mt-0.5" />
-                    <div>
-                        <p className="text-xs text-slate-400 font-bold">กำหนดส่ง</p>
-                        <div className="text-sm font-bold text-slate-700">{renderDeliveryTime(data)}</div>
-                    </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                    <MapPin className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
-                    <div>
-                        <p className="text-xs text-slate-400 font-bold">สถานที่</p>
-                        <p className="text-sm font-bold text-slate-700">{data.location || '-'}</p>
+            <div className="h-px bg-slate-100 w-full" />
+
+            {/* Timeline Section */}
+            <div className="px-1">
+               <div className="flex items-center justify-between relative">
+                    {/* Background Line */}
+                    <div className="absolute left-6 right-6 top-4 h-0.5 bg-slate-100 -z-10 rounded-full"></div>
+
+                    {steps.map((step, idx) => {
+                        const status = getStepStatus(step.id);
+                        let colorClass = 'bg-white text-slate-300 border-2 border-slate-200'; 
+                        if (status === 'completed') colorClass = 'bg-emerald-500 text-white border-emerald-500 shadow-sm shadow-emerald-200';
+                        if (status === 'current') colorClass = 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200 ring-4 ring-indigo-50 scale-110';
+
+                        return (
+                            <div key={step.id} className="flex flex-col items-center gap-2 relative group cursor-default">
+                                <div className={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-500 z-10 ${colorClass}`}>
+                                    <step.icon className="w-4 h-4" strokeWidth={status === 'current' ? 2.5 : 2} />
+                                </div>
+                                <span className={`text-[10px] font-bold absolute -bottom-5 w-20 text-center transition-colors duration-300 ${status === 'current' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}>
+                                    {step.label}
+                                </span>
+                            </div>
+                        );
+                    })}
+               </div>
+               <div className="h-3"></div> {/* Reduced spacer */}
+            </div>
+          </div>
+
+          {/* Row 2: Combined Info Card (Compact 2 Columns) */}
+          <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-2 gap-3">
+             {/* Left Column: General Info */}
+             <div className="flex flex-col gap-2 border-r border-slate-100 pr-2">
+                <div className="flex items-center gap-1.5 text-indigo-500 mb-1">
+                    <User className="w-3.5 h-3.5" />
+                    <span className="text-[10px] font-bold uppercase text-slate-400">ข้อมูลทั่วไป</span>
+                </div>
+                <div>
+                    <p className="text-[9px] text-slate-400">วันที่</p>
+                    <p className="text-xs font-bold text-slate-700 truncate">{formatDate(data.rawDateTime)}</p>
+                </div>
+                <div>
+                    <p className="text-[9px] text-slate-400">ศิลปิน</p>
+                    <p className="text-xs font-bold text-slate-700 truncate">{data.artist}</p>
+                </div>
+                <div>
+                    <p className="text-[9px] text-slate-400">ลูกค้า</p>
+                    <p className="text-xs font-bold text-slate-700 truncate">{data.customer}</p>
+                </div>
+             </div>
+
+             {/* Right Column: Delivery Info */}
+             <div className="flex flex-col gap-2 pl-1">
+                <div className="flex items-center gap-1.5 text-rose-500 mb-1">
+                    <Truck className="w-3.5 h-3.5" />
+                    <span className="text-[10px] font-bold uppercase text-slate-400">จัดส่ง</span>
+                </div>
+                <div>
+                    <p className="text-[9px] text-slate-400">กำหนดส่ง</p>
+                    <div className="text-xs font-bold text-slate-700 truncate">{renderDeliveryTime(data)}</div>
+                </div>
+                <div>
+                    <div className="flex justify-between items-center">
+                        <p className="text-[9px] text-slate-400">สถานที่</p>
                         {data.mapLink && (
-                            <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1">
-                                <ExternalLink className="w-3 h-3" /> เปิดแผนที่
+                            <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-[9px] text-blue-600 font-bold hover:underline">
+                                Map
                             </a>
                         )}
                     </div>
+                    <p className="text-xs font-bold text-slate-700 line-clamp-2 leading-tight">{data.location || '-'}</p>
+                </div>
+                {(data.recipient || data.recipientPhone) && (
+                    <div>
+                        <p className="text-[9px] text-slate-400">ผู้รับ</p>
+                        <p className="text-xs font-bold text-slate-700 truncate">{data.recipient || '-'}</p>
+                        {data.recipientPhone && <a href={`tel:${data.recipientPhone}`} className="text-[10px] text-indigo-600 font-bold block">{data.recipientPhone}</a>}
                     </div>
-                    {(data.recipient || data.recipientPhone) && (
-                    <div className="flex items-start gap-3 pt-2 border-t border-slate-200 mt-2">
-                        <User className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
-                        <div>
-                            <p className="text-xs text-slate-400 font-bold">ผู้รับ</p>
-                            <p className="text-sm font-bold text-slate-700">{data.recipient || '-'}</p>
-                            <p className="text-xs font-medium text-slate-500">{data.recipientPhone}</p>
+                )}
+             </div>
+          </div>
+
+          {/* Row 3: Shop Contact Card (Compact Redesign) */}
+          {shopInfo && (
+            <div className="bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-200 p-5 relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-2 opacity-10 pointer-events-none">
+                    <StoreIcon className="w-24 h-24 transform rotate-12" />
+                </div>
+                
+                {/* Header of card */}
+                <h3 className="text-sm font-bold uppercase tracking-wider mb-4 flex items-center justify-center gap-2 relative z-10 opacity-90">
+                    <StoreIcon className="w-4 h-4" /> ข้อมูลติดต่อร้าน
+                </h3>
+
+                <div className="flex flex-col gap-4 relative z-10">
+                    {/* Row 1: Phone & Email Buttons (Centered) */}
+                    <div className="flex items-center justify-center gap-3 flex-wrap">
+                        {shopInfo.phone && (
+                            <a href={`tel:${shopInfo.phone}`} className="flex items-center gap-2 bg-white text-indigo-600 px-5 py-2.5 rounded-xl shadow-sm hover:bg-indigo-50 transition active:scale-95">
+                                <Phone className="w-5 h-5" />
+                                <span className="text-base font-bold">{shopInfo.phone}</span>
+                            </a>
+                        )}
+                        {shopInfo.email && (
+                            <a href={`mailto:${shopInfo.email}`} className="flex items-center gap-2 bg-white/10 text-white px-5 py-2.5 rounded-xl border border-white/20 hover:bg-white/20 transition active:scale-95">
+                                <Mail className="w-5 h-5" />
+                                <span className="text-base font-bold">Email</span>
+                            </a>
+                        )}
+                    </div>
+
+                    {/* Row 2: Social Media Buttons (Centered Row) */}
+                    <div className="flex items-center justify-center gap-4">
+                        {shopInfo.line && (
+                            <a href={shopInfo.line} target="_blank" rel="noreferrer" className="w-12 h-12 bg-[#06C755] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20">
+                                <MessageCircle className="w-6 h-6 text-white fill-current" />
+                            </a>
+                        )}
+                        {shopInfo.facebook && (
+                            <a href={shopInfo.facebook} target="_blank" rel="noreferrer" className="w-12 h-12 bg-[#1877F2] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20">
+                                <Facebook className="w-6 h-6 text-white fill-current" />
+                            </a>
+                        )}
+                        {shopInfo.instagram && (
+                            <a href={shopInfo.instagram} target="_blank" rel="noreferrer" className="w-12 h-12 bg-gradient-to-tr from-[#FFDC80] via-[#FD1D1D] to-[#C13584] rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20">
+                                <Instagram className="w-6 h-6 text-white" />
+                            </a>
+                        )}
+                        {shopInfo.tiktok && (
+                            <a href={shopInfo.tiktok} target="_blank" rel="noreferrer" className="w-12 h-12 bg-black rounded-full flex justify-center items-center shadow-md hover:scale-110 transition-all border-2 border-white/20">
+                                <Music2 className="w-6 h-6 text-white" />
+                            </a>
+                        )}
+                    </div>
+
+                    {/* Row 3: Address (Plain Text, Centered) */}
+                    {shopInfo.address && (
+                        <div className="text-center mt-2 px-4">
+                            <p className="text-xs font-medium text-indigo-50 leading-relaxed">
+                                {shopInfo.address}
+                            </p>
                         </div>
-                    </div>
                     )}
                 </div>
             </div>
-          </div>
-
-          {/* Images */}
-          {data.image && (
-             <div className="bg-white p-4 rounded-[2rem] shadow-sm border border-slate-100">
-                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3 px-2 flex items-center gap-2">
-                   <ImageIcon className="w-4 h-4" /> รูปภาพอ้างอิง
-                </h3>
-                <div className="rounded-2xl overflow-hidden border border-slate-100 bg-slate-50 flex justify-center bg-white/50">
-                   <img src={processImageUrl(data.image)} alt="Reference" className="w-full h-auto object-contain max-h-[500px]" />
-                </div>
-             </div>
           )}
 
-          {/* Net Amount */}
-          <div className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white p-6 rounded-[2rem] shadow-lg shadow-indigo-200">
-             <div className="flex flex-col sm:flex-row justify-between items-center gap-4 text-center sm:text-left">
-                <div>
-                   <p className="text-indigo-200 text-xs font-bold uppercase tracking-wider mb-1">ยอดชำระสุทธิ</p>
-                   <p className="text-xs text-indigo-100 opacity-80">Net Receivable</p>
-                </div>
-                <div className="text-right w-full sm:w-auto">
-                   <p className="text-3xl md:text-4xl font-black tracking-tight break-all">฿{netReceivable.toLocaleString()}</p>
-                </div>
-             </div>
-          </div>
-
-          <div className="text-center pb-8">
-             <p className="text-xs text-slate-400">Powered by NexusPlan</p>
+          <div className="text-center pt-4 pb-8">
+             <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Powered by NexusPlan</p>
           </div>
 
        </div>
@@ -513,12 +597,46 @@ const SharePreviewModal = ({ data, onClose }) => {
   const [isCopied, setIsCopied] = useState(false);
   const [isLinkCopied, setIsLinkCopied] = useState(false); // New state for link copy
 
-  // คำนวณยอดเรียกเก็บสุทธิ
-  const wage = parseFloat(data.wage) || 0;
-  const support = data.customerSupport ? data.customerSupport.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) : 0;
-  const netReceivable = wage + support;
+  // คำนวณยอดต่างๆ เพื่อใช้แสดงผล
+  const totalSupport = data.customerSupport ? data.customerSupport.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) : 0;
+  
+  // ตรวจสอบว่ามีรายการ Quotation แบบละเอียดหรือไม่
+  const hasQuotationItems = data.quotationItems && data.quotationItems.length > 0;
+  
+  const totalQuotation = hasQuotationItems
+      ? data.quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) 
+      : (parseFloat(data.wage) || 0);
+
+  const netReceivable = totalSupport + totalQuotation;
 
   const handleCopyText = () => {
+    // สร้างข้อความรายละเอียดเงินสนับสนุน (Money Order)
+    let moneyOrderDetails = "";
+    if (data.customerSupport && data.customerSupport.some(i => parseFloat(i.price) > 0)) {
+        moneyOrderDetails += "\n💵 *เงินสนับสนุนศิลปิน (Money Order)*\n";
+        data.customerSupport.filter(item => parseFloat(item.price) > 0).forEach(item => {
+            const type = item.denomination >= 20 ? 'แบงค์' : 'เหรียญ';
+            const unit = item.denomination >= 20 ? 'ใบ' : 'เหรียญ';
+            moneyOrderDetails += `- ${type} ${item.denomination} (${item.quantity} ${unit}): ${parseFloat(item.price).toLocaleString()} บ.\n`;
+        });
+    }
+
+    // สร้างข้อความรายการเสนอราคา (Quotation)
+    let quotationDetails = "";
+    if (totalQuotation > 0) {
+        quotationDetails += "\n📝 *รายการเสนอราคา (Quotation)*\n";
+        if (hasQuotationItems) {
+             data.quotationItems.forEach(item => {
+                 // แสดงทุกรายการแม้ราคาจะเป็น 0 ถ้ามีการบันทึกไว้ หรือจะกรองเฉพาะ > 0 ก็ได้ แต่ตามโจทย์คือ "มีกี่รายการก็ต้องใส่"
+                 if (item.detail || item.category) {
+                    quotationDetails += `- ${item.detail || item.category}: ${parseFloat(item.price).toLocaleString()} บ.\n`;
+                 }
+             });
+        } else {
+             quotationDetails += `- ค่าบริการรวม: ${totalQuotation.toLocaleString()} บ.\n`;
+        }
+    }
+
     const text = `
 📋 *รายละเอียดงาน (Job Summary)*
 🆔 ${data.id}
@@ -532,7 +650,7 @@ const SharePreviewModal = ({ data, onClose }) => {
 📍 สถานที่: ${data.location || '-'}
 🗺️ แผนที่: ${data.mapLink || '-'}
 📞 ผู้รับ: ${data.recipient || '-'} (${data.recipientPhone || '-'})
-
+${moneyOrderDetails}${quotationDetails}
 💰 *ยอดเรียกเก็บสุทธิ: ฿${netReceivable.toLocaleString()}*
     `.trim();
 
@@ -557,11 +675,12 @@ const SharePreviewModal = ({ data, onClose }) => {
   };
 
   const handleCopyLink = () => {
-      // สร้าง Link โดยอิงจาก URL ปัจจุบัน และเพิ่ม Query Param ?tracking=ID
-      // FIX: ใช้ URL Object เพื่อจัดการ Path และ Origin ให้ถูกต้อง ป้องกันปัญหา URL ซ้อนกัน
+      // สร้าง Link โดยอิงจาก URL ปัจจุบัน และเพิ่ม Query Param ?tracking=TOKEN
       try {
         const urlObj = new URL(window.location.href);
-        urlObj.searchParams.set('tracking', data.id);
+        // [FIX] Use generateTrackingToken for secure link
+        const secureToken = generateTrackingToken(data.id, data.rawDateTime);
+        urlObj.searchParams.set('tracking', secureToken);
         const url = urlObj.toString();
       
         const textArea = document.createElement("textarea");
@@ -589,118 +708,197 @@ const SharePreviewModal = ({ data, onClose }) => {
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 print:p-0">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-0 sm:p-4 print:p-0">
       <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200 print:shadow-none print:w-full print:max-w-none print:h-auto print:rounded-none">
+      <div className="bg-white w-full max-w-lg sm:rounded-3xl rounded-none h-full sm:h-auto shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[100dvh] sm:max-h-[90vh] animate-in fade-in zoom-in-95 duration-200 print:shadow-none print:w-full print:max-w-none print:h-auto print:rounded-none">
         
-        <div className="px-6 py-4 bg-indigo-600 text-white flex justify-between items-center print:hidden">
-          <div className="flex items-center gap-2">
-            <Share2 className="w-5 h-5" />
-            <span className="font-bold text-lg">สำหรับลูกค้า (Customer View)</span>
+        {/* Header - Fixed on top */}
+        <div className="px-5 py-4 bg-white border-b border-slate-100 flex justify-between items-center print:hidden shrink-0 z-20 sticky top-0">
+          <div className="flex items-center gap-3">
+             <div className="bg-indigo-50 p-2 rounded-xl text-indigo-600">
+                <Share2 className="w-5 h-5" />
+             </div>
+             <div>
+                <h3 className="font-bold text-slate-800 text-base leading-tight">สรุปรายละเอียดงาน</h3>
+                <p className="text-[10px] text-slate-500 font-medium">สำหรับลูกค้า (Customer View)</p>
+             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/20 rounded-full transition">
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-full transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto custom-scrollbar bg-slate-50 print:bg-white print:p-0">
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 print:border-none print:shadow-none">
+        {/* Content - Scrollable with soft background */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50/50 p-4 sm:p-6 print:bg-white print:p-0">
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 space-y-6 print:border-none print:shadow-none">
             
-            {/* Header: Adjusted for Mobile Responsiveness (Grid 2 cols) to prevent overlapping */}
-            <div className="grid grid-cols-[1fr_auto] gap-4 items-start mb-6 border-b border-slate-100 pb-4">
-               <div className="min-w-0">
+            {/* Project Header */}
+            <div>
+               <div className="flex justify-between items-start gap-3 mb-2">
                   <h2 className="text-xl font-black text-slate-800 leading-tight break-words">{data.name}</h2>
-                  <div className="mt-2">
-                     <span className="inline-flex items-center bg-indigo-50 text-indigo-600 text-sm px-3 py-1 rounded-lg font-bold border border-indigo-100 shadow-sm">
-                        {data.id}
-                     </span>
-                  </div>
+                  {data.id && <span className="shrink-0 bg-indigo-50 text-indigo-600 text-[10px] px-2 py-1 rounded-md font-bold border border-indigo-100">{data.id}</span>}
                </div>
-               <div className="shrink-0">
-                  <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold border border-emerald-100 whitespace-nowrap shadow-sm">
-                    ใบสรุปงาน
-                  </span>
+               <div className="flex flex-wrap gap-2">
+                   <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-600 text-[10px] px-2 py-1 rounded-md font-bold border border-emerald-100">
+                      <FileText className="w-3 h-3" /> ใบสรุปงาน
+                   </span>
                </div>
             </div>
 
-            <div className="space-y-4 mb-6">
-               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                  <FileText className="w-4 h-4" /> ข้อมูลทั่วไป
-               </h3>
-               <div className="grid grid-cols-2 gap-y-4 gap-x-2 text-sm">
+            {/* General Info Card */}
+            <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+               <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <User className="w-3.5 h-3.5" /> ข้อมูลทั่วไป
+               </h4>
+               <div className="grid grid-cols-2 gap-y-3 gap-x-4">
                   <div>
-                    <p className="text-slate-400 text-xs">วันที่</p>
-                    <p className="font-bold text-slate-700">{formatDate(data.rawDateTime)}</p>
+                    <p className="text-[10px] text-slate-400 mb-0.5">วันที่</p>
+                    <p className="text-sm font-bold text-slate-700">{formatDate(data.rawDateTime)}</p>
                   </div>
                    <div>
-                    <p className="text-slate-400 text-xs">ศิลปิน</p>
-                    <p className="font-bold text-slate-700">{data.artist}</p>
+                    <p className="text-[10px] text-slate-400 mb-0.5">ศิลปิน</p>
+                    <p className="text-sm font-bold text-slate-700">{data.artist}</p>
                   </div>
-                  <div className="col-span-2">
-                    <p className="text-slate-400 text-xs">ลูกค้า</p>
-                    <p className="font-bold text-slate-700">{data.customer}</p>
+                  <div className="col-span-2 pt-2 border-t border-slate-200/60">
+                    <p className="text-[10px] text-slate-400 mb-0.5">ลูกค้า</p>
+                    <p className="text-sm font-bold text-slate-700">{data.customer}</p>
                   </div>
                </div>
             </div>
 
-            <div className="space-y-4 mb-6">
-               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                  <MapPin className="w-4 h-4" /> การจัดส่ง & สถานที่
-               </h3>
-               <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
-                  <div className="flex items-start gap-3">
-                     <Clock className="w-5 h-5 text-indigo-500 shrink-0 mt-0.5" />
+            {/* Delivery Info Card */}
+            <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+               <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <Truck className="w-3.5 h-3.5" /> การจัดส่ง & สถานที่
+               </h4>
+               <div className="space-y-3">
+                  <div className="flex gap-3">
+                     <div className="shrink-0 mt-0.5 text-indigo-500"><Clock className="w-4 h-4" /></div>
                      <div>
-                        <p className="text-xs text-slate-400 font-bold">กำหนดส่ง</p>
+                        <p className="text-[10px] text-slate-400 mb-0.5 font-bold">กำหนดส่ง</p>
                         <div className="text-sm font-bold text-slate-700">{renderDeliveryTime(data)}</div>
                      </div>
                   </div>
-                  <div className="flex items-start gap-3">
-                     <MapPin className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
-                     <div>
-                        <p className="text-xs text-slate-400 font-bold">สถานที่</p>
-                        <p className="text-sm font-bold text-slate-700">{data.location || '-'}</p>
-                        {data.mapLink && (
-                           <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1">
-                              <ExternalLink className="w-3 h-3" /> เปิดแผนที่
-                           </a>
-                        )}
+                  <div className="flex gap-3">
+                     <div className="shrink-0 mt-0.5 text-rose-500"><MapPin className="w-4 h-4" /></div>
+                     <div className="min-w-0 flex-1">
+                        <div className="flex justify-between items-baseline mb-0.5">
+                            <p className="text-[10px] text-slate-400 font-bold">สถานที่</p>
+                            {data.mapLink && (
+                                <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-[10px] text-blue-600 font-bold hover:underline flex items-center gap-1">
+                                    เปิดแผนที่ <ExternalLink className="w-2.5 h-2.5" />
+                                </a>
+                            )}
+                        </div>
+                        <p className="text-sm font-bold text-slate-700 leading-snug">{data.location || '-'}</p>
                      </div>
                   </div>
                   {(data.recipient || data.recipientPhone) && (
-                     <div className="flex items-start gap-3 pt-2 border-t border-slate-200 mt-2">
-                        <User className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+                     <div className="flex gap-3 pt-3 mt-1 border-t border-slate-200/60">
+                        <div className="shrink-0 mt-0.5 text-emerald-500"><User className="w-4 h-4" /></div>
                         <div>
-                           <p className="text-xs text-slate-400 font-bold">ผู้รับ</p>
+                           <p className="text-[10px] text-slate-400 mb-0.5 font-bold">ผู้รับ</p>
                            <p className="text-sm font-bold text-slate-700">{data.recipient || '-'}</p>
-                           <p className="text-xs font-medium text-slate-500">{data.recipientPhone}</p>
+                           {data.recipientPhone && <p className="text-xs text-slate-500 mt-0.5 font-medium">{data.recipientPhone}</p>}
                         </div>
                      </div>
                   )}
                </div>
             </div>
 
+            {/* Image Section */}
             {data.image && (
-               <div className="mb-6">
-                  <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2 mb-3">
-                     <ImageIcon className="w-4 h-4" /> รูปภาพอ้างอิง
-                  </h3>
-                  <div className="rounded-xl overflow-hidden border border-slate-200">
-                     <img src={processImageUrl(data.image)} alt="Project Ref" className="w-full h-auto object-contain max-h-64 bg-slate-50" />
+               <div>
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+                     <ImageIcon className="w-3.5 h-3.5" /> รูปภาพอ้างอิง
+                  </h4>
+                  <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                     <img src={processImageUrl(data.image)} alt="Project Ref" className="w-full h-auto object-contain max-h-60" />
                   </div>
                </div>
             )}
 
-            <div className="mt-6 pt-6 border-t-2 border-dashed border-slate-200">
-               <div className="bg-indigo-600 text-white p-5 rounded-2xl shadow-lg shadow-indigo-200 flex flex-col sm:flex-row justify-between items-center gap-4 text-center sm:text-left">
-                  <div>
-                     <p className="text-indigo-200 text-xs font-bold uppercase tracking-wider">ยอดเรียกเก็บสุทธิ</p>
-                     <p className="text-xs text-indigo-100 opacity-80 mt-1">Net Receivable</p>
+            {/* Money Summary Section - Card Style */}
+            <div className="pt-2">
+               <div className="bg-white rounded-xl border-2 border-dashed border-slate-200 p-4 sm:p-5 relative overflow-hidden">
+                  {/* Decorative Icon */}
+                  <div className="absolute top-0 right-0 p-3 opacity-5 pointer-events-none">
+                      <Wallet className="w-24 h-24 -rotate-12" />
                   </div>
-                  <div className="w-full sm:w-auto overflow-hidden">
-                     <p className={`font-black tracking-tight leading-none break-all ${netReceivable.toString().length > 10 ? 'text-2xl' : 'text-3xl'}`}>
-                        ฿{netReceivable.toLocaleString()}
-                     </p>
+                  
+                  <h3 className="text-base font-black text-slate-800 text-center uppercase tracking-wide mb-5 relative z-10">สรุปยอดเรียกเก็บเงิน</h3>
+                  
+                  <div className="space-y-5 relative z-10">
+                      
+                      {/* 1. Money Order */}
+                      {data.customerSupport && data.customerSupport.some(i => parseFloat(i.price) > 0) && (
+                          <div className="space-y-2">
+                              <div className="flex justify-between items-center border-b border-indigo-100 pb-1.5 mb-1">
+                                  <h4 className="text-xs font-bold text-indigo-600 flex items-center gap-1.5">
+                                     <div className="p-1 bg-indigo-100 rounded-md"><Gift className="w-3 h-3" /></div>
+                                     เงินสนับสนุนศิลปิน
+                                  </h4>
+                                  <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md">฿{totalSupport.toLocaleString()}</span>
+                              </div>
+                              <div className="space-y-1.5">
+                                  {data.customerSupport.filter(item => parseFloat(item.price) > 0).map((item, idx) => (
+                                      <div key={idx} className="flex justify-between items-center text-xs text-slate-600 px-1">
+                                          <span className="flex items-center gap-2">
+                                              <span className="w-1 h-1 bg-indigo-400 rounded-full shrink-0"></span>
+                                              {item.denomination >= 20 ? 'แบงค์' : 'เหรียญ'} {item.denomination} x {item.quantity}
+                                          </span>
+                                          <span className="font-medium text-slate-900 tabular-nums">{parseFloat(item.price).toLocaleString()}</span>
+                                      </div>
+                                  ))}
+                              </div>
+                          </div>
+                      )}
+
+                      {/* 2. Quotation */}
+                      <div className="space-y-2">
+                          <div className="flex justify-between items-center border-b border-emerald-100 pb-1.5 mb-1">
+                              <h4 className="text-xs font-bold text-emerald-600 flex items-center gap-1.5">
+                                 <div className="p-1 bg-emerald-100 rounded-md"><FileText className="w-3 h-3" /></div>
+                                 รายการเสนอราคา
+                              </h4>
+                              <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">฿{totalQuotation.toLocaleString()}</span>
+                          </div>
+                          <div className="space-y-2">
+                              {hasQuotationItems ? (
+                                  data.quotationItems.map((item, idx) => (
+                                      <div key={idx} className="flex justify-between items-start text-xs px-1">
+                                          <div className="flex flex-col pr-2">
+                                              <div className="flex flex-wrap items-baseline gap-1">
+                                                  {item.category && (
+                                                      <span className="font-bold text-slate-700 whitespace-nowrap">{item.category}</span>
+                                                  )}
+                                                  <span className="text-slate-500 font-medium break-all">{item.detail}</span>
+                                              </div>
+                                          </div>
+                                          <span className="font-bold text-slate-900 tabular-nums whitespace-nowrap pt-0.5">
+                                              {parseFloat(item.price).toLocaleString()}
+                                          </span>
+                                      </div>
+                                  ))
+                              ) : (
+                                  <div className="flex justify-between items-center text-xs text-slate-600 px-1">
+                                      <span className="flex items-center gap-2">
+                                          <span className="w-1 h-1 bg-emerald-400 rounded-full"></span>
+                                          ค่าบริการรวม
+                                      </span>
+                                      <span className="font-bold text-slate-900 tabular-nums">{totalQuotation.toLocaleString()}</span>
+                                  </div>
+                              )}
+                          </div>
+                      </div>
+
+                      {/* 3. Net Total */}
+                      <div className="pt-4 border-t border-slate-200 mt-2">
+                          <div className="flex justify-between items-end bg-slate-50 p-4 rounded-xl border border-slate-100">
+                              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">ยอดเรียกเก็บสุทธิ</span>
+                              <span className="text-2xl font-black text-indigo-600 leading-none tabular-nums">฿{netReceivable.toLocaleString()}</span>
+                          </div>
+                      </div>
                   </div>
                </div>
             </div>
@@ -708,29 +906,29 @@ const SharePreviewModal = ({ data, onClose }) => {
           </div>
         </div>
 
-        {/* Buttons Action Area (Modified for Mobile Responsive) */}
-        <div className="p-4 bg-white border-t border-slate-100 flex flex-col gap-3 print:hidden">
+        {/* Buttons Action Area (Fixed Bottom) */}
+        <div className="p-4 bg-white border-t border-slate-100 flex flex-col gap-3 print:hidden shrink-0 safe-area-bottom-modal">
            <div className="grid grid-cols-2 gap-3">
                <button 
                  onClick={handleCopyLink}
-                 className={`flex-1 py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${isLinkCopied ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                 className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${isLinkCopied ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                >
-                 {isLinkCopied ? <Check className="w-5 h-5" /> : <LinkIcon className="w-5 h-5" />}
+                 {isLinkCopied ? <Check className="w-4 h-4" /> : <LinkIcon className="w-4 h-4" />}
                  {isLinkCopied ? 'คัดลอกลิงก์' : 'คัดลอกลิงก์'}
                </button>
                <button 
                  onClick={handleCopyText}
-                 className={`flex-1 py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${isCopied ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                 className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${isCopied ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                >
-                 {isCopied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+                 {isCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                  {isCopied ? 'คัดลอกข้อความ' : 'คัดลอกข้อความ'}
                </button>
            </div>
            <button 
              onClick={handlePrint}
-             className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2"
+             className="w-full py-3.5 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2"
            >
-             <Printer className="w-5 h-5" />
+             <Printer className="w-4 h-4" />
              พิมพ์ / บันทึก PDF
            </button>
         </div>
@@ -1881,6 +2079,18 @@ const App = () => {
   const [isAddingUser, setIsAddingUser] = useState(false);
 
   const [driveFolderId, setDriveFolderId] = useState('');
+  
+  // New State for Shop Contact Info
+  const [shopInfo, setShopInfo] = useState({
+      shopName: '',
+      phone: '',
+      email: '',
+      address: '',
+      line: '',
+      facebook: '',
+      instagram: '',
+      tiktok: ''
+  });
 
   const [projectCategories, setProjectCategories] = useState([]);
   const [expenseCategories, setExpenseCategories] = useState([]);
@@ -1955,11 +2165,15 @@ const App = () => {
   const [note, setNote] = useState('');
 
   const [wage, setWage] = useState(0);
+  const [deliveryFee, setDeliveryFee] = useState(0); // [NEW] State for Delivery Fee
   const [transportStatus, setTransportStatus] = useState('');
   const [dealStatus, setDealStatus] = useState('');
   
   const [expenses, setExpenses] = useState([{ category: '', detail: '', price: 0 }]);
-  const [customerSupportItems, setCustomerSupportItems] = useState([{ detail: '', price: 0 }]);
+  // [MODIFIED] New State for Quotation List
+  const [quotationItems, setQuotationItems] = useState([{ category: '', detail: '', price: 0 }]);
+  // [MODIFIED] Updated State structure for Support Items
+  const [customerSupportItems, setCustomerSupportItems] = useState([{ denomination: 20, quantity: 0, price: 0 }]);
   
   const [allActivities, setAllActivities] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -1997,6 +2211,7 @@ const App = () => {
             if (data.deal_statuses) setDealStatuses(data.deal_statuses);
             if (data.transport_statuses) setTransportStatuses(data.transport_statuses);
             if (data.drive_folder_id) setDriveFolderId(data.drive_folder_id);
+            if (data.shop_info) setShopInfo(data.shop_info); // Load Shop Info
             
             if (data.app_credentials) {
                 let creds = data.app_credentials;
@@ -2102,6 +2317,9 @@ const App = () => {
           }
           if (key === 'drive_folder_id') {
               setDriveFolderId(value);
+          }
+          if (key === 'shop_info') {
+              setShopInfo(value);
           }
           showToast("บันทึกการตั้งค่าสำเร็จ", "success");
       } catch (error) {
@@ -2549,9 +2767,38 @@ const App = () => {
       setLocationName(activity.location || '');
       setMapLink(activity.mapLink || '');
       setUploadedImage(activity.image || null); // Load existing image
-      setWage(activity.wage);
+      
+      // [MODIFIED] Load Quotation Items or migrate from legacy wage/deliveryFee
+      if (activity.quotationItems && activity.quotationItems.length > 0) {
+          setQuotationItems(activity.quotationItems);
+          // Calculate total wage for display consistency if needed, but we rely on items now
+          const totalWage = activity.quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0);
+          setWage(totalWage);
+      } else {
+          // Backward compatibility: Convert legacy wage/delivery to list items
+          const initialItems = [];
+          if (activity.wage > 0) initialItems.push({ category: 'ค่าบริการ/อุปกรณ์', detail: 'ค่าจ้างเดิม', price: activity.wage });
+          if (activity.deliveryFee > 0) initialItems.push({ category: 'ค่าจัดส่ง', detail: 'ค่าส่งเดิม', price: activity.deliveryFee });
+          
+          if (initialItems.length === 0) initialItems.push({ category: '', detail: '', price: 0 });
+          setQuotationItems(initialItems);
+          setWage(activity.wage || 0);
+      }
+
+      // [MODIFIED] Load Customer Support Items with fallback
+      if (activity.customerSupport && activity.customerSupport.length > 0) {
+          // Check if it's new format (has denomination) or old format
+          const mappedSupport = activity.customerSupport.map(item => {
+              if (item.denomination !== undefined) return item;
+              // Migrate old format: detail -> price (assume custom amount)
+              return { denomination: 1, quantity: item.price, price: item.price }; 
+          });
+          setCustomerSupportItems(mappedSupport);
+      } else {
+          setCustomerSupportItems([{ denomination: 20, quantity: 0, price: 0 }]);
+      }
+
       setExpenses(activity.expenses && activity.expenses.length > 0 ? activity.expenses : [{ category: '', detail: '', price: 0 }]);
-      setCustomerSupportItems(activity.customerSupport && activity.customerSupport.length > 0 ? activity.customerSupport : [{ detail: '', price: 0 }]);
       setNote(activity.note || '');
       setDealStatus(activity.dealStatus);
       setTransportStatus(activity.transportStatus);
@@ -2587,8 +2834,10 @@ const App = () => {
       setUploadedImage(null);
       setNote('');
       setWage(0);
+      setDeliveryFee(0); // [NEW] Reset Delivery Fee
       setExpenses([{ category: '', detail: '', price: 0 }]);
-      setCustomerSupportItems([{ detail: '', price: 0 }]);
+      setQuotationItems([{ category: '', detail: '', price: 0 }]); // Reset Quotation
+      setCustomerSupportItems([{ denomination: 20, quantity: 0, price: 0 }]); // Reset Support
       setDealStatus(dealStatuses.length > 0 ? dealStatuses[0].value : ''); 
       setTransportStatus(transportStatuses.length > 0 ? transportStatuses[0].value : '');
     }
@@ -2617,6 +2866,9 @@ const App = () => {
         ? `${formatDate(deliveryStart)} - ${formatDate(deliveryEnd)}`
         : deliveryEnd ? formatDate(deliveryEnd) : '-';
 
+    // Calculate totals for summary fields
+    const totalQuotation = quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0);
+
     const activityData = {
       id: currentId,
       name: projectName || 'โครงการใหม่ (ไม่ได้ระบุชื่อ)',
@@ -2635,7 +2887,9 @@ const App = () => {
       rawDeliveryStart: deliveryStart,
       rawDeliveryEnd: deliveryEnd,
       rawDeliveryDateTime: deliveryEnd, 
-      wage: parseFloat(wage) || 0,
+      wage: totalQuotation, // Save total as wage for table sorting/display
+      deliveryFee: 0, // Deprecated in favor of quotationItems, set 0 or keep for legacy
+      quotationItems: quotationItems, // [NEW] Save detailed quotation
       dealStatus: dealStatus,
       transportStatus: transportStatus,
       expenses: expenses,
@@ -2766,8 +3020,25 @@ const App = () => {
     setExpenses(newExpenses);
   };
 
+  // [NEW] Quotation Handlers
+  const handleAddQuotationItem = () => {
+    setQuotationItems([...quotationItems, { category: '', detail: '', price: 0 }]);
+  };
+
+  const handleRemoveQuotationItem = (index) => {
+    const newItems = quotationItems.filter((_, i) => i !== index);
+    setQuotationItems(newItems);
+  };
+
+  const handleQuotationItemChange = (index, field, value) => {
+    const newItems = [...quotationItems];
+    newItems[index][field] = value;
+    setQuotationItems(newItems);
+  };
+
+  // [NEW] Support Item Handlers with Calculator Logic
   const handleAddSupportItem = () => {
-    setCustomerSupportItems([...customerSupportItems, { detail: '', price: 0 }]);
+    setCustomerSupportItems([...customerSupportItems, { denomination: 20, quantity: 0, price: 0 }]);
   };
 
   const handleRemoveSupportItem = (index) => {
@@ -2777,7 +3048,25 @@ const App = () => {
 
   const handleSupportItemChange = (index, field, value) => {
     const newItems = [...customerSupportItems];
-    newItems[index][field] = value;
+    const item = newItems[index];
+    const val = parseFloat(value) || 0;
+
+    if (field === 'denomination') {
+        item.denomination = val;
+        // Recalculate amount based on existing quantity
+        item.price = item.quantity * val;
+    } else if (field === 'quantity') {
+        item.quantity = val;
+        // Auto calculate price
+        item.price = val * item.denomination;
+    } else if (field === 'price') {
+        item.price = val;
+        // Auto calculate quantity
+        if (item.denomination > 0) {
+            item.quantity = val / item.denomination;
+        }
+    }
+
     setCustomerSupportItems(newItems);
   };
 
@@ -3394,7 +3683,10 @@ const App = () => {
             );
         }
         
-        const trackData = allActivities.find(item => item.id === trackingId);
+        // [FIX] Match against generated token instead of direct ID for security
+        const trackData = allActivities.find(item => 
+            generateTrackingToken(item.id, item.rawDateTime) === trackingId
+        );
         
         if (!trackData) {
              return (
@@ -3403,7 +3695,7 @@ const App = () => {
                        <Search className="w-12 h-12" />
                     </div>
                     <h2 className="text-2xl font-black text-slate-800 mb-2">ไม่พบข้อมูลงาน</h2>
-                    <p className="text-slate-500 mb-6">รหัสติดตาม: <span className="font-mono font-bold text-indigo-600">{trackingId}</span> ไม่ถูกต้อง หรือถูกลบไปแล้ว</p>
+                    <p className="text-slate-500 mb-6">รหัสติดตาม: <span className="font-mono font-bold text-indigo-600 break-all">{trackingId}</span> ไม่ถูกต้อง หรือถูกลบไปแล้ว</p>
                     <button onClick={() => window.location.search = ''} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-200">
                         กลับหน้าหลัก
                     </button>
@@ -3411,7 +3703,7 @@ const App = () => {
              );
         }
 
-        return <CustomerTrackingView data={trackData} />;
+        return <CustomerTrackingView data={trackData} shopInfo={shopInfo} />;
     }
 
     // 2. ถ้าไม่มี Tracking ID ก็เข้า Flow ปกติ (Login -> Dashboard)
@@ -4049,6 +4341,107 @@ const App = () => {
                   </div>
               </div>
 
+              {/* Added Shop Contact Settings Section */}
+              <div className="mb-8">
+                  <h3 className="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
+                      <StoreIcon className="w-5 h-5 text-indigo-600" />
+                      ข้อมูลติดต่อร้านค้า (Shop Contact)
+                  </h3>
+                  <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                          <div className="space-y-1 sm:col-span-2">
+                              <label className="text-xs font-bold text-slate-500 ml-1">ชื่อร้านค้า</label>
+                              <input 
+                                  type="text" 
+                                  placeholder="ชื่อร้านของคุณ" 
+                                  value={shopInfo.shopName || ''}
+                                  onChange={e => setShopInfo({...shopInfo, shopName: e.target.value})}
+                                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              />
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 ml-1">เบอร์โทรศัพท์</label>
+                              <input 
+                                  type="tel" 
+                                  placeholder="เบอร์โทรร้าน" 
+                                  value={shopInfo.phone}
+                                  onChange={e => setShopInfo({...shopInfo, phone: e.target.value})}
+                                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              />
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 ml-1">อีเมล</label>
+                              <input 
+                                  type="email" 
+                                  placeholder="อีเมลร้าน" 
+                                  value={shopInfo.email}
+                                  onChange={e => setShopInfo({...shopInfo, email: e.target.value})}
+                                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              />
+                          </div>
+                          <div className="space-y-1 sm:col-span-2">
+                              <label className="text-xs font-bold text-slate-500 ml-1">ที่อยู่ / สำนักงาน</label>
+                              <textarea 
+                                  rows={2}
+                                  placeholder="ที่อยู่ร้านค้า..." 
+                                  value={shopInfo.address}
+                                  onChange={e => setShopInfo({...shopInfo, address: e.target.value})}
+                                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 resize-none"
+                              />
+                          </div>
+                          
+                          <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><MessageCircle className="w-3 h-3 text-[#06C755]"/> Line URL</label>
+                              <input 
+                                  type="text" 
+                                  placeholder="https://line.me/ti/p/..." 
+                                  value={shopInfo.line}
+                                  onChange={e => setShopInfo({...shopInfo, line: e.target.value})}
+                                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              />
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><Facebook className="w-3 h-3 text-[#1877F2]"/> Facebook URL</label>
+                              <input 
+                                  type="text" 
+                                  placeholder="https://facebook.com/..." 
+                                  value={shopInfo.facebook}
+                                  onChange={e => setShopInfo({...shopInfo, facebook: e.target.value})}
+                                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              />
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><Instagram className="w-3 h-3 text-[#C13584]"/> Instagram URL</label>
+                              <input 
+                                  type="text" 
+                                  placeholder="https://instagram.com/..." 
+                                  value={shopInfo.instagram}
+                                  onChange={e => setShopInfo({...shopInfo, instagram: e.target.value})}
+                                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              />
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><Music2 className="w-3 h-3 text-black"/> TikTok URL</label>
+                              <input 
+                                  type="text" 
+                                  placeholder="https://tiktok.com/@..." 
+                                  value={shopInfo.tiktok}
+                                  onChange={e => setShopInfo({...shopInfo, tiktok: e.target.value})}
+                                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              />
+                          </div>
+                      </div>
+                      <div className="flex justify-end">
+                          <button
+                              onClick={() => saveSystemSettings('shop_info', shopInfo)}
+                              className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition flex items-center justify-center gap-2"
+                          >
+                              <Save className="w-4 h-4" /> บันทึกข้อมูลติดต่อ
+                          </button>
+                      </div>
+                  </div>
+              </div>
+
               <h3 className="text-xl font-bold text-slate-900 mb-4">ตั้งค่าตัวเลือกระบบ (System Options)</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <ListManager
@@ -4420,6 +4813,7 @@ const App = () => {
                                 recipientPhone: recipientPhone,
                                 image: uploadedImage,
                                 wage: wage,
+                                quotationItems: quotationItems, // [FIX] เพิ่มบรรทัดนี้เพื่อให้ส่งข้อมูลรายการย่อยไปด้วย
                                 customerSupport: customerSupportItems,
                                 dealStatus: dealStatus, // เพิ่ม status ส่งไปด้วย
                                 transportStatus: transportStatus
@@ -4579,20 +4973,7 @@ const App = () => {
                                 </div>
                               </div>
                            </div>
-                           <div className="space-y-2">
-                              <label className="text-sm font-bold text-slate-700 ml-1">ราคา (ค่าจ้าง)</label>
-                              <div className="relative">
-                                <span className="absolute left-4 top-3 text-slate-400 font-bold text-lg">฿</span>
-                                <input
-                                  type="number"
-                                  placeholder="0.00"
-                                  value={wage}
-                                  disabled={viewOnlyMode}
-                                  onChange={(e) => setWage(e.target.value)}
-                                  className={`w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-bold text-slate-900 ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
-                                />
-                              </div>
-                           </div>
+                           {/* Wage Input Removed from here */}
                         </div>
                    </div>
 
@@ -4790,52 +5171,67 @@ const App = () => {
 
                  {/* ส่วนที่ 3: การเงิน */}
                  <div className="mt-10 space-y-6" ref={part3Ref}>
-                     {/* ... (Finance section same as before) ... */}
                      <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
                           <span className="bg-slate-900 text-white w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold">3</span>
-                          <h4 className="font-bold text-slate-800 text-lg">การเงิน</h4>
+                          <h4 className="font-bold text-slate-800 text-lg">การเงิน & เสนอราคา (Quotation)</h4>
                      </div>
 
-                     {/* 3.1: Customer Support (Sponsorship) */}
+                     {/* 3.1: Customer Support (Bank Calculator) */}
                      <div className="space-y-3">
-                         <h5 className="font-bold text-indigo-600 text-sm flex items-center gap-1.5">
-                            <Gift className="w-4 h-4" />
-                            รายการลูกค้าสนับสนุนศิลปิน (ไม่รวมในต้นทุน)
+                         <h5 className="font-bold text-indigo-700 text-sm flex items-center gap-2">
+                            <span className="bg-indigo-100 text-indigo-700 w-5 h-5 rounded-full flex items-center justify-center text-xs">1</span>
+                            เงินสนับสนุนศิลปิน (Money Order)
                          </h5>
                          <div className="bg-indigo-50/50 rounded-2xl border border-indigo-100 p-4">
                               <div className="space-y-3">
                                   {/* Header Row */}
-                                  <div className="hidden sm:grid grid-cols-12 gap-4 px-2 text-sm font-bold text-indigo-800/60">
-                                      <div className="col-span-9">รายละเอียด</div>
-                                      <div className="col-span-2">จำนวนเงิน</div>
+                                  <div className="hidden sm:grid grid-cols-12 gap-3 px-2 text-xs font-bold text-indigo-800/60 uppercase tracking-wide">
+                                      <div className="col-span-4">ประเภทแบงค์ (บาท)</div>
+                                      <div className="col-span-3">จำนวน (ใบ/เหรียญ)</div>
+                                      <div className="col-span-4">รวมเป็นเงิน (บาท)</div>
                                       <div className="col-span-1"></div>
                                   </div>
 
                                   {/* Dynamic Rows */}
                                   {customerSupportItems.map((item, idx) => (
-                                      <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start animate-in fade-in slide-in-from-left-2 duration-300">
-                                          <div className="sm:col-span-9">
+                                      <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center animate-in fade-in slide-in-from-left-2 duration-300 bg-white p-2 sm:p-0 rounded-xl sm:bg-transparent border sm:border-none border-indigo-100 shadow-sm sm:shadow-none">
+                                          <div className="sm:col-span-4 relative">
+                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block">ประเภทแบงค์</span>
+                                              <select
+                                                  value={item.denomination}
+                                                  onChange={(e) => handleSupportItemChange(idx, 'denomination', e.target.value)}
+                                                  className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none font-bold text-slate-700"
+                                              >
+                                                  {[1000, 500, 100, 50, 20, 10, 5, 2, 1].map(val => (
+                                                      <option key={val} value={val}>{val >= 20 ? `แบงค์ ${val}` : `เหรียญ ${val}`}</option>
+                                                  ))}
+                                              </select>
+                                              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none hidden sm:block" />
+                                          </div>
+                                          <div className="sm:col-span-3">
+                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block">จำนวน</span>
                                               <input
-                                                  type="text"
-                                                  placeholder="รายละเอียด (เช่น สนับสนุนค่าที่พัก)"
-                                                  value={item.detail}
-                                                  onChange={(e) => handleSupportItemChange(idx, 'detail', e.target.value)}
-                                                  className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                                                  type="number"
+                                                  placeholder="จำนวน"
+                                                  value={item.quantity}
+                                                  onChange={(e) => handleSupportItemChange(idx, 'quantity', e.target.value)}
+                                                  className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-center"
                                               />
                                           </div>
-                                          <div className="sm:col-span-2">
+                                          <div className="sm:col-span-4">
+                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block">รวมเงิน</span>
                                               <input
                                                   type="number"
                                                   placeholder="0.00"
                                                   value={item.price}
                                                   onChange={(e) => handleSupportItemChange(idx, 'price', e.target.value)}
-                                                  className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm font-semibold text-indigo-900 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                                                  className="w-full px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-sm font-black text-indigo-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-right"
                                               />
                                           </div>
-                                          <div className="sm:col-span-1 flex justify-center pt-1">
+                                          <div className="sm:col-span-1 flex justify-center sm:justify-end">
                                               <button
                                                   onClick={() => handleRemoveSupportItem(idx)}
-                                                  className="p-1.5 text-indigo-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition"
+                                                  className="p-2 text-indigo-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition"
                                               >
                                                   <Trash2 className="w-4 h-4" />
                                               </button>
@@ -4844,64 +5240,75 @@ const App = () => {
                                   ))}
                               </div>
 
-                              <button
-                                  onClick={handleAddSupportItem}
-                                  className="mt-4 flex items-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-100 px-3 py-2 rounded-lg transition"
-                              >
-                                  <Plus className="w-4 h-4" />
-                                  เพิ่มรายการสนับสนุน
-                              </button>
+                              <div className="flex justify-between items-center mt-4">
+                                  <button
+                                      onClick={handleAddSupportItem}
+                                      className="flex items-center gap-2 text-xs font-bold text-indigo-600 hover:text-indigo-800 hover:bg-indigo-100 px-3 py-2 rounded-lg transition w-fit"
+                                  >
+                                      <Plus className="w-4 h-4" />
+                                      เพิ่มรายการเงิน
+                                  </button>
+                                  <div className="text-sm font-bold text-indigo-800 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100">
+                                      รวม: ฿{customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0).toLocaleString()}
+                                  </div>
+                              </div>
                          </div>
                      </div>
 
-                     {/* 3.2: Expenses */}
+                     {/* 3.2: Quotation Items (Replaces Service + Delivery) */}
                      <div className="space-y-3 pt-4 border-t border-slate-100">
-                         <h5 className="font-bold text-slate-700 text-sm">รายจ่ายจริง (ต้นทุน)</h5>
-                         <div className="bg-slate-50/50 rounded-2xl border border-slate-100 p-4">
+                         <h5 className="font-bold text-emerald-700 text-sm flex items-center gap-2">
+                            <span className="bg-emerald-100 text-emerald-700 w-5 h-5 rounded-full flex items-center justify-center text-xs">2</span>
+                            รายการเสนอราคา (Quotation)
+                         </h5>
+                         <div className="bg-emerald-50/50 rounded-2xl border border-emerald-100 p-4">
                              <div className="space-y-3">
-                                {/* Header Row for Expenses */}
-                                <div className="hidden sm:grid grid-cols-12 gap-4 px-2 text-sm font-bold text-slate-500">
-                                   <div className="col-span-3">รายการ (หมวดหมู่)</div>
-                                   <div className="col-span-6">รายละเอียด</div>
-                                   <div className="col-span-2">ราคา</div>
+                                {/* Header Row */}
+                                <div className="hidden sm:grid grid-cols-12 gap-3 px-2 text-xs font-bold text-emerald-800/60 uppercase tracking-wide">
+                                   <div className="col-span-3">หมวดหมู่</div>
+                                   <div className="col-span-6">รายละเอียดรายการ</div>
+                                   <div className="col-span-2">ราคา (บาท)</div>
                                    <div className="col-span-1"></div>
                                 </div>
 
                                 {/* Dynamic Rows */}
-                                {expenses.map((item, idx) => (
-                                   <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start animate-in fade-in slide-in-from-left-2 duration-300">
+                                {quotationItems.map((item, idx) => (
+                                   <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start animate-in fade-in slide-in-from-left-2 duration-300 bg-white p-3 sm:p-0 rounded-xl sm:bg-transparent border sm:border-none border-emerald-100 shadow-sm sm:shadow-none">
                                        <div className="sm:col-span-3">
+                                          <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">หมวดหมู่</span>
                                           <input
                                             type="text"
-                                            list="expense-categories" // Connect to datalist
-                                            placeholder="เลือกหรือพิมพ์..."
+                                            list="expense-categories" 
+                                            placeholder="ระบุหมวดหมู่..."
                                             value={item.category}
-                                            onChange={(e) => handleExpenseChange(idx, 'category', e.target.value)}
-                                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                                            onChange={(e) => handleQuotationItemChange(idx, 'category', e.target.value)}
+                                            className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                                           />
                                        </div>
                                        <div className="sm:col-span-6">
+                                          <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">รายละเอียด</span>
                                           <input
                                             type="text"
                                             placeholder="รายละเอียดเพิ่มเติม..."
                                             value={item.detail}
-                                            onChange={(e) => handleExpenseChange(idx, 'detail', e.target.value)}
-                                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                                            onChange={(e) => handleQuotationItemChange(idx, 'detail', e.target.value)}
+                                            className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                                           />
                                        </div>
                                        <div className="sm:col-span-2">
+                                          <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">ราคา</span>
                                           <input
                                             type="number"
                                             placeholder="0.00"
                                             value={item.price}
-                                            onChange={(e) => handleExpenseChange(idx, 'price', e.target.value)}
-                                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                                            onChange={(e) => handleQuotationItemChange(idx, 'price', e.target.value)}
+                                            className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm font-black text-emerald-700 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-right"
                                           />
                                        </div>
-                                       <div className="sm:col-span-1 flex justify-center pt-1">
+                                       <div className="sm:col-span-1 flex justify-center sm:justify-end pt-1">
                                           <button
-                                            onClick={() => handleRemoveExpense(idx)}
-                                            className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition"
+                                            onClick={() => handleRemoveQuotationItem(idx)}
+                                            className="p-2 text-emerald-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition"
                                           >
                                             <Trash2 className="w-4 h-4" />
                                           </button>
@@ -4910,48 +5317,128 @@ const App = () => {
                                  ))}
                               </div>
 
-                              <button
-                                onClick={handleAddExpense}
-                                className="mt-4 flex items-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 px-3 py-2 rounded-lg transition"
-                              >
-                                <Plus className="w-4 h-4" />
-                                เพิ่มรายการจ่าย
-                              </button>
+                              <div className="flex justify-between items-center mt-4">
+                                  <button
+                                    onClick={handleAddQuotationItem}
+                                    className="flex items-center gap-2 text-xs font-bold text-emerald-600 hover:text-emerald-700 hover:bg-emerald-100 px-3 py-2 rounded-lg transition w-fit"
+                                  >
+                                    <Plus className="w-4 h-4" />
+                                    เพิ่มรายการเสนอราคา
+                                  </button>
+                                  <div className="text-sm font-bold text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">
+                                      รวม: ฿{quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0).toLocaleString()}
+                                  </div>
+                              </div>
                          </div>
                      </div>
 
-                     {/* Summary Section - Redesigned Grid Layout for Long Numbers */}
+                     {/* 3.3: Expenses (Moved to Row 3) */}
+                     <div className="space-y-3 pt-4 border-t border-slate-100">
+                         <h5 className="font-bold text-rose-700 text-sm flex items-center gap-2">
+                            <TrendingDown className="w-4 h-4" />
+                            รายจ่ายจริง / ต้นทุนเพิ่ม (Expenses)
+                         </h5>
+                         <p className="text-[10px] text-slate-400 -mt-1 ml-6">รายการนี้ไม่แสดงให้ลูกค้าเห็น (ใช้สำหรับคำนวณกำไรภายใน)</p>
+                         <div className="bg-rose-50/50 rounded-2xl border border-rose-100 p-4">
+                             <div className="space-y-3">
+                                {/* Header Row */}
+                                <div className="hidden sm:grid grid-cols-12 gap-3 px-2 text-xs font-bold text-rose-800/60 uppercase tracking-wide">
+                                   <div className="col-span-3">หมวดหมู่</div>
+                                   <div className="col-span-6">รายละเอียด</div>
+                                   <div className="col-span-2">ราคา (บาท)</div>
+                                   <div className="col-span-1"></div>
+                                </div>
+
+                                {expenses.map((item, idx) => (
+                                   <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start animate-in fade-in slide-in-from-left-2 duration-300 bg-white p-3 sm:p-0 rounded-xl sm:bg-transparent border sm:border-none border-rose-100 shadow-sm sm:shadow-none">
+                                       <div className="sm:col-span-3">
+                                          <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">หมวดหมู่</span>
+                                          <input
+                                            type="text"
+                                            list="expense-categories" 
+                                            placeholder="หมวดหมู่..."
+                                            value={item.category}
+                                            onChange={(e) => handleExpenseChange(idx, 'category', e.target.value)}
+                                            className="w-full px-3 py-2 bg-white border border-rose-200 rounded-lg text-sm focus:ring-2 focus:ring-rose-500/20"
+                                          />
+                                       </div>
+                                       <div className="sm:col-span-6">
+                                          <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">รายละเอียด</span>
+                                          <input
+                                            type="text"
+                                            placeholder="รายละเอียด..."
+                                            value={item.detail}
+                                            onChange={(e) => handleExpenseChange(idx, 'detail', e.target.value)}
+                                            className="w-full px-3 py-2 bg-white border border-rose-200 rounded-lg text-sm focus:ring-2 focus:ring-rose-500/20"
+                                          />
+                                       </div>
+                                       <div className="sm:col-span-2">
+                                          <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">ราคา</span>
+                                          <input
+                                            type="number"
+                                            placeholder="0.00"
+                                            value={item.price}
+                                            onChange={(e) => handleExpenseChange(idx, 'price', e.target.value)}
+                                            className="w-full px-3 py-2 bg-white border border-rose-200 rounded-lg text-sm font-semibold text-rose-800 focus:ring-2 focus:ring-rose-500/20 text-right"
+                                          />
+                                       </div>
+                                       <div className="sm:col-span-1 flex justify-center sm:justify-end pt-1">
+                                          <button
+                                            onClick={() => handleRemoveExpense(idx)}
+                                            className="p-2 text-rose-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition"
+                                          >
+                                            <Trash2 className="w-4 h-4" />
+                                          </button>
+                                       </div>
+                                    </div>
+                                 ))}
+                              </div>
+
+                              <div className="flex justify-between items-center mt-4">
+                                  <button
+                                    onClick={handleAddExpense}
+                                    className="flex items-center gap-2 text-xs font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-3 py-2 rounded-lg transition w-fit"
+                                  >
+                                    <Plus className="w-4 h-4" />
+                                    เพิ่มรายการจ่าย
+                                  </button>
+                                  <div className="text-sm font-bold text-rose-800 bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-100">
+                                      รวม: ฿{expenses.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0).toLocaleString()}
+                                  </div>
+                              </div>
+                         </div>
+                     </div>
+
+                     {/* Summary Section - Redesigned */}
                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
                          <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100 flex flex-col justify-between">
                             <div>
-                                <p className="text-sm font-bold text-indigo-800 mb-1">ยอดเรียกเก็บสุทธิ</p>
-                                <p className="text-[10px] text-indigo-600 mb-2">
-                                (ค่าจ้าง + สนับสนุน)
-                                </p>
+                                <p className="text-sm font-bold text-indigo-800 mb-1">ยอดรวมสุทธิ</p>
+                                <p className="text-[10px] text-indigo-600 mb-2">(เรียกเก็บลูกค้า)</p>
                             </div>
-                            <p className={`font-black text-indigo-900 tracking-tight break-all leading-tight ${((parseFloat(wage) || 0) + (customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0))).toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
-                                ฿{((parseFloat(wage) || 0) + (customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0))).toLocaleString()}
+                            <p className={`font-black text-indigo-900 tracking-tight break-all leading-tight ${((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) + (customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0))).toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
+                                ฿{((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) + (customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0))).toLocaleString()}
                             </p>
                          </div>
 
                          <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 flex flex-col justify-between">
-                            <p className="text-sm font-bold text-emerald-600 mb-2">รายได้ (ค่าจ้าง)</p>
-                            <p className={`font-black text-emerald-700 tracking-tight break-all leading-tight ${wage.toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
-                                ฿{(parseFloat(wage) || 0).toLocaleString()}
+                            <p className="text-sm font-bold text-emerald-600 mb-2">เสนอราคา</p>
+                            <p className={`font-black text-emerald-700 tracking-tight break-all leading-tight text-2xl`}>
+                                ฿{(quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)).toLocaleString()}
                             </p>
                          </div>
 
                          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col justify-between">
-                            <p className="text-sm font-bold text-slate-500 mb-2">รวมรายจ่าย</p>
+                            <p className="text-sm font-bold text-slate-500 mb-2">รวมรายจ่ายจริง</p>
                             <p className={`font-black text-rose-600 tracking-tight break-all leading-tight ${totalExpenses.toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
                                 ฿{totalExpenses.toLocaleString()}
                             </p>
                          </div>
                          
                          <div className="bg-indigo-600 text-white p-4 rounded-2xl shadow-lg shadow-indigo-200 flex flex-col justify-between">
-                            <p className="text-sm font-bold text-indigo-100 mb-2">กำไรสุทธิ</p>
-                            <p className={`font-black tracking-tight break-all leading-tight ${profit.toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
-                              {profit >= 0 ? '+' : ''}฿{profit.toLocaleString()}
+                            <p className="text-sm font-bold text-indigo-100 mb-2">กำไร (ไม่รวมเงินออเดอร์)</p>
+                            <p className={`font-black tracking-tight break-all leading-tight ${((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) - totalExpenses).toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
+                              {((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) - totalExpenses) >= 0 ? '+' : ''}฿{((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) - totalExpenses).toLocaleString()}
                             </p>
                          </div>
                      </div>
