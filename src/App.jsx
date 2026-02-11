@@ -1268,49 +1268,106 @@ const CustomerQuotationView = ({ data, shopInfo }) => {
 };
 
 // --- Customer Tracking View ---
-const CustomerTrackingView = ({ data, shopInfo }) => {
-  const [previewImage, setPreviewImage] = useState(null); // Add local state for image preview
+// [MODIFIED] Added dealStatuses and transportStatuses props to resolve custom status labels/types
+const CustomerTrackingView = ({ data, shopInfo, dealStatuses = [], transportStatuses = [] }) => {
+  const [previewImage, setPreviewImage] = useState(null); 
 
   if (!data) return null;
 
-  // Helper เพื่อกำหนดสถานะ Timeline
-  const getStepStatus = (step) => {
-    const deal = data.dealStatus || 'pending';
-    const transport = data.transportStatus || 'pending';
+  // Helper to resolve status type and label from value
+  const resolveStatus = (value, list) => {
+      // Find matching status in the provided list (from settings)
+      const found = list.find(s => s.value === value);
+      if (found) return { type: found.type, label: found.label, color: found.color };
+      
+      // Fallback to system types if not found in list (backward compatibility)
+      const sys = systemStatusTypes.find(s => s.value === value);
+      if (sys) return { type: sys.value, label: sys.label, color: sys.color };
 
-    // Step 1: รับเรื่อง
-    if (step === 1) return 'completed';
-
-    // Step 2: ดำเนินการ
-    if (step === 2) {
-       if (deal === 'confirmed' || deal === 'active' || deal === 'completed') return 'completed';
-       if (deal === 'pending') return 'current';
-       return 'pending';
-    }
-
-    // Step 3: จัดส่ง/ติดตั้ง
-    if (step === 3) {
-       if (transport === 'delivering' || transport === 'installed' || transport === 'completed' || transport === 'delivered') return 'completed';
-       if ((deal === 'confirmed' || deal === 'active') && transport !== 'pending') return 'current';
-       return 'pending';
-    }
-
-    // Step 4: เสร็จสิ้น
-    if (step === 4) {
-       if (deal === 'completed' || transport === 'delivered' || transport === 'completed') return 'completed';
-       return 'pending';
-    }
-    return 'pending';
+      // Fallback if nothing matches (fixes "custom-..." showing up)
+      return { type: 'pending', label: value || '-', color: 'text-slate-500 bg-slate-50' };
   };
 
-  const steps = [
-    { id: 1, label: 'รับเรื่อง', icon: Clipboard },
-    { id: 2, label: 'ดำเนินการ', icon: Activity },
-    { id: 3, label: 'จัดส่ง', icon: Truck },
-    { id: 4, label: 'เสร็จสิ้น', icon: CheckCircle },
-  ];
+  const dealState = resolveStatus(data.dealStatus, dealStatuses);
+  const transportState = resolveStatus(data.transportStatus, transportStatuses);
 
-  const dealStatusInfo = systemStatusTypes.find(s => s.value === data.dealStatus) || { label: data.dealStatus, color: 'bg-slate-100 text-slate-500' };
+  // Helper to determine Timeline Step Appearance
+  const getStepInfo = (stepId) => {
+      const dType = dealState.type || 'pending';
+      const tType = transportState.type || 'pending';
+      
+      const isDealCancelled = dType === 'cancelled';
+      const isTransportCancelled = tType === 'cancelled' || tType === 'issue';
+      
+      // Global Override: ถ้ามีปัญหาหรือยกเลิก ให้แสดงกากบาทแดงทุกช่อง
+      if (isDealCancelled || isTransportCancelled) {
+          return { status: 'error', text: 'ปิดงานมีปัญหา', colorClass: 'bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-200', icon: XCircle };
+      }
+
+      // --- Deal Status Controls Step 1 & 2 ---
+
+      // Step 1: รับเรื่อง (Deal)
+      if (stepId === 1) {
+          if (dType === 'declined') return { status: 'declined', text: 'ปฏิเสธ', colorClass: 'bg-white text-slate-400 border-2 border-slate-200', icon: XCircle };
+          
+          // Pending -> รอดำเนินการ (สีระบบ/Indigo)
+          if (dType === 'pending') return { status: 'pending', text: 'รอดำเนินการ', colorClass: 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200 ring-4 ring-indigo-50', icon: Clipboard };
+          
+          // Active/Completed -> รับเรื่อง (เขียว)
+          if (dType === 'active' || dType === 'completed') return { status: 'completed', text: 'รับเรื่อง', colorClass: 'bg-emerald-500 text-white border-emerald-500 shadow-sm shadow-emerald-200', icon: CheckCircle };
+          
+          return { status: 'wait', text: 'รอ', colorClass: 'bg-white text-slate-300 border-2 border-slate-200', icon: Clipboard };
+      }
+
+      // Step 2: ดำเนินการ (Deal)
+      if (stepId === 2) {
+          if (dType === 'declined' || dType === 'pending') return { status: 'wait', text: '-', colorClass: 'bg-white text-slate-200 border-2 border-slate-100', icon: Activity };
+          
+          // Active -> ดำเนินการ (เปลี่ยนจากเทาเป็นสีระบบ/Indigo)
+          if (dType === 'active') return { status: 'current', text: 'ดำเนินการ', colorClass: 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200 ring-4 ring-indigo-50', icon: Loader2 };
+          
+          // Completed -> งานเสร็จสิ้น (เขียว)
+          if (dType === 'completed') return { status: 'completed', text: 'งานเสร็จสิ้น', colorClass: 'bg-emerald-500 text-white border-emerald-500 shadow-sm shadow-emerald-200', icon: CheckCircle };
+          
+          return { status: 'wait', text: 'รอ', colorClass: 'bg-white text-slate-300 border-2 border-slate-200', icon: Activity };
+      }
+
+      // --- Transport Status Controls Step 3 & 4 ---
+
+      // Step 3: จัดส่ง (Transport)
+      if (stepId === 3) {
+          // ถ้าดีลยังไม่เดินหน้า ขนส่งก็ยังไม่เริ่ม
+          if (dType === 'pending' || dType === 'declined') return { status: 'wait', text: '-', colorClass: 'bg-white text-slate-200 border-2 border-slate-100', icon: Truck };
+
+          // Pending -> รอจัดส่ง (สีเทา)
+          if (tType === 'pending') return { status: 'pending', text: 'รอจัดส่ง', colorClass: 'bg-white text-slate-400 border-2 border-slate-300', icon: Truck };
+          
+          // Active -> กำลังจัดส่ง (เขียว)
+          if (tType === 'active') return { status: 'current', text: 'กำลังจัดส่ง', colorClass: 'bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-200 ring-4 ring-emerald-50', icon: Truck };
+          
+          // Completed -> จัดส่งแล้ว (เขียว)
+          if (tType === 'completed') return { status: 'completed', text: 'จัดส่งแล้ว', colorClass: 'bg-emerald-500 text-white border-emerald-500 shadow-sm shadow-emerald-200', icon: CheckCircle };
+          
+          return { status: 'wait', text: '-', colorClass: 'bg-white text-slate-300 border-2 border-slate-200', icon: Truck };
+      }
+
+      // Step 4: เสร็จสิ้น (Transport)
+      if (stepId === 4) {
+          if (tType === 'pending' || dType === 'pending' || dType === 'declined') return { status: 'wait', text: '-', colorClass: 'bg-white text-slate-200 border-2 border-slate-100', icon: CheckCircle };
+
+          // Active -> ใกล้ถึงที่หมาย (สีส้ม)
+          if (tType === 'active') return { status: 'pending', text: 'ใกล้ถึงที่หมาย', colorClass: 'bg-orange-500 text-white border-orange-500 shadow-lg shadow-orange-200 ring-4 ring-orange-50', icon: MapPin };
+          
+          // Completed -> เสร็จสิ้น (เขียว)
+          if (tType === 'completed') return { status: 'completed', text: 'เสร็จสิ้น', colorClass: 'bg-emerald-500 text-white border-emerald-500 shadow-sm shadow-emerald-200', icon: CheckCircle };
+          
+          // [FIXED] เอาเงื่อนไข dType === 'completed' ออก เพื่อไม่ให้ดีลจบมาบังคับให้ขนส่งจบด้วย
+          
+          return { status: 'wait', text: '-', colorClass: 'bg-white text-slate-300 border-2 border-slate-200', icon: CheckCircle };
+      }
+  };
+
+  const steps = [1, 2, 3, 4]; // Use IDs directly
 
   return (
     <div className="min-h-screen bg-slate-50 pb-safe font-sans flex flex-col">
@@ -1350,9 +1407,9 @@ const CustomerTrackingView = ({ data, shopInfo }) => {
                             <span className="font-black text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-md text-xs border border-indigo-100 whitespace-nowrap md:text-sm md:px-3 md:py-1">
                                 {data.id}
                             </span>
-                            <span className={`px-2 py-1 rounded-md text-[10px] font-bold border flex items-center gap-1 truncate ${dealStatusInfo.color} md:text-xs md:px-3 md:py-1`}>
-                                {data.dealStatus === 'cancelled' ? <AlertCircle className="w-3 h-3 md:w-4 md:h-4"/> : <Activity className="w-3 h-3 md:w-4 md:h-4"/>}
-                                {dealStatusInfo.label}
+                            <span className={`px-2 py-1 rounded-md text-[10px] font-bold border flex items-center gap-1 truncate ${dealState.color} md:text-xs md:px-3 md:py-1`}>
+                                {dealState.type === 'cancelled' ? <AlertCircle className="w-3 h-3 md:w-4 md:h-4"/> : <Activity className="w-3 h-3 md:w-4 md:h-4"/>}
+                                {dealState.label}
                             </span>
                         </div>
                     </div>
@@ -1393,14 +1450,12 @@ const CustomerTrackingView = ({ data, shopInfo }) => {
                         <div className="absolute left-[12.5%] right-[12.5%] top-[18px] h-0.5 bg-slate-100 -z-10 rounded-full md:top-[24px] md:h-1"></div>
 
                         <div className="grid grid-cols-4 w-full">
-                            {steps.map((step, idx) => {
-                                const status = getStepStatus(step.id);
-                                let colorClass = 'bg-white text-slate-300 border-2 border-slate-200'; 
-                                if (status === 'completed') colorClass = 'bg-emerald-500 text-white border-emerald-500 shadow-sm shadow-emerald-200';
-                                if (status === 'current') colorClass = 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200 ring-4 ring-indigo-50 scale-110';
+                            {steps.map((stepId, idx) => {
+                                const info = getStepInfo(stepId);
+                                const StepIcon = info.icon;
 
                                 return (
-                                    <div key={step.id} className="flex flex-col items-center gap-3 relative group cursor-default">
+                                    <div key={stepId} className="flex flex-col items-center gap-3 relative group cursor-default">
                                         {/* Next Arrow (>) */}
                                         {idx < steps.length - 1 && (
                                             <div className="absolute top-[18px] -right-0 md:top-[24px] transform -translate-y-1/2 translate-x-1/2 z-0">
@@ -1408,12 +1463,12 @@ const CustomerTrackingView = ({ data, shopInfo }) => {
                                             </div>
                                         )}
 
-                                        <div className={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-500 z-10 ${colorClass} md:w-12 md:h-12`}>
-                                            <step.icon className="w-4 h-4 md:w-6 md:h-6" strokeWidth={status === 'current' ? 2.5 : 2} />
+                                        <div className={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-500 z-10 ${info.colorClass} md:w-12 md:h-12`}>
+                                            <StepIcon className={`w-4 h-4 md:w-6 md:h-6 ${info.status === 'current' ? 'animate-pulse' : ''}`} strokeWidth={info.status === 'current' ? 2.5 : 2} />
                                         </div>
                                         {/* Label - Adjusted font size for mobile */}
-                                        <span className={`text-[10px] font-bold text-center leading-tight transition-colors duration-300 ${status === 'current' ? 'text-indigo-600 scale-105' : 'text-slate-400'} md:text-xs px-0.5`}>
-                                            {step.label}
+                                        <span className={`text-[10px] font-bold text-center leading-tight transition-colors duration-300 ${info.status === 'current' ? 'text-indigo-600 scale-105' : 'text-slate-400'} md:text-xs px-0.5`}>
+                                            {info.text}
                                         </span>
                                     </div>
                                 );
@@ -5249,7 +5304,8 @@ const App = () => {
              );
         }
 
-        return <CustomerTrackingView data={trackData} shopInfo={shopInfo} />;
+        // [MODIFIED] Pass dealStatuses and transportStatuses props
+        return <CustomerTrackingView data={trackData} shopInfo={shopInfo} dealStatuses={dealStatuses} transportStatuses={transportStatuses} />;
     }
 
     // [NEW] Quotation View Logic
