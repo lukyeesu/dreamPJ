@@ -89,13 +89,73 @@ import {
   MessageCircle,
   Music2,
   LayoutList,      // [ADDED] เพิ่ม import ไอคอน
-  Table as TableIcon // [ADDED] เพิ่ม import ไอคอน
+  Table as TableIcon, // [ADDED] เพิ่ม import ไอคอน
+  Pipette // [ADDED] เพิ่ม import ไอคอน Pipette
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
 // นำ Web App URL ที่ได้จากการ Deploy Apps Script มาวางที่นี่
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwwbLiohFgwdwHCqAScpPPfuNMrJPlLn2XB9PV5CPKIB8paFYd0J1ZXyOP5C2bGD0ZgyA/exec"; 
 // ---------------------
+
+// [ADDED] Helper Functions for Color Manipulation
+const shadeColor = (color, percent) => {
+    var f=parseInt(color.slice(1),16),t=percent<0?0:255,p=percent<0?percent*-1:percent,R=f>>16,G=f>>8&0x00FF,B=f&0x0000FF;
+    return "#"+(0x1000000+(Math.round((t-R)*p)+R)*0x10000+(Math.round((t-G)*p)+G)*0x100+(Math.round((t-B)*p)+B)).toString(16).slice(1);
+};
+
+const hexToRgbString = (hex) => {
+    var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '0, 0, 0';
+};
+
+// [ADDED] Theme Configuration
+const themeColors = {
+  indigo: { 
+    label: 'Indigo', 
+    main: '#4f46e5', hover: '#4338ca', light: '#eef2ff', textLight: '#6366f1',
+    gradientFrom: '#4f46e5', gradientTo: '#7c3aed',
+    shadow: 'rgba(79, 70, 229, 0.4)'
+  },
+  blue: { 
+    label: 'Blue', 
+    main: '#2563eb', hover: '#1d4ed8', light: '#eff6ff', textLight: '#3b82f6',
+    gradientFrom: '#2563eb', gradientTo: '#06b6d4',
+    shadow: 'rgba(37, 99, 235, 0.4)' 
+  },
+  emerald: { 
+    label: 'Emerald', 
+    main: '#059669', hover: '#047857', light: '#ecfdf5', textLight: '#10b981',
+    gradientFrom: '#059669', gradientTo: '#14b8a6',
+    shadow: 'rgba(5, 150, 105, 0.4)' 
+  },
+  rose: { 
+    label: 'Rose', 
+    main: '#e11d48', hover: '#be123c', light: '#fff1f2', textLight: '#f43f5e',
+    gradientFrom: '#e11d48', gradientTo: '#db2777',
+    shadow: 'rgba(225, 29, 72, 0.4)' 
+  },
+  amber: { 
+    label: 'Amber', 
+    main: '#d97706', hover: '#b45309', light: '#fffbeb', textLight: '#f59e0b',
+    gradientFrom: '#d97706', gradientTo: '#ea580c',
+    shadow: 'rgba(217, 119, 6, 0.4)' 
+  },
+  slate: { 
+    label: 'Slate', 
+    main: '#475569', hover: '#334155', light: '#f8fafc', textLight: '#64748b',
+    gradientFrom: '#475569', gradientTo: '#0f172a',
+    shadow: 'rgba(71, 85, 105, 0.4)' 
+  },
+  // [ADDED] Rainbow Theme
+  rainbow: { 
+    label: 'Rainbow', 
+    main: '#8b5cf6', hover: '#7c3aed', light: '#faf5ff', textLight: '#8b5cf6',
+    gradientFrom: '#ec4899', gradientTo: '#3b82f6',
+    shadow: 'rgba(139, 92, 246, 0.4)',
+    isRainbow: true
+  }
+};
 
 const navItems = [
   { name: 'Overview', icon: Home, label: 'ภาพรวมแผนงาน' },
@@ -124,16 +184,39 @@ const systemStatusTypes = [
   { value: 'declined', label: 'ลูกค้าไม่อนุมัติ', color: 'text-gray-600 bg-gray-50' }
 ];
 
+// [MODIFIED] ปรับปรุงฟังก์ชันแปลงลิงก์: กลับไปใช้ thumbnail เพื่อแก้ปัญหารูปไม่แสดง แต่ใช้ sz=w4000 เพื่อความชัด
 const processImageUrl = (url) => {
   if (!url) return null;
   if (url.startsWith('data:')) return url;
-  if (url.includes('drive.google.com') && url.includes('id=')) {
-      const idMatch = url.match(/id=([a-zA-Z0-9_-]+)/);
-      if (idMatch && idMatch[1]) {
-          return `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w4000`;
+  
+  // ตรวจสอบว่าเป็นลิงก์ Google Drive หรือไม่
+  if (url.includes('drive.google.com')) {
+      let id = null;
+      // พยายามดึง ID ออกมาจากรูปแบบต่างๆ
+      if (url.includes('id=')) {
+          const match = url.match(/id=([a-zA-Z0-9_-]+)/);
+          if (match) id = match[1];
+      } else if (url.includes('/d/')) { // กรณีลิงก์แบบ /file/d/XXX/view
+          const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+          if (match) id = match[1];
+      } else if (url.includes('uc?')) { // กรณีลิงก์แบบ uc?export=view&id=XXX
+          const match = url.match(/id=([a-zA-Z0-9_-]+)/);
+          if (match) id = match[1];
+      }
+
+      // [FIX] ใช้ thumbnail?sz=w4000 เพื่อแก้ปัญหารูปไม่ขึ้น (Broken Image) จากการใช้ uc?export=view
+      if (id) {
+          return `https://drive.google.com/thumbnail?id=${id}&sz=w4000`;
       }
   }
   return url;
+};
+
+// [ADDED] Helper to extract File ID for deletion
+const getFileId = (url) => {
+  if (!url) return null;
+  const match = url.match(/id=([a-zA-Z0-9_-]+)/) || url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : null;
 };
 
 // [MOVED] StoreIcon moved here to be defined before usage
@@ -340,11 +423,25 @@ const ShopFooter = ({ shopInfo, maxWidthClass = "max-w-7xl" }) => {
       <div className={`${maxWidthClass} mx-auto px-4 w-full h-auto md:h-[100px] flex flex-col md:flex-row items-center justify-between gap-2 py-3 md:py-0`}>
           {/* Left: Brand & Contact Info */}
           <div className="flex flex-row flex-wrap items-center justify-center md:justify-start md:flex-col md:items-start gap-x-4 gap-y-1">
-              <div className="flex items-center gap-2 text-slate-700">
-                  <div className="p-1.5 bg-slate-100 text-slate-600 rounded-lg">
-                      <StoreIcon className="w-4 h-4" />
+              <div className="flex items-center gap-3 text-slate-700">
+                  {/* [MODIFIED] Display Logo: Size 36x36px (w-9 h-9) as requested */}
+                  <div className="shrink-0 w-9 h-9 rounded-md overflow-hidden flex items-center justify-center relative">
+                      {shopInfo.logo ? (
+                          <img 
+                            src={processImageUrl(shopInfo.logo)} 
+                            alt="Shop Logo" 
+                            className="w-full h-full object-cover" 
+                            referrerPolicy="no-referrer"
+                            onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                          />
+                      ) : null}
+                      
+                      {/* Fallback Icon (Only visible if no logo or error) */}
+                      <div className={`w-full h-full bg-slate-100 text-slate-400 flex items-center justify-center border border-slate-200 rounded-md ${shopInfo.logo ? 'hidden' : 'flex'}`}>
+                          <StoreIcon className="w-5 h-5" />
+                      </div>
                   </div>
-                  <span className="text-sm font-bold">{shopInfo.shopName || 'ร้านค้า'}</span>
+                  <span className="text-sm font-bold text-slate-800">{shopInfo.shopName || 'ร้านค้า'}</span>
               </div>
               
               <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
@@ -1021,6 +1118,11 @@ const CustomerQuotationView = ({ data, shopInfo }) => {
                                 src={processImageUrl(data.image)} 
                                 alt="Preview" 
                                 className="w-full h-full object-cover" 
+                                referrerPolicy="no-referrer"
+                                onError={(e) => { 
+                                    e.target.style.display = 'none'; 
+                                    if (e.target.parentElement) e.target.parentElement.style.display = 'none';
+                                }}
                             />
                             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
                                  <Maximize2 className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 drop-shadow-sm md:w-8 md:h-8" />
@@ -1265,6 +1367,11 @@ const CustomerTrackingView = ({ data, shopInfo }) => {
                                 src={processImageUrl(data.image)} 
                                 alt="Preview" 
                                 className="w-full h-full object-cover" 
+                                referrerPolicy="no-referrer"
+                                onError={(e) => { 
+                                    e.target.style.display = 'none'; 
+                                    if (e.target.parentElement) e.target.parentElement.style.display = 'none';
+                                }}
                             />
                             {/* Zoom Icon Overlay */}
                             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
@@ -1631,8 +1738,17 @@ ${moneyOrderDetails}${quotationDetails}
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
                      <ImageIcon className="w-3.5 h-3.5" /> รูปภาพอ้างอิง
                   </h4>
-                  <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
-                     <img src={processImageUrl(data.image)} alt="Project Ref" className="w-full h-auto object-contain max-h-60" />
+                  <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50 relative">
+                     <img 
+                        src={processImageUrl(data.image)} 
+                        alt="Project Ref" 
+                        className="w-full h-auto object-contain max-h-60" 
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.parentElement.innerHTML = '<div class="p-4 text-center text-slate-400 text-xs">ไม่สามารถโหลดรูปภาพได้</div>';
+                        }}
+                     />
                   </div>
                </div>
             )}
@@ -2853,6 +2969,19 @@ const App = () => {
     const saved = localStorage.getItem('nexus_sidebar_collapsed');
     return saved === 'true';
   });
+  
+  // [ADDED] State for Mobile Profile Menu
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+
+  // [ADDED] State to track if settings are loaded (to prevent color flash on public pages)
+  const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
+
+  // [ADDED] State to track if main images are preloaded (for tracking/quotation pages)
+  // เริ่มต้นเป็น false ถ้ามี tracking/quotation ID เพื่อบังคับให้รอโหลดรูปก่อน
+  const [areImagesLoaded, setAreImagesLoaded] = useState(() => {
+      const params = new URLSearchParams(window.location.search);
+      return !(params.has('tracking') || params.has('quotation'));
+  });
 
   useEffect(() => {
     localStorage.setItem('nexus_sidebar_collapsed', String(isSidebarCollapsed));
@@ -2909,23 +3038,128 @@ const App = () => {
   const [isAddingUser, setIsAddingUser] = useState(false);
 
   const [driveFolderId, setDriveFolderId] = useState('');
+  const [assetsDriveFolderId, setAssetsDriveFolderId] = useState(''); // [ADDED] State for Assets Folder ID
   
   // New State for Shop Contact Info
-  const [shopInfo, setShopInfo] = useState({
-      shopName: '',
-      phone: '',
-      email: '',
-      address: '',
-      line: '',
-      facebook: '',
-      instagram: '',
-      tiktok: ''
+  // [MODIFIED] Initialize from localStorage directly to prevent color flash on reload
+  const [shopInfo, setShopInfo] = useState(() => {
+      try {
+          const saved = localStorage.getItem('nexus_shop_info');
+          return saved ? JSON.parse(saved) : {
+              shopName: '',
+              phone: '',
+              email: '',
+              address: '',
+              line: '',
+              facebook: '',
+              instagram: '',
+              tiktok: '',
+              logo: '',
+              themeColor: 'indigo',
+              themeMode: 'gradient',
+              customColorValue: '#000000'
+          };
+      } catch (e) {
+          return {
+              shopName: '',
+              phone: '',
+              email: '',
+              address: '',
+              line: '',
+              facebook: '',
+              instagram: '',
+              tiktok: '',
+              logo: '',
+              themeColor: 'indigo',
+              themeMode: 'gradient',
+              customColorValue: '#000000'
+          };
+      }
   });
+
+  // [MODIFIED] Effect to Apply Theme Styles dynamically - Changed to useLayoutEffect to apply styles BEFORE paint
+  useLayoutEffect(() => {
+      let theme;
+      const isGradient = shopInfo.themeMode === 'gradient';
+
+      // [ADDED] Logic for Custom Color Calculation
+      if (shopInfo.themeColor === 'custom' && shopInfo.customColorValue) {
+          const mainColor = shopInfo.customColorValue;
+          theme = {
+              main: mainColor,
+              hover: shadeColor(mainColor, -0.1), // Darken 10%
+              light: shadeColor(mainColor, 0.93), // Very light tint (93%)
+              textLight: mainColor,
+              gradientFrom: mainColor,
+              gradientTo: shadeColor(mainColor, -0.25), // Darken 25% for gradient end
+              shadow: `rgba(${hexToRgbString(mainColor)}, 0.4)`
+          };
+      } else {
+          theme = themeColors[shopInfo.themeColor] || themeColors.indigo;
+      }
+      
+      const styleId = 'nexus-theme-styles';
+      let style = document.getElementById(styleId);
+      if (!style) {
+          style = document.createElement('style');
+          style.id = styleId;
+          document.head.appendChild(style);
+      }
+
+      // Generate CSS to override Tailwind 'indigo' classes
+      const css = `
+          :root {
+              --theme-main: ${theme.main};
+              --theme-hover: ${theme.hover};
+              --theme-light: ${theme.light};
+              --theme-text-light: ${theme.textLight};
+              --theme-shadow: ${theme.shadow};
+          }
+          
+          /* Backgrounds */
+          .bg-indigo-600 { background-color: var(--theme-main) !important; }
+          .hover\\:bg-indigo-700:hover { background-color: var(--theme-hover) !important; }
+          .bg-indigo-50 { background-color: var(--theme-light) !important; }
+          .bg-indigo-100 { background-color: var(--theme-light) !important; filter: brightness(0.95); } /* Adjusted logic for 100 */
+          
+          /* Texts */
+          .text-indigo-600 { color: var(--theme-main) !important; }
+          .text-indigo-700 { color: var(--theme-hover) !important; }
+          .text-indigo-500 { color: var(--theme-text-light) !important; }
+          
+          /* Borders */
+          .border-indigo-100, .border-indigo-200 { border-color: ${theme.light} !important; filter: brightness(0.9); }
+          .border-indigo-600 { border-color: var(--theme-main) !important; }
+          .hover\\:border-indigo-300:hover { border-color: var(--theme-text-light) !important; opacity: 0.8; }
+
+          /* Shadows */
+          .shadow-indigo-200 { --tw-shadow-color: ${theme.shadow} !important; }
+          
+          /* Gradients */
+          .from-indigo-600 { --tw-gradient-from: ${theme.gradientFrom} !important; var(--tw-gradient-to, ${theme.gradientFrom}) !important; }
+          .to-violet-600 { --tw-gradient-to: ${theme.gradientTo} !important; }
+          .bg-gradient-to-r {
+              ${!isGradient 
+                  ? `background-image: none !important; background-color: var(--theme-main) !important;` 
+                  : (theme.isRainbow 
+                      ? `background-image: linear-gradient(to right, #ef4444, #f97316, #eab308, #22c55e, #3b82f6, #a855f7, #ec4899) !important;` 
+                      : `background-image: linear-gradient(to right, var(--tw-gradient-from), var(--tw-gradient-to)) !important;`)
+              }
+          }
+      `;
+      style.textContent = css;
+
+  }, [shopInfo.themeColor, shopInfo.themeMode, shopInfo.customColorValue]);
 
   const [projectCategories, setProjectCategories] = useState([]);
   const [expenseCategories, setExpenseCategories] = useState([]);
   const [dealStatuses, setDealStatuses] = useState([]);
   const [transportStatuses, setTransportStatuses] = useState([]);
+
+  // [ADDED] State for Profile Upload
+  const [isUploadingProfile, setIsUploadingProfile] = useState(false);
+  // [ADDED] State for Logo Upload
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
   const [isScrolled, setIsScrolled] = useState(false);
   const mainRef = useRef(null);
@@ -2944,6 +3178,14 @@ const App = () => {
 
   const [deleteConfirm, setDeleteConfirm] = useState({ show: false, id: null, fromModal: false });
   const [isDeleteClosing, setIsDeleteClosing] = useState(false);
+
+  // [ADDED] State for Logo Delete Confirmation Modal
+  const [deleteLogoConfirm, setDeleteLogoConfirm] = useState(false);
+  const [isDeleteLogoClosing, setIsDeleteLogoClosing] = useState(false);
+
+  // [ADDED] State for Profile Delete Confirmation Modal
+  const [deleteProfileConfirm, setDeleteProfileConfirm] = useState(false);
+  const [isDeleteProfileClosing, setIsDeleteProfileClosing] = useState(false);
 
   const [previewImage, setPreviewImage] = useState(null);
 
@@ -3032,39 +3274,62 @@ const App = () => {
   }, []);
 
   const fetchSettings = async () => {
-    if (!GOOGLE_SCRIPT_URL) return;
+    if (!GOOGLE_SCRIPT_URL) {
+        setIsSettingsLoaded(true);
+        return;
+    }
+    
+    // [MODIFIED] Add Timeout race to prevent indefinite loading if backend is slow
+    // ให้เวลาโหลด Settings สูงสุด 5 วินาที ถ้าเกินให้แสดงผลเลย (ใช้ Default Theme)
+    const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('timeout'), 5000));
+    
     try {
-        const response = await fetch(GOOGLE_SCRIPT_URL, {
+        const fetchPromise = fetch(GOOGLE_SCRIPT_URL, {
             method: 'POST',
             body: JSON.stringify({ action: 'getSettings' })
         });
-        const result = await response.json();
-        if (result.status === 'success' && result.data) {
-            const data = result.data;
-            if (data.project_categories) setProjectCategories(data.project_categories);
-            if (data.expense_categories) setExpenseCategories(data.expense_categories);
-            if (data.deal_statuses) setDealStatuses(data.deal_statuses);
-            if (data.transport_statuses) setTransportStatuses(data.transport_statuses);
-            if (data.drive_folder_id) setDriveFolderId(data.drive_folder_id);
-            if (data.shop_info) setShopInfo(data.shop_info); // Load Shop Info
-            
-            if (data.app_credentials) {
-                let creds = data.app_credentials;
-                if (!Array.isArray(creds)) {
-                    creds = [{
-                        username: creds.username,
-                        password: creds.password,
-                        name: 'Admin',
-                        role: 'Administrator',
-                        email: 'admin@nexusplan.com',
-                        phone: '-'
-                    }];
+
+        const response = await Promise.race([fetchPromise, timeoutPromise]);
+        
+        if (response === 'timeout') {
+            console.warn('Settings fetch timed out, using defaults.');
+            // ไม่ต้องทำอะไร ปล่อยให้ finally ทำงานเพื่อเปิดหน้าเว็บ
+        } else {
+            const result = await response.json();
+            if (result.status === 'success' && result.data) {
+                const data = result.data;
+                if (data.project_categories) setProjectCategories(data.project_categories);
+                if (data.expense_categories) setExpenseCategories(data.expense_categories);
+                if (data.deal_statuses) setDealStatuses(data.deal_statuses);
+                if (data.transport_statuses) setTransportStatuses(data.transport_statuses);
+                if (data.drive_folder_id) setDriveFolderId(data.drive_folder_id);
+                if (data.assets_drive_folder_id) setAssetsDriveFolderId(data.assets_drive_folder_id);
+                
+                if (data.shop_info) {
+                    setShopInfo(data.shop_info);
+                    localStorage.setItem('nexus_shop_info', JSON.stringify(data.shop_info));
                 }
-                setAuthorizedUsers(creds);
+                
+                if (data.app_credentials) {
+                    let creds = data.app_credentials;
+                    if (!Array.isArray(creds)) {
+                        creds = [{
+                            username: creds.username,
+                            password: creds.password,
+                            name: 'Admin',
+                            role: 'Administrator',
+                            email: 'admin@nexusplan.com',
+                            phone: '-'
+                        }];
+                    }
+                    setAuthorizedUsers(creds);
+                }
             }
         }
     } catch (error) {
         console.error("Error fetching settings:", error);
+    } finally {
+        setIsSettingsLoaded(true); // Mark settings as loaded regardless of success/fail/timeout
     }
   };
 
@@ -3075,11 +3340,19 @@ const App = () => {
   const fetchProjects = async () => {
     if (!GOOGLE_SCRIPT_URL) return;
     setIsLoading(true);
+    
+    // [MODIFIED] Add timeout logic (15s) to prevent infinite loading if server is slow
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000));
+
     try {
-      const response = await fetch(GOOGLE_SCRIPT_URL, {
+      // Create the fetch promise
+      const fetchPromise = fetch(GOOGLE_SCRIPT_URL, {
           method: 'POST',
           body: JSON.stringify({ action: 'read' })
       });
+
+      // Race between fetch and timeout
+      const response = await Promise.race([fetchPromise, timeoutPromise]);
       const result = await response.json();
       
       if (result.status === 'success') {
@@ -3120,11 +3393,10 @@ const App = () => {
         });
         setSavedRecipients(Array.from(recipientsMap.values()));
       }
-      await fetchSettings();
-
+      // [REMOVED] await fetchSettings(); // ตัดออกเพราะเรียกแยกใน useEffect แล้ว เพื่อความรวดเร็ว
     } catch (error) {
       console.error("Error fetching data:", error);
-      showToast("ไม่สามารถโหลดข้อมูลได้", "error");
+      showToast("การเชื่อมต่อล่าช้า ระบบกำลังทำงานในโหมด Offline", "error");
     } finally {
       setIsLoading(false);
     }
@@ -3135,6 +3407,46 @@ const App = () => {
         fetchProjects();
     }
   }, [isLoggedIn, trackingId, quotationId]);
+
+  // [ADDED] Effect to Preload Images for Tracking/Quotation views
+  useEffect(() => {
+      if ((trackingId || quotationId) && allActivities.length > 0) {
+          const targetToken = trackingId || quotationId;
+          const foundItem = allActivities.find(item => 
+              generateTrackingToken(item.id, item.rawDateTime) === targetToken
+          );
+
+          // [MODIFIED] Add Timeout to ensure page shows even if image is slow
+          // ให้เวลารูปโหลดสูงสุด 3 วินาที ถ้าเกินให้แสดงหน้าเว็บเลย (รูปค่อยตามมา)
+          const timer = setTimeout(() => {
+              setAreImagesLoaded(true);
+          }, 3000);
+
+          if (foundItem && foundItem.image) {
+              const img = new Image();
+              img.src = processImageUrl(foundItem.image);
+              // [FIX] Ensure state updates only if component mounted
+              img.onload = () => {
+                  clearTimeout(timer);
+                  setAreImagesLoaded(true);
+              };
+              img.onerror = () => {
+                  clearTimeout(timer);
+                  setAreImagesLoaded(true); // แสดงผลแม้รูปเสีย
+              };
+          } else {
+              clearTimeout(timer);
+              setAreImagesLoaded(true); // ไม่มีรูป หรือไม่พบข้อมูล ให้แสดงผลเลย
+          }
+          
+          return () => clearTimeout(timer);
+      } else if (!trackingId && !quotationId) {
+          setAreImagesLoaded(true); // หน้า Dashboard ปกติไม่ต้องรอ
+      } else if ((trackingId || quotationId) && !isLoading && allActivities.length === 0) {
+          // กรณีโหลดเสร็จแล้วแต่ไม่เจอข้อมูล ก็ให้ปลดล็อกเลย
+          setAreImagesLoaded(true);
+      }
+  }, [allActivities, trackingId, quotationId, isLoading]);
 
   const saveSystemSettings = async (key, value) => {
       if (!GOOGLE_SCRIPT_URL) return;
@@ -3153,8 +3465,13 @@ const App = () => {
           if (key === 'drive_folder_id') {
               setDriveFolderId(value);
           }
+          if (key === 'assets_drive_folder_id') { // [ADDED] Update local state on save
+              setAssetsDriveFolderId(value);
+          }
           if (key === 'shop_info') {
               setShopInfo(value);
+              // [ADDED] Save to localStorage when settings are saved
+              localStorage.setItem('nexus_shop_info', JSON.stringify(value));
           }
           showToast("บันทึกการตั้งค่าสำเร็จ", "success");
       } catch (error) {
@@ -3211,7 +3528,8 @@ const App = () => {
                   role: foundUser.role,
                   email: foundUser.email,
                   phone: foundUser.phone,
-                  username: foundUser.username
+                  username: foundUser.username,
+                  image: foundUser.image // [FIX] เพิ่มบรรทัดนี้เพื่อให้รูปโปรไฟล์ตามมาด้วยตอน Login
               });
 
               setActiveTab('Overview'); 
@@ -3223,7 +3541,8 @@ const App = () => {
                       role: foundUser.role,
                       email: foundUser.email,
                       phone: foundUser.phone,
-                      username: foundUser.username
+                      username: foundUser.username,
+                      image: foundUser.image // [FIX] บันทึกรูปลง LocalStorage
                   }));
               }
               showToast(`ยินดีต้อนรับคุณ ${foundUser.name}`, "success");
@@ -3335,6 +3654,297 @@ const App = () => {
     reader.onload = () => resolve(reader.result);
     reader.onerror = error => reject(error);
   });
+
+  // [ADDED] Handle Profile Image Upload
+  const handleProfileImageUpload = async (file) => {
+      if (!file) return;
+      
+      // ตรวจสอบว่าตั้งค่า Assets Folder ID หรือยัง
+      if (!assetsDriveFolderId && GOOGLE_SCRIPT_URL) {
+          showToast("กรุณาระบุ Assets Folder ID ในตั้งค่าก่อนอัปโหลดรูปโปรไฟล์", "error");
+          return;
+      }
+
+      setIsUploadingProfile(true);
+      try {
+          if (!file.type.startsWith('image/')) {
+              throw new Error('กรุณาอัพโหลดไฟล์รูปภาพเท่านั้น');
+          }
+
+          // 1. Compress Image & Get Base64
+          let processedFile = file;
+          let base64Data = "";
+          
+          if (file.size > 2 * 1024 * 1024) { // ถ้าไฟล์ใหญ่กว่า 2MB ให้ย่อ
+               base64Data = await compressImage(file);
+          } else {
+               base64Data = await toBase64(file);
+          }
+
+          // 2. Optimistic Update: แสดงรูปทันทีโดยใช้ Base64 (เพื่อให้ผู้ใช้เห็นว่ารูปเปลี่ยนทันที)
+          const tempProfile = { ...userProfile, image: base64Data };
+          setUserProfile(tempProfile);
+
+          if (GOOGLE_SCRIPT_URL) {
+              const cleanBase64 = base64Data.split(',')[1];
+              const mimeType = base64Data.split(',')[0].match(/:(.*?);/)[1];
+              const fileName = `profile_${userProfile.username}_${Date.now()}.jpg`;
+
+              const response = await fetch(GOOGLE_SCRIPT_URL, {
+                  method: 'POST',
+                  body: JSON.stringify({
+                      action: 'uploadAsset', 
+                      data: {
+                          fileData: cleanBase64,
+                          mimeType: mimeType,
+                          fileName: fileName,
+                          folderId: assetsDriveFolderId
+                      }
+                  })
+              });
+
+              const result = await response.json();
+              if (result.status === 'success' && result.url) {
+                  // [MODIFIED] สร้างลิงก์แบบ uc?export=view สำหรับบันทึก (ตามที่ระบบใช้อยู่)
+                  // แต่เมื่อแสดงผล processImageUrl จะแปลงเป็น thumbnail ให้เอง
+                  let newImageUrl = result.url;
+                  if (result.fileId) {
+                      newImageUrl = `https://drive.google.com/uc?export=view&id=${result.fileId}`;
+                  }
+                  
+                  // 3. Final Update: บันทึก URL จริงลง State
+                  const finalProfile = { ...userProfile, image: newImageUrl };
+                  setUserProfile(finalProfile);
+                  localStorage.setItem('nexus_profile', JSON.stringify(finalProfile));
+
+                  // 4. Update Authorized Users List
+                  const updatedUsers = authorizedUsers.map(u => 
+                      u.username.toLowerCase() === userProfile.username.toLowerCase() 
+                      ? { ...u, image: newImageUrl } 
+                      : u
+                  );
+                  setAuthorizedUsers(updatedUsers);
+
+                  // 5. Sync to Backend Settings
+                  await saveSystemSettings('app_credentials', updatedUsers);
+                  
+                  showToast("อัปเดตรูปโปรไฟล์สำเร็จ", "success");
+              } else {
+                  throw new Error(result.message || "Upload failed");
+              }
+          } else {
+              // Offline Mode
+              const updatedProfile = { ...userProfile, image: base64Data };
+              setUserProfile(updatedProfile);
+              localStorage.setItem('nexus_profile', JSON.stringify(updatedProfile));
+              
+              const updatedUsers = authorizedUsers.map(u => 
+                  u.username.toLowerCase() === userProfile.username.toLowerCase() 
+                  ? { ...u, image: base64Data } 
+                  : u
+              );
+              setAuthorizedUsers(updatedUsers);
+              showToast("เปลี่ยนรูปโปรไฟล์ (Offline)", "success");
+          }
+
+      } catch (error) {
+          console.error(error);
+          showToast("เกิดข้อผิดพลาด: " + error.message, "error");
+      } finally {
+          setIsUploadingProfile(false);
+      }
+  };
+
+  // [ADDED] Handle Profile Image Delete Request (Open Modal)
+  const requestDeleteProfile = () => {
+      if (userProfile?.image) {
+          setDeleteProfileConfirm(true);
+      }
+  };
+
+  // [ADDED] Close Delete Profile Modal
+  const closeDeleteProfileModal = () => {
+      setIsDeleteProfileClosing(true);
+      setTimeout(() => {
+          setDeleteProfileConfirm(false);
+          setIsDeleteProfileClosing(false);
+      }, 300);
+  };
+
+  // [ADDED] Execute Profile Image Delete
+  const executeDeleteProfile = async () => {
+      // 0. Get File ID before removing from state
+      const fileId = getFileId(userProfile?.image);
+
+      // 1. Update Local State
+      const updatedProfile = { ...userProfile, image: '' };
+      setUserProfile(updatedProfile);
+      localStorage.setItem('nexus_profile', JSON.stringify(updatedProfile));
+
+      // 2. Update Authorized Users List
+      const updatedUsers = authorizedUsers.map(u => 
+          u.username.toLowerCase() === userProfile.username.toLowerCase() 
+          ? { ...u, image: '' } 
+          : u
+      );
+      setAuthorizedUsers(updatedUsers);
+
+      // 3. Save to Backend & Delete File
+      if (GOOGLE_SCRIPT_URL) {
+          try {
+              // Update Settings
+              await saveSystemSettings('app_credentials', updatedUsers);
+              
+              // Delete actual file from Drive
+              if (fileId) {
+                  fetch(GOOGLE_SCRIPT_URL, {
+                      method: 'POST',
+                      body: JSON.stringify({ action: 'deleteFile', id: fileId })
+                  }).catch(err => console.error("Failed to delete profile image from Drive:", err));
+              }
+
+              showToast("ลบรูปโปรไฟล์เรียบร้อยแล้ว", "success");
+          } catch (error) {
+              console.error("Error deleting profile image:", error);
+              showToast("เกิดข้อผิดพลาดในการบันทึก", "error");
+          }
+      } else {
+          showToast("ลบรูปโปรไฟล์เรียบร้อยแล้ว (Offline)", "success");
+      }
+      closeDeleteProfileModal();
+  };
+
+  // [ADDED] Handle Shop Logo Upload
+  const handleLogoUpload = async (file) => {
+      if (!file) return;
+      
+      if (!assetsDriveFolderId && GOOGLE_SCRIPT_URL) {
+          showToast("กรุณาระบุ Assets Folder ID ในตั้งค่าก่อนอัปโหลดโลโก้", "error");
+          return;
+      }
+
+      setIsUploadingLogo(true);
+      try {
+          if (!file.type.startsWith('image/')) {
+              throw new Error('กรุณาอัพโหลดไฟล์รูปภาพเท่านั้น');
+          }
+
+          // 1. Compress Image & Get Base64
+          let processedFile = file;
+          let base64Data = "";
+          
+          if (file.size > 2 * 1024 * 1024) { 
+               base64Data = await compressImage(file);
+          } else {
+               base64Data = await toBase64(file);
+          }
+
+          // 2. Optimistic Update
+          const tempShopInfo = { ...shopInfo, logo: base64Data };
+          setShopInfo(tempShopInfo);
+
+          if (GOOGLE_SCRIPT_URL) {
+              const cleanBase64 = base64Data.split(',')[1];
+              const mimeType = base64Data.split(',')[0].match(/:(.*?);/)[1];
+              const fileName = `shop_logo_${Date.now()}.jpg`;
+
+              const response = await fetch(GOOGLE_SCRIPT_URL, {
+                  method: 'POST',
+                  body: JSON.stringify({
+                      action: 'uploadAsset', 
+                      data: {
+                          fileData: cleanBase64,
+                          mimeType: mimeType,
+                          fileName: fileName,
+                          folderId: assetsDriveFolderId
+                      }
+                  })
+              });
+
+              const result = await response.json();
+              if (result.status === 'success' && result.url) {
+                  let newLogoUrl = result.url;
+                  // Force uc?export=view
+                  if (result.fileId) {
+                      newLogoUrl = `https://drive.google.com/uc?export=view&id=${result.fileId}`;
+                  } else if (newLogoUrl.includes('id=')) {
+                      const idMatch = newLogoUrl.match(/id=([a-zA-Z0-9_-]+)/);
+                      if (idMatch && idMatch[1]) {
+                          newLogoUrl = `https://drive.google.com/uc?export=view&id=${idMatch[1]}`;
+                      }
+                  }
+                  
+                  // 3. Final Update & Save
+                  const finalShopInfo = { ...shopInfo, logo: newLogoUrl };
+                  setShopInfo(finalShopInfo);
+                  await saveSystemSettings('shop_info', finalShopInfo);
+                  
+                  showToast("อัปเดตโลโก้ร้านค้าสำเร็จ", "success");
+              } else {
+                  throw new Error(result.message || "Upload failed");
+              }
+          } else {
+              // Offline Mode
+              const updatedShopInfo = { ...shopInfo, logo: base64Data };
+              setShopInfo(updatedShopInfo);
+              showToast("เปลี่ยนโลโก้ร้านค้า (Offline)", "success");
+          }
+
+      } catch (error) {
+          console.error(error);
+          showToast("เกิดข้อผิดพลาด: " + error.message, "error");
+      } finally {
+          setIsUploadingLogo(false);
+      }
+  };
+
+  // [ADDED] Handle Shop Logo Delete Request (Open Modal)
+  const requestDeleteLogo = () => {
+      if (shopInfo.logo) {
+          setDeleteLogoConfirm(true);
+      }
+  };
+
+  // [ADDED] Close Delete Logo Modal
+  const closeDeleteLogoModal = () => {
+      setIsDeleteLogoClosing(true);
+      setTimeout(() => {
+          setDeleteLogoConfirm(false);
+          setIsDeleteLogoClosing(false);
+      }, 300);
+  };
+
+  // [ADDED] Execute Shop Logo Delete
+  const executeDeleteLogo = async () => {
+      const fileId = getFileId(shopInfo.logo);
+
+      // Optimistic Update
+      const tempShopInfo = { ...shopInfo, logo: '' };
+      setShopInfo(tempShopInfo);
+
+      if (GOOGLE_SCRIPT_URL) {
+          try {
+              // Update Settings
+              await saveSystemSettings('shop_info', tempShopInfo);
+              
+              // Delete actual file from Drive
+              if (fileId) {
+                  fetch(GOOGLE_SCRIPT_URL, {
+                      method: 'POST',
+                      body: JSON.stringify({ action: 'deleteFile', id: fileId })
+                  }).catch(err => console.error("Failed to delete logo from Drive:", err));
+              }
+
+              showToast("ลบโลโก้เรียบร้อยแล้ว", "success");
+          } catch (error) {
+              console.error("Error deleting logo settings:", error);
+              showToast("เกิดข้อผิดพลาดในการบันทึกการลบ", "error");
+          }
+      } else {
+          showToast("ลบโลโก้เรียบร้อยแล้ว (Offline)", "success");
+      }
+      closeDeleteLogoModal();
+  };
 
   const handleImageUpload = async (file) => {
       setIsSaving(true);
@@ -4608,10 +5218,12 @@ const App = () => {
   const renderContent = () => {
     // 1. ถ้ามี Tracking ID ให้แสดงหน้า Tracking View โดยไม่ต้อง Login
     if (trackingId) {
-        if (isLoading && allActivities.length === 0) {
+        // [MODIFIED] Check isSettingsLoaded AND areImagesLoaded to ensure theme & images are ready before text
+        // ป้องกันการแสดงผลด้วยสี Indigo ก่อนที่ธีมจะโหลดเสร็จ และป้องกันรูปกระพริบ
+        if ((isLoading && allActivities.length === 0) || !isSettingsLoaded || !areImagesLoaded) {
             return (
                 <div className="flex flex-col items-center justify-center h-screen w-full bg-slate-50">
-                    <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
+                    <Loader2 className="w-12 h-12 text-slate-400 animate-spin mb-4" />
                     <p className="text-slate-500 font-bold text-lg animate-pulse">กำลังค้นหาข้อมูลพัสดุ...</p>
                 </div>
             );
@@ -4642,10 +5254,11 @@ const App = () => {
 
     // [NEW] Quotation View Logic
     if (quotationId) {
-        if (isLoading && allActivities.length === 0) {
+        // [MODIFIED] Check isSettingsLoaded AND areImagesLoaded to ensure theme & images are ready before text
+        if ((isLoading && allActivities.length === 0) || !isSettingsLoaded || !areImagesLoaded) {
             return (
                 <div className="flex flex-col items-center justify-center h-screen w-full bg-slate-50">
-                    <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
+                    <Loader2 className="w-12 h-12 text-slate-400 animate-spin mb-4" />
                     <p className="text-slate-500 font-bold text-lg animate-pulse">กำลังโหลดใบเสนอราคา...</p>
                 </div>
             );
@@ -4677,10 +5290,11 @@ const App = () => {
     if (!isLoggedIn) {
         return <LoginScreen onLogin={handleLogin} isLoading={isLoading} loginError={loginError} />;
     }
-    if (isLoading && allActivities.length === 0) {
+    // [MODIFIED] Use isSettingsLoaded to prevent flash of wrong theme
+    if ((isLoading && allActivities.length === 0) || !isSettingsLoaded) {
       return (
         <div className="flex flex-col items-center justify-center h-[calc(100vh-80px)] w-full">
-            <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
+            <Loader2 className="w-12 h-12 text-slate-400 animate-spin mb-4" />
             <p className="text-slate-500 font-bold text-lg animate-pulse">กำลังโหลดข้อมูล...</p>
         </div>
       );
@@ -5052,18 +5666,83 @@ const App = () => {
               <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden mb-8">
                 <div className="h-48 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 relative">
                   <div className="absolute right-6 top-6">
-                     <button className="p-2 bg-white/20 backdrop-blur-md text-white rounded-xl hover:bg-white/30 transition shadow-sm">
-                        <Camera className="w-5 h-5" />
-                     </button>
+                     {/* [MODIFIED] Camera Button to Trigger File Input */}
+                     <label className={`p-2 bg-white/20 backdrop-blur-md text-white rounded-xl hover:bg-white/30 transition shadow-sm cursor-pointer flex items-center justify-center ${isUploadingProfile ? 'opacity-50 pointer-events-none' : ''}`}>
+                        {isUploadingProfile ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
+                        <input 
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onChange={(e) => e.target.files[0] && handleProfileImageUpload(e.target.files[0])}
+                        />
+                     </label>
                   </div>
                 </div>
                 <div className="px-8 pb-8">
                    <div className="flex flex-col items-center sm:items-start relative">
                       <div className="-mt-16 mb-6 relative z-10">
-                         <div className="w-32 h-32 bg-white p-1.5 rounded-full shadow-2xl ring-4 ring-white/50">
-                            <div className="w-full h-full bg-slate-100 text-slate-600 rounded-full flex items-center justify-center text-4xl font-black border border-slate-200 overflow-hidden">
-                               {userProfile?.name?.charAt(0) || 'U'}
+                         <div className="w-32 h-32 bg-white p-1.5 rounded-full shadow-2xl ring-4 ring-white/50 relative group">
+                            {/* [MODIFIED] Display Profile Image */}
+                            <div className="w-full h-full bg-slate-100 text-slate-600 rounded-full flex items-center justify-center text-4xl font-black border border-slate-200 overflow-hidden relative">
+                               {userProfile?.image ? (
+                                   <img 
+                                        src={processImageUrl(userProfile.image)} 
+                                        alt="Profile" 
+                                        className="w-full h-full object-cover" 
+                                        referrerPolicy="no-referrer"
+                                        onError={(e) => {
+                                            e.target.onerror = null; 
+                                            // Fallback if image fails to load
+                                            e.target.style.display = 'none';
+                                            e.target.parentElement.classList.add('bg-slate-200');
+                                            e.target.parentElement.innerHTML = `<span class="text-4xl text-slate-400">${userProfile?.name?.charAt(0) || 'U'}</span>`;
+                                        }}
+                                   />
+                               ) : (
+                                   userProfile?.name?.charAt(0) || 'U'
+                               )}
+                               
+                               {/* Hover Overlay for upload (Still available on center click) */}
+                               <label className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer z-10">
+                                    <Camera className="w-8 h-8 text-white drop-shadow-md" />
+                                    <input 
+                                        type="file" 
+                                        accept="image/*" 
+                                        className="hidden" 
+                                        onChange={(e) => e.target.files[0] && handleProfileImageUpload(e.target.files[0])}
+                                    />
+                               </label>
                             </div>
+                            
+                            {isUploadingProfile && (
+                                <div className="absolute inset-0 flex items-center justify-center bg-white/50 rounded-full z-20 backdrop-blur-sm">
+                                    <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+                                </div>
+                            )}
+
+                            {/* [MODIFIED] Profile Action Buttons */}
+                            {/* 1. Upload Button (Bottom-Left) */}
+                            <label className={`absolute bottom-0 left-0 p-2.5 bg-white text-indigo-600 rounded-full shadow-lg border border-slate-100 cursor-pointer hover:bg-indigo-50 transition-all z-30 ${isUploadingProfile ? 'pointer-events-none opacity-80' : ''}`}>
+                                {isUploadingProfile ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
+                                <input 
+                                    type="file" 
+                                    accept="image/*" 
+                                    className="hidden" 
+                                    disabled={isUploadingProfile}
+                                    onChange={(e) => e.target.files[0] && handleProfileImageUpload(e.target.files[0])}
+                                />
+                            </label>
+
+                            {/* 2. Delete Button (Bottom-Right) - Changed position as requested */}
+                            {userProfile?.image && !isUploadingProfile && (
+                                <button
+                                    onClick={requestDeleteProfile}
+                                    className="absolute bottom-0 right-0 p-2.5 bg-white text-rose-500 border border-slate-200 rounded-full shadow-md hover:bg-rose-50 hover:text-rose-600 transition-all z-30 group/delete"
+                                    title="ลบรูปโปรไฟล์"
+                                >
+                                    <Trash2 className="w-5 h-5" />
+                                </button>
+                            )}
                          </div>
                       </div>
                       
@@ -5218,24 +5897,58 @@ const App = () => {
                       ตั้งค่า Google Drive
                   </h3>
                   <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-                      <p className="text-sm text-slate-500 mb-3">
-                          ระบุ Folder ID ของ Google Drive ที่ต้องการให้บันทึกรูปภาพ (ต้องเปิดแชร์สิทธิ์ Editor ให้กับอีเมลที่รัน Script)
-                      </p>
-                      <div className="flex flex-col sm:flex-row gap-3">
-                          <input
-                              type="text"
-                              placeholder="Google Drive Folder ID (e.g., 1xYz...)"
-                              value={driveFolderId}
-                              onChange={(e) => setDriveFolderId(e.target.value)}
-                              className="w-full sm:flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all min-w-0"
-                          />
-                          <button
-                              onClick={() => saveSystemSettings('drive_folder_id', driveFolderId)}
-                              className="w-full sm:w-auto px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition flex items-center justify-center gap-2 shrink-0"
-                          >
-                              <Save className="w-4 h-4" /> บันทึก
-                          </button>
+                      
+                      {/* Main Data Folder */}
+                      <div className="mb-6">
+                          <label className="text-sm font-bold text-slate-700 mb-1 block">
+                              โฟลเดอร์เก็บข้อมูลงาน (Work Data)
+                          </label>
+                          <p className="text-xs text-slate-500 mb-3">
+                              ระบุ Folder ID สำหรับเก็บรูปภาพงานและเอกสารโครงการ
+                          </p>
+                          <div className="flex flex-col sm:flex-row gap-3">
+                              <input
+                                  type="text"
+                                  placeholder="Work Data Folder ID (e.g., 1xYz...)"
+                                  value={driveFolderId}
+                                  onChange={(e) => setDriveFolderId(e.target.value)}
+                                  className="w-full sm:flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all min-w-0"
+                              />
+                              <button
+                                  onClick={() => saveSystemSettings('drive_folder_id', driveFolderId)}
+                                  className="w-full sm:w-auto px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition flex items-center justify-center gap-2 shrink-0"
+                              >
+                                  <Save className="w-4 h-4" /> บันทึก
+                              </button>
+                          </div>
                       </div>
+
+                      {/* Assets/Media Folder */}
+                      <div className="pt-6 border-t border-slate-100">
+                          <label className="text-sm font-bold text-slate-700 mb-1 block flex items-center gap-2">
+                              โฟลเดอร์เก็บไฟล์ตกแต่ง (Assets & Media)
+                              <span className="bg-blue-100 text-blue-600 text-[10px] px-2 py-0.5 rounded-full">New</span>
+                          </label>
+                          <p className="text-xs text-slate-500 mb-3">
+                              ระบุ Folder ID สำหรับเก็บ Logo ร้าน, รูปโปรไฟล์ผู้ใช้ และไฟล์ตกแต่ง UI อื่นๆ (แยกจากข้อมูลงาน)
+                          </p>
+                          <div className="flex flex-col sm:flex-row gap-3">
+                              <input
+                                  type="text"
+                                  placeholder="Assets Folder ID (e.g., 1xYz...)"
+                                  value={assetsDriveFolderId}
+                                  onChange={(e) => setAssetsDriveFolderId(e.target.value)}
+                                  className="w-full sm:flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all min-w-0"
+                              />
+                              <button
+                                  onClick={() => saveSystemSettings('assets_drive_folder_id', assetsDriveFolderId)}
+                                  className="w-full sm:w-auto px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 shadow-sm transition flex items-center justify-center gap-2 shrink-0"
+                              >
+                                  <Save className="w-4 h-4" /> บันทึก
+                              </button>
+                          </div>
+                      </div>
+
                   </div>
               </div>
 
@@ -5247,6 +5960,53 @@ const App = () => {
                   </h3>
                   <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                          
+                          {/* [MODIFIED] Logo Upload Section with Delete Button */}
+                          <div className="sm:col-span-2 flex items-center justify-center mb-4">
+                              <div className="relative group">
+                                  <div className="w-24 h-24 rounded-2xl bg-white border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden hover:border-indigo-300 transition-colors relative shadow-sm cursor-pointer">
+                                      {shopInfo.logo ? (
+                                          <img 
+                                            src={processImageUrl(shopInfo.logo)} 
+                                            alt="Shop Logo" 
+                                            className="w-full h-full object-cover"
+                                            referrerPolicy="no-referrer"
+                                            onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                                          />
+                                      ) : null}
+                                      
+                                      <div className={`flex-col items-center justify-center text-slate-400 ${shopInfo.logo ? 'hidden' : 'flex'}`}>
+                                          {isUploadingLogo ? <Loader2 className="w-6 h-6 animate-spin text-indigo-500" /> : <ImageIcon className="w-8 h-8 opacity-50" />}
+                                          <span className="text-[10px] font-bold mt-1 text-slate-300">{isUploadingLogo ? '...' : 'LOGO'}</span>
+                                      </div>
+
+                                      {/* Overlay for upload */}
+                                      <label className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer z-10">
+                                          <Camera className="w-6 h-6 mb-1 drop-shadow-md" />
+                                          <span className="text-[10px] font-bold drop-shadow-md">เปลี่ยนรูป</span>
+                                          <input 
+                                              type="file" 
+                                              accept="image/*" 
+                                              className="hidden" 
+                                              onChange={(e) => e.target.files[0] && handleLogoUpload(e.target.files[0])}
+                                              disabled={isUploadingLogo}
+                                          />
+                                      </label>
+                                  </div>
+
+                                  {/* [MODIFIED] Delete Button Position (Bottom-Right) */}
+                                  {shopInfo.logo && (
+                                      <button
+                                          onClick={requestDeleteLogo}
+                                          className="absolute -bottom-2 -right-2 p-1.5 bg-white text-rose-500 border border-slate-200 rounded-full shadow-md hover:bg-rose-50 hover:text-rose-600 transition-all z-20 group/delete"
+                                          title="ลบโลโก้"
+                                      >
+                                          <Trash2 className="w-4 h-4" />
+                                      </button>
+                                  )}
+                              </div>
+                          </div>
+
                           <div className="space-y-1 sm:col-span-2">
                               <label className="text-xs font-bold text-slate-500 ml-1">ชื่อร้านค้า</label>
                               <input 
@@ -5336,6 +6096,123 @@ const App = () => {
                           >
                               <Save className="w-4 h-4" /> บันทึกข้อมูลติดต่อ
                           </button>
+                      </div>
+                  </div>
+              </div>
+
+              {/* [ADDED] Theme Customization Section */}
+              <div className="mb-8">
+                  <h3 className="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
+                      <Palette className="w-5 h-5 text-indigo-600" />
+                      ปรับแต่งธีม (Theme & Appearance)
+                  </h3>
+                  <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                      <div className="flex flex-col gap-6">
+                          
+                          {/* Color Selection */}
+                          <div>
+                              <label className="text-sm font-bold text-slate-700 mb-3 block">เลือกสีหลัก (Primary Color)</label>
+                              <div className="flex flex-wrap gap-3 items-center">
+                                  {Object.entries(themeColors).map(([key, theme]) => (
+                                      <button
+                                          key={key}
+                                          onClick={() => setShopInfo({...shopInfo, themeColor: key})}
+                                          className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${
+                                              shopInfo.themeColor === key 
+                                              ? 'ring-4 ring-offset-2 ring-slate-200 scale-110 shadow-md' 
+                                              : 'hover:scale-105 hover:shadow-sm opacity-80 hover:opacity-100'
+                                          }`}
+                                          style={{ background: key === 'rainbow' ? 'linear-gradient(135deg, #ef4444, #eab308, #3b82f6, #a855f7)' : theme.main }}
+                                          title={theme.label}
+                                      >
+                                          {shopInfo.themeColor === key && <Check className="w-6 h-6 text-white drop-shadow-sm" strokeWidth={3} />}
+                                      </button>
+                                  ))}
+
+                                  {/* Divider */}
+                                  <div className="w-px h-8 bg-slate-200 mx-1"></div>
+
+                                  {/* [ADDED] Custom Color Button (Pipette) */}
+                                  <div className="relative group">
+                                      <label 
+                                          className={`w-12 h-12 rounded-full flex items-center justify-center transition-all cursor-pointer shadow-sm relative overflow-hidden ${
+                                              shopInfo.themeColor === 'custom' 
+                                              ? 'ring-4 ring-offset-2 ring-slate-200 scale-110' 
+                                              : 'hover:scale-105 hover:shadow-md border border-slate-100'
+                                          }`}
+                                          style={{ 
+                                              background: shopInfo.themeColor === 'custom' 
+                                                  ? shopInfo.customColorValue 
+                                                  : 'conic-gradient(from 90deg, #FF0000, #FFFF00, #00FF00, #00FFFF, #0000FF, #FF00FF, #FF0000)'
+                                          }}
+                                          title="สีที่กำหนดเอง (Custom)"
+                                      >
+                                          <input 
+                                              type="color" 
+                                              className="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10"
+                                              value={shopInfo.customColorValue || '#000000'}
+                                              onChange={(e) => setShopInfo({
+                                                  ...shopInfo, 
+                                                  themeColor: 'custom',
+                                                  customColorValue: e.target.value
+                                              })}
+                                          />
+                                          {/* Icon Overlay */}
+                                          <div className={`pointer-events-none z-0 ${shopInfo.themeColor === 'custom' ? 'text-white drop-shadow-md' : 'text-slate-700 bg-white/80 p-2 rounded-full backdrop-blur-sm shadow-sm'}`}>
+                                              {shopInfo.themeColor === 'custom' ? (
+                                                  <Check className="w-6 h-6" strokeWidth={3} />
+                                              ) : (
+                                                  <Pipette className="w-5 h-5" />
+                                              )}
+                                          </div>
+                                      </label>
+                                      <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-20">
+                                          กำหนดเอง
+                                      </div>
+                                  </div>
+                              </div>
+                          </div>
+
+                          <div className="w-full h-px bg-slate-100"></div>
+
+                          {/* Mode Selection */}
+                          <div>
+                              <label className="text-sm font-bold text-slate-700 mb-3 block">รูปแบบการแสดงผล (Display Mode)</label>
+                              <div className="flex gap-4">
+                                  <button
+                                      onClick={() => setShopInfo({...shopInfo, themeMode: 'gradient'})}
+                                      className={`flex-1 py-4 px-4 rounded-xl border-2 transition-all flex items-center justify-center gap-2 font-bold ${
+                                          shopInfo.themeMode === 'gradient'
+                                          ? 'border-indigo-600 bg-indigo-50 text-indigo-600'
+                                          : 'border-slate-100 bg-white text-slate-500 hover:border-slate-200'
+                                      }`}
+                                  >
+                                      <div className={`w-6 h-6 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600`}></div>
+                                      ไล่เฉดสี (Gradient)
+                                  </button>
+                                  <button
+                                      onClick={() => setShopInfo({...shopInfo, themeMode: 'solid'})}
+                                      className={`flex-1 py-4 px-4 rounded-xl border-2 transition-all flex items-center justify-center gap-2 font-bold ${
+                                          shopInfo.themeMode === 'solid'
+                                          ? 'border-indigo-600 bg-indigo-50 text-indigo-600'
+                                          : 'border-slate-100 bg-white text-slate-500 hover:border-slate-200'
+                                      }`}
+                                  >
+                                      <div className={`w-6 h-6 rounded-full bg-indigo-600`}></div>
+                                      สีเดียว (Solid)
+                                  </button>
+                              </div>
+                          </div>
+
+                          {/* Save Button for Theme */}
+                          <div className="flex justify-end pt-2">
+                              <button
+                                  onClick={() => saveSystemSettings('shop_info', shopInfo)}
+                                  className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition flex items-center justify-center gap-2"
+                              >
+                                  <Save className="w-4 h-4" /> บันทึกธีม
+                              </button>
+                          </div>
                       </div>
                   </div>
               </div>
@@ -5508,8 +6385,21 @@ const App = () => {
 
             <div className="p-4 border-t border-slate-50">
                 <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-4'} cursor-pointer p-2 sm:p-4 rounded-[1.5rem] bg-slate-50 hover:bg-white hover:shadow-lg hover:shadow-slate-100 transition-all duration-300 border border-transparent hover:border-slate-100`}>
-                <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-white text-xs font-bold ring-4 ring-white shadow-md shrink-0">
-                    {userProfile?.name?.charAt(0) || 'U'}
+                {/* [MODIFIED] Profile Image in Sidebar */}
+                <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-white text-xs font-bold ring-4 ring-white shadow-md shrink-0 overflow-hidden">
+                    {userProfile?.image ? (
+                        <img 
+                            src={processImageUrl(userProfile.image)} 
+                            alt="Profile" 
+                            className="w-full h-full object-cover" 
+                            referrerPolicy="no-referrer"
+                            onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                        />
+                    ) : (
+                        userProfile?.name?.charAt(0) || 'U'
+                    )}
+                    {/* Fallback text if image fails loading (hidden by default if img present) */}
+                    {userProfile?.image && <div className="hidden w-full h-full items-center justify-center bg-slate-900 text-white">{userProfile?.name?.charAt(0) || 'U'}</div>}
                 </div>
                 {!isSidebarCollapsed && (
                     <div className="flex-1 min-w-0">
@@ -5592,7 +6482,7 @@ const App = () => {
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
         {/* Only show header if logged in AND NOT in tracking mode */}
         {isLoggedIn && !trackingId && !quotationId && (
-            <header className="h-20 bg-white/80 backdrop-blur-xl border-b border-slate-100 flex items-center justify-between px-6 sm:px-8 z-10 sticky top-0">
+            <header className="h-20 bg-white/80 backdrop-blur-xl border-b border-slate-100 flex items-center justify-between px-6 sm:px-8 z-50 sticky top-0">
             <div className="flex items-center gap-4">
                 <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
                 {getPageTitle(activeTab)}
@@ -5608,6 +6498,62 @@ const App = () => {
                 <span>เพิ่มรายการ</span>
                 </button>
             </div>
+
+            {/* [ADDED] Mobile Profile Menu Button - Resized to be more compact */}
+            <div className="md:hidden relative">
+                <button
+                    onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
+                    className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 text-xs font-bold shadow-sm active:scale-95 transition-all hover:bg-slate-200 overflow-hidden"
+                >
+                    {userProfile?.image ? (
+                        <img 
+                            src={processImageUrl(userProfile.image)} 
+                            alt="Profile" 
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.innerText = userProfile?.name?.charAt(0) || 'U'; }}
+                        />
+                    ) : (
+                        userProfile?.name ? userProfile.name.charAt(0).toUpperCase() : <User className="w-4 h-4" />
+                    )}
+                </button>
+                
+                {isProfileMenuOpen && (
+                    <>
+                        <div className="fixed inset-0 z-10" onClick={() => setIsProfileMenuOpen(false)}></div>
+                        <div className="absolute right-0 top-12 bg-white rounded-xl shadow-xl border border-slate-100 p-1.5 min-w-[160px] z-20 animate-in fade-in zoom-in-95 origin-top-right flex flex-col gap-1">
+                            {/* User Info Header */}
+                            <div className="px-2 py-2 border-b border-slate-50 mb-1">
+                                <p className="text-xs font-bold text-slate-800 truncate">{userProfile?.name}</p>
+                                <p className="text-[10px] text-slate-500 truncate">{userProfile?.role}</p>
+                            </div>
+
+                            {/* Settings Button */}
+                            <button 
+                                onClick={() => { setActiveTab('Settings'); setIsProfileMenuOpen(false); }}
+                                className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors text-left"
+                            >
+                                <div className="p-1 bg-slate-100 rounded-md text-slate-600">
+                                    <Settings className="w-3.5 h-3.5" />
+                                </div>
+                                <span>ตั้งค่า</span>
+                            </button>
+
+                            {/* [ADDED] Logout Button */}
+                            <button 
+                                onClick={() => { setIsProfileMenuOpen(false); handleLogout(); }}
+                                className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-rose-50 text-rose-600 text-xs font-bold transition-colors text-left"
+                            >
+                                <div className="p-1 bg-rose-100 rounded-md text-rose-500">
+                                    <LogOut className="w-3.5 h-3.5" />
+                                </div>
+                                <span>ออกจากระบบ</span>
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
+
             </header>
         )}
 
@@ -5650,6 +6596,76 @@ const App = () => {
                   className="flex-1 py-2.5 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 transition shadow-lg shadow-rose-200"
                 >
                   ยืนยันลบ
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* [ADDED] Logo Delete Confirmation Modal */}
+      {deleteLogoConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div
+            className={`fixed inset-0 bg-slate-900/40 backdrop-blur-sm ${isDeleteLogoClosing ? 'backdrop-animate-out' : 'backdrop-animate-in'}`}
+            onClick={closeDeleteLogoModal}
+          />
+          <div className={`bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm relative z-10 ${isDeleteLogoClosing ? 'modal-animate-out' : 'modal-animate-in'}`}>
+            <div className="flex flex-col items-center text-center gap-4">
+              <div className="p-3 bg-rose-100 text-rose-600 rounded-full">
+                <AlertTriangle className="w-8 h-8" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">ยืนยันลบรูปร้านค้า?</h3>
+                <p className="text-sm text-slate-500">คุณต้องการลบโลโก้ร้านค้านี้ใช่หรือไม่?</p>
+              </div>
+              <div className="flex gap-3 w-full mt-2">
+                <button
+                  onClick={closeDeleteLogoModal}
+                  className="flex-1 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  onClick={executeDeleteLogo}
+                  className="flex-1 py-2.5 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 transition shadow-lg shadow-rose-200"
+                >
+                  ลบรูป
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* [ADDED] Profile Delete Confirmation Modal */}
+      {deleteProfileConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div
+            className={`fixed inset-0 bg-slate-900/40 backdrop-blur-sm ${isDeleteProfileClosing ? 'backdrop-animate-out' : 'backdrop-animate-in'}`}
+            onClick={closeDeleteProfileModal}
+          />
+          <div className={`bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm relative z-10 ${isDeleteProfileClosing ? 'modal-animate-out' : 'modal-animate-in'}`}>
+            <div className="flex flex-col items-center text-center gap-4">
+              <div className="p-3 bg-rose-100 text-rose-600 rounded-full">
+                <AlertTriangle className="w-8 h-8" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">ยืนยันลบรูปโปรไฟล์?</h3>
+                <p className="text-sm text-slate-500">คุณต้องการลบรูปโปรไฟล์นี้ใช่หรือไม่?</p>
+              </div>
+              <div className="flex gap-3 w-full mt-2">
+                <button
+                  onClick={closeDeleteProfileModal}
+                  className="flex-1 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  onClick={executeDeleteProfile}
+                  className="flex-1 py-2.5 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 transition shadow-lg shadow-rose-200"
+                >
+                  ลบรูป
                 </button>
               </div>
             </div>
