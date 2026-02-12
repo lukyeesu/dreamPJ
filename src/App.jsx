@@ -1055,10 +1055,28 @@ const CalendarView = ({ activities, onEventClick, onDayClick }) => {
 };
 
 // --- Customer Quotation View (New Component) ---
-const CustomerQuotationView = ({ data, shopInfo }) => {
+// [MODIFIED] Added dealStatuses prop to resolve custom status labels
+const CustomerQuotationView = ({ data, shopInfo, dealStatuses = [] }) => {
   const [previewImage, setPreviewImage] = useState(null);
 
+  // [ADDED] Set Document Title dynamically
+  useEffect(() => {
+      const title = shopInfo?.shopName ? `ใบเสนอราคา - ${shopInfo.shopName}` : 'ใบเสนอราคา';
+      document.title = title;
+  }, [shopInfo]);
+
   if (!data) return null;
+
+  // [ADDED] Helper to resolve status type and label from value (Same as TrackingView)
+  const resolveStatus = (value, list) => {
+      const found = list.find(s => s.value === value);
+      if (found) return { type: found.type, label: found.label, color: found.color };
+      
+      const sys = systemStatusTypes.find(s => s.value === value);
+      if (sys) return { type: sys.value, label: sys.label, color: sys.color };
+
+      return { type: 'pending', label: value || '-', color: 'text-slate-500 bg-slate-50' };
+  };
 
   // Calculate Financials
   const totalSupport = data.customerSupport ? data.customerSupport.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) : 0;
@@ -1068,7 +1086,8 @@ const CustomerQuotationView = ({ data, shopInfo }) => {
       : (parseFloat(data.wage) || 0);
   const netReceivable = totalSupport + totalQuotation;
 
-  const dealStatusInfo = systemStatusTypes.find(s => s.value === data.dealStatus) || { label: data.dealStatus, color: 'bg-slate-100 text-slate-500' };
+  // [MODIFIED] Use resolveStatus instead of finding directly to handle custom IDs correctly
+  const dealStatusInfo = resolveStatus(data.dealStatus, dealStatuses);
 
   return (
     <div className="min-h-screen bg-slate-50 pb-safe font-sans flex flex-col">
@@ -1271,6 +1290,12 @@ const CustomerQuotationView = ({ data, shopInfo }) => {
 // [MODIFIED] Added dealStatuses and transportStatuses props to resolve custom status labels/types
 const CustomerTrackingView = ({ data, shopInfo, dealStatuses = [], transportStatuses = [] }) => {
   const [previewImage, setPreviewImage] = useState(null); 
+
+  // [ADDED] Set Document Title dynamically
+  useEffect(() => {
+      const title = shopInfo?.shopName ? `ติดตามสถานะงาน - ${shopInfo.shopName}` : 'ติดตามสถานะงาน';
+      document.title = title;
+  }, [shopInfo]);
 
   if (!data) return null;
 
@@ -3068,24 +3093,36 @@ const App = () => {
   }, [activeTab]);
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [authorizedUsers, setAuthorizedUsers] = useState([
-    {
-      username: 'admin',
-      password: 'password1234',
-      name: 'Admin User',
-      role: 'System Administrator',
-      email: 'admin@nexusplan.com',
-      phone: '-'
-    },
-    {
-      username: 'john',
-      password: 'password1234', 
-      name: 'John Smith',
-      role: 'Project Manager',
-      email: 'john.smith@nexusplan.com',
-      phone: '081-234-5678'
+  
+  // [MODIFIED] Initialize authorizedUsers from localStorage immediately for instant login check
+  const [authorizedUsers, setAuthorizedUsers] = useState(() => {
+    const defaultUsers = [
+        {
+          username: 'admin',
+          password: 'password1234',
+          name: 'Admin User',
+          role: 'System Administrator',
+          email: 'admin@nexusplan.com',
+          phone: '-'
+        },
+        {
+          username: 'john',
+          password: 'password1234', 
+          name: 'John Smith',
+          role: 'Project Manager',
+          email: 'john.smith@nexusplan.com',
+          phone: '081-234-5678'
+        }
+    ];
+
+    try {
+        const saved = localStorage.getItem('nexus_authorized_users');
+        return saved ? JSON.parse(saved) : defaultUsers;
+    } catch (e) {
+        return defaultUsers;
     }
-  ]);
+  });
+
   const [loginError, setLoginError] = useState('');
   const [userProfile, setUserProfile] = useState(null);
 
@@ -3256,8 +3293,20 @@ const App = () => {
   const [filterTransport, setFilterTransport] = useState('all');
 
   // Tracking State
-  const [trackingId, setTrackingId] = useState(null);
-  const [quotationId, setQuotationId] = useState(null); // [NEW] state
+  // [MODIFIED] Initialize from URL params immediately to handle title correctly on load
+  const [trackingId, setTrackingId] = useState(() => {
+      if (typeof window !== 'undefined') {
+          return new URLSearchParams(window.location.search).get('tracking');
+      }
+      return null;
+  });
+  
+  const [quotationId, setQuotationId] = useState(() => {
+      if (typeof window !== 'undefined') {
+          return new URLSearchParams(window.location.search).get('quotation');
+      }
+      return null;
+  });
 
   useEffect(() => {
     setVisibleCount(20);
@@ -3315,18 +3364,26 @@ const App = () => {
     }
   }, []);
 
-  // Parse URL for tracking ID or Quotation ID
+  // [MODIFIED] Updated Title Logic to respect Tracking/Quotation modes
   useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search);
-    const trackId = searchParams.get('tracking');
-    const quoteId = searchParams.get('quotation');
-    if (trackId) {
-        setTrackingId(trackId);
+    // ถ้าอยู่ในโหมดติดตามหรือเสนอราคา ให้ข้ามการตั้งชื่อตาม Tab หลักไปเลย
+    // ปล่อยให้ Component ลูก (CustomerTrackingView/CustomerQuotationView) จัดการชื่อเองเมื่อข้อมูลพร้อม
+    if (trackingId) {
+        document.title = "กำลังตรวจสอบสถานะ..."; 
+        return;
     }
-    if (quoteId) {
-        setQuotationId(quoteId);
+    if (quotationId) {
+        document.title = "กำลังโหลดใบเสนอราคา...";
+        return;
     }
-  }, []);
+
+    const currentTab = navItems.find(item => item.name === activeTab);
+    if (currentTab) {
+      document.title = `${currentTab.label} - NexusPlan`;
+    } else {
+      document.title = "NexusPlan Dashboard";
+    }
+  }, [activeTab, trackingId, quotationId]);
 
   const fetchSettings = async () => {
     if (!GOOGLE_SCRIPT_URL) {
@@ -3378,6 +3435,33 @@ const App = () => {
                         }];
                     }
                     setAuthorizedUsers(creds);
+                    // [ADDED] Cache credentials to localStorage for instant login next time
+                    localStorage.setItem('nexus_authorized_users', JSON.stringify(creds));
+
+                    // [NEW FIX] Sync current logged-in user profile with latest data from server
+                    // แก้ปัญหารูปโปรไฟล์ไม่เปลี่ยนเมื่อ Login เครื่องอื่น หรือ Refresh
+                    const currentLocalProfile = localStorage.getItem('nexus_profile');
+                    if (currentLocalProfile) {
+                        const currentObj = JSON.parse(currentLocalProfile);
+                        const updatedUser = creds.find(u => u.username.toLowerCase() === currentObj.username.toLowerCase());
+                        
+                        if (updatedUser) {
+                            // เช็คว่ารูปภาพหรือข้อมูลสำคัญเปลี่ยนไปไหม
+                            if (updatedUser.image !== currentObj.image || updatedUser.name !== currentObj.name || updatedUser.role !== currentObj.role) {
+                                const newProfile = {
+                                    ...currentObj,
+                                    name: updatedUser.name,
+                                    role: updatedUser.role,
+                                    email: updatedUser.email,
+                                    phone: updatedUser.phone,
+                                    image: updatedUser.image
+                                };
+                                // อัปเดตทั้งใน State และ LocalStorage ทันที
+                                setUserProfile(newProfile);
+                                localStorage.setItem('nexus_profile', JSON.stringify(newProfile));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3516,6 +3600,8 @@ const App = () => {
           });
           if (key === 'app_credentials') {
               setAuthorizedUsers(value);
+              // [ADDED] Update cache immediately
+              localStorage.setItem('nexus_authorized_users', JSON.stringify(value));
           }
           if (key === 'drive_folder_id') {
               setDriveFolderId(value);
@@ -3571,6 +3657,8 @@ const App = () => {
       setIsLoading(true);
       setLoginError('');
       
+      // [MODIFIED] Reduced delay from 1000ms to 100ms for instant feel
+      // Previously, we waited for server sync, but now we use cached 'authorizedUsers' so check is instant.
       setTimeout(() => {
           const foundUser = authorizedUsers.find(u => 
               u.username.toLowerCase() === user.toLowerCase() && u.password === pass
@@ -3584,7 +3672,7 @@ const App = () => {
                   email: foundUser.email,
                   phone: foundUser.phone,
                   username: foundUser.username,
-                  image: foundUser.image // [FIX] เพิ่มบรรทัดนี้เพื่อให้รูปโปรไฟล์ตามมาด้วยตอน Login
+                  image: foundUser.image 
               });
 
               setActiveTab('Overview'); 
@@ -3597,7 +3685,7 @@ const App = () => {
                       email: foundUser.email,
                       phone: foundUser.phone,
                       username: foundUser.username,
-                      image: foundUser.image // [FIX] บันทึกรูปลง LocalStorage
+                      image: foundUser.image
                   }));
               }
               showToast(`ยินดีต้อนรับคุณ ${foundUser.name}`, "success");
@@ -3606,7 +3694,7 @@ const App = () => {
               showToast("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง", "error");
           }
           setIsLoading(false);
-      }, 1000);
+      }, 100); // Reduced delay
   };
 
   const handleLogout = () => {
@@ -4747,6 +4835,24 @@ const App = () => {
     const displayLimit = limit > 0 ? limit : visibleCount;
     const items = sourceData.slice(0, displayLimit);
 
+    // [ADDED] Helper to get dot color based on status color class (Consistent with Settings)
+    const getStatusDotColor = (info) => {
+        if (!info || !info.color) return 'bg-slate-400';
+        
+        // 1. Try to find exact match in presets (for custom statuses added via Settings)
+        const preset = colorPresets.find(p => p.value === info.color);
+        if (preset) return preset.dot;
+
+        // 2. Heuristic match for system defaults or manual colors
+        if (info.color.includes('emerald') || info.color.includes('green')) return 'bg-emerald-500';
+        if (info.color.includes('blue') || info.color.includes('indigo') || info.color.includes('sky')) return 'bg-blue-500';
+        if (info.color.includes('amber') || info.color.includes('yellow') || info.color.includes('orange')) return 'bg-amber-500';
+        if (info.color.includes('rose') || info.color.includes('red') || info.color.includes('pink')) return 'bg-rose-500';
+        if (info.color.includes('purple') || info.color.includes('violet')) return 'bg-violet-500';
+        
+        return 'bg-slate-400';
+    };
+
     return (
       <div className="w-full">
         {/* Mobile View (Card Layout) - Restored */}
@@ -4777,7 +4883,7 @@ const App = () => {
                    </div>
                    <div className="flex flex-col gap-1.5 items-end">
                         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold border ${dealStatusInfo.color}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${dealStatusInfo.value === 'confirmed' ? 'bg-emerald-500' : dealStatusInfo.value === 'pending' ? 'bg-amber-500' : dealStatusInfo.value === 'declined' ? 'bg-gray-400' : 'bg-rose-500'}`}></span>
+                          <span className={`w-1.5 h-1.5 rounded-full ${getStatusDotColor(dealStatusInfo)}`}></span>
                           {dealStatusInfo.label}
                         </span>
                         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold border ${transportStatusInfo.color}`}>
@@ -5028,7 +5134,8 @@ const App = () => {
                           <td className="px-4 py-4 align-top">
                             <div className="flex flex-col gap-2 items-start w-full">
                               <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border w-full max-w-[140px] truncate ${dealStatusInfo.color}`}>
-                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dealStatusInfo.value === 'confirmed' ? 'bg-emerald-500' : dealStatusInfo.value === 'pending' ? 'bg-amber-500' : dealStatusInfo.value === 'declined' ? 'bg-gray-400' : 'bg-rose-500'}`}></span>
+                                {/* [MODIFIED] Use dynamic dot color logic based on status color */}
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusDotColor(dealStatusInfo)}`}></span>
                                 <span className="truncate">{dealStatusInfo.label}</span>
                               </span>
                               <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border w-full max-w-[140px] truncate ${transportStatusInfo.color}`}>
@@ -5353,7 +5460,8 @@ const App = () => {
              );
         }
 
-        return <CustomerQuotationView data={quoteData} shopInfo={shopInfo} />;
+        // [MODIFIED] Pass dealStatuses prop to resolve labels correctly
+        return <CustomerQuotationView data={quoteData} shopInfo={shopInfo} dealStatuses={dealStatuses} />;
     }
 
     // 2. ถ้าไม่มี Tracking ID ก็เข้า Flow ปกติ (Login -> Dashboard)
@@ -5857,8 +5965,27 @@ const App = () => {
                           {authorizedUsers.map((user, idx) => (
                               <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 gap-4">
                                   <div className="flex items-center gap-4">
-                                      <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-700 font-bold border border-slate-200 shadow-sm shrink-0">
-                                          {user.name.charAt(0)}
+                                      {/* [MODIFIED] User Avatar in List - Show Image if available */}
+                                      <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-700 font-bold border border-slate-200 shadow-sm shrink-0 overflow-hidden relative">
+                                          {user.image ? (
+                                              <>
+                                                  <img 
+                                                      src={processImageUrl(user.image)} 
+                                                      alt={user.name} 
+                                                      className="w-full h-full object-cover"
+                                                      referrerPolicy="no-referrer"
+                                                      onError={(e) => { 
+                                                          e.target.style.display = 'none'; 
+                                                          if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                                                      }}
+                                                  />
+                                                  <div className="hidden absolute inset-0 w-full h-full items-center justify-center bg-white text-slate-700">
+                                                      {user.name.charAt(0).toUpperCase()}
+                                                  </div>
+                                              </>
+                                          ) : (
+                                              user.name.charAt(0).toUpperCase()
+                                          )}
                                       </div>
                                       <div>
                                           <div className="font-bold text-slate-800 flex items-center gap-2">
@@ -6425,12 +6552,27 @@ const App = () => {
             </button>
 
             <div className={`p-6 pb-4 flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
-            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200 shrink-0">
-                <Clipboard className="w-6 h-6 text-white" />
+            {/* [MODIFIED] Sidebar Logo & Title based on Shop Info */}
+            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200 shrink-0 overflow-hidden relative">
+                {shopInfo.logo ? (
+                    <img 
+                        src={processImageUrl(shopInfo.logo)} 
+                        alt="App Logo" 
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                        onError={(e) => { 
+                            e.target.style.display = 'none'; 
+                            if(e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                        }}
+                    />
+                ) : null}
+                <div className={`w-full h-full flex items-center justify-center ${shopInfo.logo ? 'hidden' : 'flex'}`}>
+                    <Clipboard className="w-6 h-6 text-white" />
+                </div>
             </div>
             {!isSidebarCollapsed && (
                 <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent tracking-tight whitespace-nowrap overflow-hidden">
-                ProjectPlan
+                {shopInfo.shopName || 'ProjectPlan'}
                 </h1>
             )}
             </div>
