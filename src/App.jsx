@@ -5420,9 +5420,7 @@ const App = () => {
                     </div>
                     <h2 className="text-2xl font-black text-slate-800 mb-2">ไม่พบข้อมูลงาน</h2>
                     <p className="text-slate-500 mb-6">รหัสติดตาม: <span className="font-mono font-bold text-indigo-600 break-all">{trackingId}</span> ไม่ถูกต้อง หรือถูกลบไปแล้ว</p>
-                    <button onClick={() => window.location.search = ''} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-200">
-                        กลับหน้าหลัก
-                    </button>
+                    {/* [REMOVED] Back to Home button for security */}
                 </div>
              );
         }
@@ -5455,9 +5453,7 @@ const App = () => {
                     </div>
                     <h2 className="text-2xl font-black text-slate-800 mb-2">ไม่พบข้อมูลใบเสนอราคา</h2>
                     <p className="text-slate-500 mb-6">รหัสเอกสาร: <span className="font-mono font-bold text-indigo-600 break-all">{quotationId}</span> ไม่ถูกต้อง หรือถูกลบไปแล้ว</p>
-                    <button onClick={() => window.location.search = ''} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-200">
-                        กลับหน้าหลัก
-                    </button>
+                    {/* [REMOVED] Back to Home button for security */}
                 </div>
              );
         }
