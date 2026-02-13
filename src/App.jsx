@@ -90,12 +90,15 @@ import {
   Music2,
   LayoutList,      // [ADDED] เพิ่ม import ไอคอน
   Table as TableIcon, // [ADDED] เพิ่ม import ไอคอน
-  Pipette // [ADDED] เพิ่ม import ไอคอน Pipette
+  Pipette, // [ADDED] เพิ่ม import ไอคอน Pipette
+  Bot, // [ADDED] เพิ่ม import ไอคอน Bot
+  Send // [ADDED] เพิ่ม import ไอคอน Send สำหรับ Telegram
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
 // นำ Web App URL ที่ได้จากการ Deploy Apps Script มาวางที่นี่
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwwbLiohFgwdwHCqAScpPPfuNMrJPlLn2XB9PV5CPKIB8paFYd0J1ZXyOP5C2bGD0ZgyA/exec"; 
+// [UPDATED] อัปเดต URL ให้ตรงกับที่คุณให้มาล่าสุด
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbybzqVc6BjBheMh_q-Wuj-jAHAlKRsr1JveZtZ2bJiU1PayG9wPBMbDFuPmejNS8Kf5/exec"; 
 // ---------------------
 
 // [ADDED] Helper Functions for Color Manipulation
@@ -184,7 +187,7 @@ const systemStatusTypes = [
   { value: 'declined', label: 'ลูกค้าไม่อนุมัติ', color: 'text-gray-600 bg-gray-50' }
 ];
 
-// [MODIFIED] ปรับปรุงฟังก์ชันแปลงลิงก์: กลับไปใช้ thumbnail เพื่อแก้ปัญหารูปไม่แสดง แต่ใช้ sz=w4000 เพื่อความชัด
+// [MODIFIED] ปรับปรุงฟังก์ชันแปลงลิงก์: ใช้ lh3.googleusercontent.com/d/ เพื่อแก้ปัญหา Account Chooser และโหลดรูปได้โดยไม่ต้อง Login
 const processImageUrl = (url) => {
   if (!url) return null;
   if (url.startsWith('data:')) return url;
@@ -204,9 +207,10 @@ const processImageUrl = (url) => {
           if (match) id = match[1];
       }
 
-      // [FIX] ใช้ thumbnail?sz=w4000 เพื่อแก้ปัญหารูปไม่ขึ้น (Broken Image) จากการใช้ uc?export=view
+      // [FIX] ใช้ lh3.googleusercontent.com/d/ID เป็น Direct CDN Link
+      // ลิงก์นี้จะข้ามหน้า Login ของ Google และแสดงรูปได้เลยสำหรับไฟล์สาธารณะ
       if (id) {
-          return `https://drive.google.com/thumbnail?id=${id}&sz=w4000`;
+          return `https://lh3.googleusercontent.com/d/${id}`;
       }
   }
   return url;
@@ -3132,10 +3136,15 @@ const App = () => {
   const [isAddingUser, setIsAddingUser] = useState(false);
 
   const [driveFolderId, setDriveFolderId] = useState('');
-  const [assetsDriveFolderId, setAssetsDriveFolderId] = useState(''); // [ADDED] State for Assets Folder ID
+  const [assetsDriveFolderId, setAssetsDriveFolderId] = useState(''); 
   
+  // [ADDED] State for Chatbot Tokens (เก็บแยกจาก shopInfo เพื่อความปลอดภัยและจัดการง่าย)
+  const [lineBotToken, setLineBotToken] = useState('');
+  const [telegramBotToken, setTelegramBotToken] = useState('');
+  const [webAppUrl, setWebAppUrl] = useState(''); // [ADDED] State for Frontend URL
+
   // New State for Shop Contact Info
-  // [MODIFIED] Initialize from localStorage directly to prevent color flash on reload
+  // [MODIFIED] Initialize from localStorage directly
   const [shopInfo, setShopInfo] = useState(() => {
       try {
           const saved = localStorage.getItem('nexus_shop_info');
@@ -3171,6 +3180,7 @@ const App = () => {
       }
   });
 
+  // [MODIFIED] Effect to Apply Theme Styles dynamically
   // [MODIFIED] Effect to Apply Theme Styles dynamically - Changed to useLayoutEffect to apply styles BEFORE paint
   useLayoutEffect(() => {
       let theme;
@@ -3419,6 +3429,11 @@ const App = () => {
                 if (data.drive_folder_id) setDriveFolderId(data.drive_folder_id);
                 if (data.assets_drive_folder_id) setAssetsDriveFolderId(data.assets_drive_folder_id);
                 
+                // [ADDED] Load Chatbot Tokens from settings
+                if (data.line_bot_token) setLineBotToken(data.line_bot_token);
+                if (data.telegram_bot_token) setTelegramBotToken(data.telegram_bot_token);
+                if (data.web_app_url) setWebAppUrl(data.web_app_url); // [ADDED] Load Web App URL
+
                 if (data.shop_info) {
                     setShopInfo(data.shop_info);
                     localStorage.setItem('nexus_shop_info', JSON.stringify(data.shop_info));
@@ -3592,29 +3607,43 @@ const App = () => {
   const saveSystemSettings = async (key, value) => {
       if (!GOOGLE_SCRIPT_URL) return;
       setIsSaving(true);
+      
+      // [MODIFIED] Support saving object (multiple keys) or single key
+      const payloadData = (typeof key === 'object') ? key : { [key]: value };
+
       try {
           await fetch(GOOGLE_SCRIPT_URL, {
               method: 'POST',
               body: JSON.stringify({
                   action: 'saveSettings',
-                  data: { [key]: value }
+                  data: payloadData
               })
           });
-          if (key === 'app_credentials') {
-              setAuthorizedUsers(value);
-              // [ADDED] Update cache immediately
-              localStorage.setItem('nexus_authorized_users', JSON.stringify(value));
+          
+          // Update Local States based on payload keys
+          if (payloadData.app_credentials) {
+              setAuthorizedUsers(payloadData.app_credentials);
+              localStorage.setItem('nexus_authorized_users', JSON.stringify(payloadData.app_credentials));
           }
-          if (key === 'drive_folder_id') {
-              setDriveFolderId(value);
+          if (payloadData.drive_folder_id) {
+              setDriveFolderId(payloadData.drive_folder_id);
           }
-          if (key === 'assets_drive_folder_id') { // [ADDED] Update local state on save
-              setAssetsDriveFolderId(value);
+          if (payloadData.assets_drive_folder_id) { 
+              setAssetsDriveFolderId(payloadData.assets_drive_folder_id);
           }
-          if (key === 'shop_info') {
-              setShopInfo(value);
-              // [ADDED] Save to localStorage when settings are saved
-              localStorage.setItem('nexus_shop_info', JSON.stringify(value));
+          // [ADDED] Update Token States
+          if (payloadData.line_bot_token !== undefined) {
+              setLineBotToken(payloadData.line_bot_token);
+          }
+          if (payloadData.telegram_bot_token !== undefined) {
+              setTelegramBotToken(payloadData.telegram_bot_token);
+          }
+          if (payloadData.web_app_url !== undefined) { // [ADDED]
+              setWebAppUrl(payloadData.web_app_url);
+          }
+          if (payloadData.shop_info) {
+              setShopInfo(payloadData.shop_info);
+              localStorage.setItem('nexus_shop_info', JSON.stringify(payloadData.shop_info));
           }
           showToast("บันทึกการตั้งค่าสำเร็จ", "success");
       } catch (error) {
@@ -4735,29 +4764,7 @@ const App = () => {
     setCustomerSupportItems(newItems);
   };
 
-  const handleSupportItemChange = (index, field, value) => {
-    const newItems = [...customerSupportItems];
-    const item = newItems[index];
-    const val = parseFloat(value) || 0;
-
-    if (field === 'denomination') {
-        item.denomination = val;
-        // Recalculate amount based on existing quantity
-        item.price = item.quantity * val;
-    } else if (field === 'quantity') {
-        item.quantity = val;
-        // Auto calculate price
-        item.price = val * item.denomination;
-    } else if (field === 'price') {
-        item.price = val;
-        // Auto calculate quantity
-        if (item.denomination > 0) {
-            item.quantity = val / item.denomination;
-        }
-    }
-
-    setCustomerSupportItems(newItems);
-  };
+  // [REMOVED] handleSendToChatbot function as requested
 
   // ... (DonutChart, renderTable, renderFilterCard remain same) ...
   const DonutChart = ({ data }) => {
@@ -4992,13 +4999,14 @@ const App = () => {
                     <span className="font-bold text-yellow-600 mr-1">หมายเหตุ:</span> {item.note}
                   </div>
                 )}
+                {/* [MODIFIED] Mobile Action Buttons - Chatbot Button Removed */}
                 <div className="grid grid-cols-3 gap-2 mt-2">
                     <button 
                         onClick={(e) => handleDeleteFromTable(e, item.id)} 
                         className="flex items-center justify-center gap-1.5 py-2.5 bg-rose-50 border border-rose-100 text-rose-600 font-bold hover:bg-rose-100 rounded-xl transition shadow-sm"
                         title="ลบรายการ"
                     >
-                        <Trash2 className="w-4 h-4" /> ลบ
+                        <Trash2 className="w-4 h-4" /> 
                     </button>
                     <button 
                         onClick={(e) => handleEditFromTable(e, item)} 
@@ -5030,19 +5038,22 @@ const App = () => {
         <div className="hidden md:block">
             {/* Desktop Table Container with responsive constraints */}
             <div className="overflow-x-auto overflow-y-hidden pb-4 custom-scrollbar">
-              <div className="min-w-fit w-full max-w-[1530px]">
-                <table className="w-full min-w-[1280px] table-fixed">
+              {/* [MODIFIED] Removed max-w constraint to let table grow with screen */}
+              <div className="min-w-fit w-full">
+                {/* [MODIFIED] Changed table-fixed to table-auto for better content adaptation */}
+                <table className="w-full min-w-[1280px] table-auto">
                   <thead>
                     <tr className="text-slate-400 text-sm font-semibold border-b border-slate-50">
-                      <SortableHeader className="w-[10%]" label="รหัส / วันที่" sortKey="id" sortConfig={sortConfig} handleSort={handleSort} />
-                      <SortableHeader className="w-[16%]" label="โครงการ / หมวดหมู่" sortKey="name" sortConfig={sortConfig} handleSort={handleSort} />
-                      <SortableHeader className="w-[14%]" label="ศิลปิน / ลูกค้า" sortKey="artist" sortConfig={sortConfig} handleSort={handleSort} />
-                      <SortableHeader className="w-[12%]" label="ผู้รับ / เบอร์โทร" sortKey="recipient" sortConfig={sortConfig} handleSort={handleSort} />
-                      <SortableHeader className="w-[14%]" label="กำหนดส่ง / สถานที่" sortKey="rawDeliveryDateTime" sortConfig={sortConfig} handleSort={handleSort} />
-                      <SortableHeader className="w-[12%]" label="สถานะ" sortKey="dealStatus" sortConfig={sortConfig} handleSort={handleSort} />
-                      <SortableHeader className="w-[10%]" label="การเงิน (บาท)" sortKey="wage" alignRight sortConfig={sortConfig} handleSort={handleSort} />
-                      <SortableHeader className="w-[6%]" label="หมายเหตุ" sortKey="note" sortConfig={sortConfig} handleSort={handleSort} />
-                      <th className="w-[6%] px-2 py-4 font-medium text-right whitespace-nowrap">ดำเนินการ</th>
+                      {/* [MODIFIED] Adjusted widths to be relative/min-width for table-auto */}
+                      <SortableHeader className="w-[12%] min-w-[120px]" label="รหัส / วันที่" sortKey="id" sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[18%] min-w-[200px]" label="โปรเจค / หมวดหมู่" sortKey="name" sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[12%] min-w-[150px]" label="ศิลปิน / ลูกค้า" sortKey="artist" sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[12%] min-w-[150px]" label="ผู้รับ / เบอร์โทร" sortKey="recipient" sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[14%] min-w-[180px]" label="กำหนดส่ง / สถานที่" sortKey="rawDeliveryDateTime" sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[10%] min-w-[120px]" label="สถานะ" sortKey="dealStatus" sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[10%] min-w-[100px]" label="การเงิน (บาท)" sortKey="wage" alignRight sortConfig={sortConfig} handleSort={handleSort} />
+                      <SortableHeader className="w-[8%] min-w-[100px]" label="หมายเหตุ" sortKey="note" sortConfig={sortConfig} handleSort={handleSort} />
+                      <th className="w-[8%] min-w-[100px] px-2 py-4 font-medium text-right whitespace-nowrap">ดำเนินการ</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
@@ -5063,44 +5074,47 @@ const App = () => {
                           className="hover:bg-slate-50/80 transition-colors group cursor-pointer space-row-animation"
                           style={{ animationDelay: `${animDelay}ms` }}
                         >
-                          <td className="px-4 py-4 align-top truncate">
+                          <td className="px-4 py-4 align-top">
                             <div className="flex flex-col gap-1">
-                              <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit">{item.id}</span>
-                              <div className="flex items-center gap-1.5 text-slate-500 text-xs mt-1 truncate">
+                              <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit whitespace-nowrap">{item.id}</span>
+                              {/* [MODIFIED] Date: whitespace-nowrap to prevent truncation */}
+                              <div className="flex items-center gap-1.5 text-slate-500 text-xs mt-1 whitespace-nowrap">
                                 <Clock className="w-3 h-3 shrink-0" />
                                 {item.date}
                               </div>
                             </div>
                           </td>
-                          <td className="px-4 py-4 align-top truncate">
+                          <td className="px-4 py-4 align-top">
                             <div className="flex flex-col gap-1 w-full">
-                              <span className="font-bold text-slate-800 text-sm truncate" title={item.name}>{item.name}</span>
-                              <div className="flex items-center gap-1.5 text-xs text-slate-500 truncate">
+                              {/* [MODIFIED] Project Name: whitespace-normal break-words to wrap text */}
+                              <span className="font-bold text-slate-800 text-sm whitespace-normal break-words leading-tight" title={item.name}>{item.name}</span>
+                              <div className="flex items-center gap-1.5 text-xs text-slate-500 whitespace-nowrap">
                                 <Tag className="w-3 h-3 shrink-0" />
                                 {item.category}
                               </div>
                             </div>
                           </td>
-                          <td className="px-4 py-4 align-top truncate">
+                          <td className="px-4 py-4 align-top">
                             <div className="flex flex-col gap-1.5 w-full">
-                              <div className="flex items-center gap-2 truncate">
+                              <div className="flex items-center gap-2 whitespace-normal break-words">
                                 <User className="w-3 h-3 text-indigo-500 shrink-0" />
-                                <span className="text-sm font-semibold text-slate-700 truncate" title={item.artist}>{item.artist}</span>
+                                <span className="text-sm font-semibold text-slate-700">{item.artist}</span>
                               </div>
-                              <div className="flex items-center gap-2 text-xs text-slate-500 truncate">
+                              <div className="flex items-center gap-2 text-xs text-slate-500 whitespace-normal break-words">
                                 <Briefcase className="w-3 h-3 shrink-0" />
-                                <span className="truncate" title={item.customer}>{item.customer}</span>
+                                <span>{item.customer}</span>
                               </div>
                             </div>
                           </td>
-                          <td className="px-4 py-4 align-top truncate">
+                          {/* [MODIFIED] Recipient Column: Allow wrapping */}
+                          <td className="px-4 py-4 align-top">
                             <div className="flex flex-col gap-1 w-full">
-                              <div className="text-sm font-medium text-slate-700 truncate" title={item.recipient || '-'}>{item.recipient || '-'}</div>
+                              <div className="text-sm font-medium text-slate-700 whitespace-normal break-words" title={item.recipient || '-'}>{item.recipient || '-'}</div>
                               {item.recipientPhone && (
                                 <a 
                                   href={`tel:${item.recipientPhone}`}
                                   onClick={(e) => e.stopPropagation()}
-                                  className="flex items-center gap-1 text-xs text-slate-500 hover:text-indigo-600 hover:underline transition-colors w-fit"
+                                  className="flex items-center gap-1 text-xs text-slate-500 hover:text-indigo-600 hover:underline transition-colors w-fit whitespace-nowrap"
                                 >
                                   <Phone className="w-3 h-3 shrink-0" />
                                   {item.recipientPhone}
@@ -5108,27 +5122,28 @@ const App = () => {
                               )}
                             </div>
                           </td>
-                          <td className="px-4 py-4 align-top truncate">
+                          {/* [MODIFIED] Delivery Column: Prevent wrapping for time, allow wrapping for location */}
+                          <td className="px-4 py-4 align-top">
                             <div className="flex flex-col gap-1 w-full">
-                              <div className="flex items-center gap-1.5 text-slate-700 text-sm font-medium truncate">
+                              <div className="flex items-center gap-1.5 text-slate-700 text-sm font-medium whitespace-nowrap">
                                 <Clock className="w-3 h-3 text-indigo-500 shrink-0" />
-                                <div className="truncate">{renderDeliveryTime(item)}</div>
+                                <div>{renderDeliveryTime(item)}</div>
                               </div>
-                              <div className="flex items-center gap-1.5 text-xs text-slate-500 truncate">
-                                <MapPin className="w-3 h-3 shrink-0" />
+                              <div className="flex items-start gap-1.5 text-xs text-slate-500">
+                                <MapPin className="w-3 h-3 shrink-0 mt-0.5" />
                                 {item.mapLink ? (
                                   <a 
                                     href={item.mapLink} 
                                     target="_blank" 
                                     rel="noreferrer" 
                                     onClick={(e) => e.stopPropagation()} 
-                                    className="text-blue-600 hover:underline truncate w-full"
+                                    className="text-blue-600 hover:underline whitespace-normal break-words w-full leading-tight"
                                     title={item.location}
                                   >
                                     {item.location || '-'}
                                   </a>
                                 ) : (
-                                  <span className="truncate w-full" title={item.location}>{item.location || '-'}</span>
+                                  <span className="whitespace-normal break-words w-full leading-tight" title={item.location}>{item.location || '-'}</span>
                                 )}
                               </div>
                             </div>
@@ -5136,7 +5151,6 @@ const App = () => {
                           <td className="px-4 py-4 align-top">
                             <div className="flex flex-col gap-2 items-start w-full">
                               <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border w-full max-w-[140px] truncate ${dealStatusInfo.color}`}>
-                                {/* [MODIFIED] Use dynamic dot color logic based on status color */}
                                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusDotColor(dealStatusInfo)}`}></span>
                                 <span className="truncate">{dealStatusInfo.label}</span>
                               </span>
@@ -5146,25 +5160,25 @@ const App = () => {
                               </span>
                             </div>
                           </td>
-                          <td className="px-4 py-4 align-top text-right truncate">
+                          <td className="px-4 py-4 align-top text-right">
                               <div className="flex flex-col gap-1 items-end w-full">
-                                <span className="text-sm font-black text-slate-800 truncate" title="ยอดเรียกเก็บสุทธิ">
+                                <span className="text-sm font-black text-slate-800 whitespace-nowrap" title="ยอดเรียกเก็บสุทธิ">
                                   ฿{itemReceivable.toLocaleString()}
                                 </span>
-                                <div className="text-xs text-slate-400 flex gap-1 items-center justify-end w-full">
-                                    <span className="text-emerald-600 truncate" title="ค่าจ้าง">{item.wage.toLocaleString()}</span>
-                                    {itemSupport > 0 && <span className="text-blue-500 truncate" title="สนับสนุน">+{itemSupport.toLocaleString()}</span>}
+                                <div className="text-xs text-slate-400 flex gap-1 items-center justify-end w-full whitespace-nowrap">
+                                    <span className="text-emerald-600" title="ค่าจ้าง">{item.wage.toLocaleString()}</span>
+                                    {itemSupport > 0 && <span className="text-blue-500" title="สนับสนุน">+{itemSupport.toLocaleString()}</span>}
                                 </div>
-                                <span className="text-xs text-rose-500 font-medium flex items-center justify-end gap-1 w-full" title="รายจ่าย">
+                                <span className="text-xs text-rose-500 font-medium flex items-center justify-end gap-1 w-full whitespace-nowrap" title="รายจ่าย">
                                   <TrendingDown className="w-3 h-3 shrink-0" /> -{itemExpenses.toLocaleString()}
                                 </span>
-                                <span className={`text-xs font-bold ${itemProfit >= 0 ? 'text-indigo-600' : 'text-rose-600'} border-t border-slate-100 pt-1 mt-1 w-full text-right truncate`} title="กำไรสุทธิ">
+                                <span className={`text-xs font-bold ${itemProfit >= 0 ? 'text-indigo-600' : 'text-rose-600'} border-t border-slate-100 pt-1 mt-1 w-full text-right whitespace-nowrap`} title="กำไรสุทธิ">
                                   {itemProfit >= 0 ? '+' : ''}{itemProfit.toLocaleString()}
                                 </span>
                               </div>
                           </td>
                           <td className="px-4 py-4 align-top">
-                              <div className="text-sm text-slate-600 truncate" title={item.note}>
+                              <div className="text-sm text-slate-600 whitespace-normal break-words line-clamp-3" title={item.note}>
                                 {item.note || '-'}
                               </div>
                           </td>
@@ -5172,21 +5186,21 @@ const App = () => {
                             <div className="flex items-center justify-end gap-1">
                               <button
                                 onClick={(e) => { e.stopPropagation(); setShareData(item); }}
-                                className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl transition-colors shadow-sm"
+                                className="p-2 bg-indigo-50 border border-indigo-100 text-indigo-600 hover:bg-indigo-100 rounded-lg transition shadow-sm"
                                 title="แชร์"
                               >
                                 <Share2 className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={(e) => handleEditFromTable(e, item)}
-                                className="p-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl transition shadow-sm"
+                                className="p-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-lg transition shadow-sm"
                                 title="แก้ไข"
                               >
                                 <Edit className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={(e) => handleDeleteFromTable(e, item.id)}
-                                className="p-2 bg-white border border-slate-200 text-rose-500 hover:bg-rose-50 rounded-xl transition shadow-sm"
+                                className="p-2 bg-white border border-slate-200 text-rose-500 hover:bg-rose-50 rounded-lg transition shadow-sm"
                                 title="ลบรายการ"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -6137,13 +6151,93 @@ const App = () => {
                               />
                               <button
                                   onClick={() => saveSystemSettings('assets_drive_folder_id', assetsDriveFolderId)}
-                                  className="w-full sm:w-auto px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 shadow-sm transition flex items-center justify-center gap-2 shrink-0"
+                                  className="px-6 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition shrink-0"
                               >
-                                  <Save className="w-4 h-4" /> บันทึก
+                                  บันทึก ID
                               </button>
                           </div>
                       </div>
+                  </div>
+              </div>
 
+              {/* [ADDED] Chatbot AI Settings Card - Positioned below Google Drive */}
+              <div className="mb-8">
+                  <h3 className="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
+                      <Bot className="w-5 h-5 text-sky-600" />
+                      เชื่อมต่อ Chatbot AI (Access Tokens)
+                  </h3>
+                  <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                      <div className="grid grid-cols-1 gap-6">
+                          {/* Line Bot Token */}
+                          <div className="space-y-2">
+                              <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
+                                  <MessageCircle className="w-4 h-4 text-[#06C755]" />
+                                  LINE Channel Access Token
+                              </label>
+                              <div className="flex flex-col sm:flex-row gap-3">
+                                  <input 
+                                      type="text" 
+                                      placeholder="วาง Long-lived Access Token จาก LINE Developers..." 
+                                      value={lineBotToken}
+                                      onChange={e => setLineBotToken(e.target.value)}
+                                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
+                                  />
+                              </div>
+                              <p className="text-[10px] text-slate-400 ml-1">
+                                  *ต้องใช้ Token นี้เพื่อให้ระบบตอบกลับข้อความอัตโนมัติ (ใส่ใน code.gs ไม่พอ ต้องใส่ที่นี่ด้วยเพื่อบันทึกลง Sheet)
+                              </p>
+                          </div>
+
+                          {/* Telegram Bot Token */}
+                          <div className="space-y-2">
+                              <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
+                                  <Send className="w-4 h-4 text-[#0088cc]" />
+                                  Telegram Bot Token
+                              </label>
+                              <div className="flex flex-col sm:flex-row gap-3">
+                                  <input 
+                                      type="text" 
+                                      placeholder="วาง HTTP API Token จาก BotFather..." 
+                                      value={telegramBotToken}
+                                      onChange={e => setTelegramBotToken(e.target.value)}
+                                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
+                                  />
+                              </div>
+                          </div>
+
+                          {/* [ADDED] Web App URL Configuration */}
+                          <div className="space-y-2 pt-4 border-t border-slate-100">
+                              <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
+                                  <LinkIcon className="w-4 h-4 text-indigo-600" />
+                                  ลิงก์หน้าเว็บของคุณ (Web App URL)
+                              </label>
+                              <div className="flex flex-col sm:flex-row gap-3">
+                                  <input 
+                                      type="url" 
+                                      placeholder="เช่น https://flower2youlukyee.vercel.app" 
+                                      value={webAppUrl}
+                                      onChange={e => setWebAppUrl(e.target.value)}
+                                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                                  />
+                              </div>
+                              <p className="text-[10px] text-slate-400 ml-1">
+                                  *สำคัญ: ระบุ URL ของเว็บไซต์นี้ เพื่อให้บอทสร้างปุ่ม "ดูสถานะงาน" ได้ถูกต้อง
+                              </p>
+                          </div>
+                      </div>
+
+                      <div className="mt-6 pt-6 border-t border-slate-100 flex justify-end">
+                          <button
+                              onClick={() => saveSystemSettings({ 
+                                  line_bot_token: lineBotToken, 
+                                  telegram_bot_token: telegramBotToken,
+                                  web_app_url: webAppUrl // [ADDED] Save Web App URL
+                              })}
+                              className="px-6 py-3 bg-sky-600 text-white font-bold rounded-xl hover:bg-sky-700 shadow-sm transition flex items-center justify-center gap-2 shrink-0"
+                          >
+                              <Save className="w-4 h-4" /> บันทึกการตั้งค่า Chatbot
+                          </button>
+                      </div>
                   </div>
               </div>
 
@@ -6284,12 +6378,15 @@ const App = () => {
                               />
                           </div>
                       </div>
+
+                      {/* [REMOVED] Old Chatbot Configuration Section from Shop Contact */}
+
                       <div className="flex justify-end">
                           <button
                               onClick={() => saveSystemSettings('shop_info', shopInfo)}
                               className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition flex items-center justify-center gap-2"
                           >
-                              <Save className="w-4 h-4" /> บันทึกข้อมูลติดต่อ
+                              <Save className="w-4 h-4" /> บันทึกข้อมูล
                           </button>
                       </div>
                   </div>
