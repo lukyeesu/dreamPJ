@@ -92,7 +92,8 @@ import {
   Table as TableIcon, // [ADDED] เพิ่ม import ไอคอน
   Pipette, // [ADDED] เพิ่ม import ไอคอน Pipette
   Bot, // [ADDED] เพิ่ม import ไอคอน Bot
-  Send // [ADDED] เพิ่ม import ไอคอน Send สำหรับ Telegram
+  Send, // [ADDED] เพิ่ม import ไอคอน Send สำหรับ Telegram
+  Sparkles // [ADDED] เพิ่ม import ไอคอน Sparkles สำหรับ AI
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -3141,7 +3142,8 @@ const App = () => {
   // [ADDED] State for Chatbot Tokens (เก็บแยกจาก shopInfo เพื่อความปลอดภัยและจัดการง่าย)
   const [lineBotToken, setLineBotToken] = useState('');
   const [telegramBotToken, setTelegramBotToken] = useState('');
-  const [webAppUrl, setWebAppUrl] = useState(''); // [ADDED] State for Frontend URL
+  const [webAppUrl, setWebAppUrl] = useState(''); 
+  const [geminiApiKey, setGeminiApiKey] = useState(''); // [ADDED] State for Gemini API Key
 
   // New State for Shop Contact Info
   // [MODIFIED] Initialize from localStorage directly
@@ -3432,7 +3434,8 @@ const App = () => {
                 // [ADDED] Load Chatbot Tokens from settings
                 if (data.line_bot_token) setLineBotToken(data.line_bot_token);
                 if (data.telegram_bot_token) setTelegramBotToken(data.telegram_bot_token);
-                if (data.web_app_url) setWebAppUrl(data.web_app_url); // [ADDED] Load Web App URL
+                if (data.web_app_url) setWebAppUrl(data.web_app_url);
+                if (data.gemini_api_key) setGeminiApiKey(data.gemini_api_key); // [ADDED] Load Gemini Key
 
                 if (data.shop_info) {
                     setShopInfo(data.shop_info);
@@ -3635,11 +3638,11 @@ const App = () => {
           if (payloadData.line_bot_token !== undefined) {
               setLineBotToken(payloadData.line_bot_token);
           }
-          if (payloadData.telegram_bot_token !== undefined) {
-              setTelegramBotToken(payloadData.telegram_bot_token);
-          }
-          if (payloadData.web_app_url !== undefined) { // [ADDED]
+          if (payloadData.web_app_url !== undefined) { 
               setWebAppUrl(payloadData.web_app_url);
+          }
+          if (payloadData.gemini_api_key !== undefined) { // [ADDED]
+              setGeminiApiKey(payloadData.gemini_api_key);
           }
           if (payloadData.shop_info) {
               setShopInfo(payloadData.shop_info);
@@ -6205,7 +6208,27 @@ const App = () => {
                               </div>
                           </div>
 
-                          {/* [ADDED] Web App URL Configuration */}
+                          {/* [ADDED] Gemini API Key Configuration */}
+                          <div className="space-y-2 pt-4 border-t border-slate-100">
+                              <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
+                                  <Sparkles className="w-4 h-4 text-purple-600" />
+                                  Gemini API Key (สำหรับ AI Chatbot)
+                              </label>
+                              <div className="flex flex-col sm:flex-row gap-3">
+                                  <input 
+                                      type="password" 
+                                      placeholder="วาง API Key จาก Google AI Studio..." 
+                                      value={geminiApiKey}
+                                      onChange={e => setGeminiApiKey(e.target.value)}
+                                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition-all font-mono"
+                                  />
+                              </div>
+                              <p className="text-[10px] text-slate-400 ml-1">
+                                  หากใส่ Key นี้ บอทจะใช้ AI ตอบคำถามทั่วไปเมื่อหาข้อมูลงานไม่เจอ (สมัครฟรีที่ aistudio.google.com)
+                              </p>
+                          </div>
+
+                          {/* Web App URL Configuration */}
                           <div className="space-y-2 pt-4 border-t border-slate-100">
                               <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
                                   <LinkIcon className="w-4 h-4 text-indigo-600" />
@@ -6231,7 +6254,8 @@ const App = () => {
                               onClick={() => saveSystemSettings({ 
                                   line_bot_token: lineBotToken, 
                                   telegram_bot_token: telegramBotToken,
-                                  web_app_url: webAppUrl // [ADDED] Save Web App URL
+                                  web_app_url: webAppUrl,
+                                  gemini_api_key: geminiApiKey // [ADDED] Save Gemini Key
                               })}
                               className="px-6 py-3 bg-sky-600 text-white font-bold rounded-xl hover:bg-sky-700 shadow-sm transition flex items-center justify-center gap-2 shrink-0"
                           >
