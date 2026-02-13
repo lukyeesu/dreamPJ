@@ -6212,19 +6212,20 @@ const App = () => {
                           <div className="space-y-2 pt-4 border-t border-slate-100">
                               <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
                                   <Sparkles className="w-4 h-4 text-purple-600" />
-                                  Gemini API Key (สำหรับ AI Chatbot)
+                                  Gemini API Key (Optional - ไม่ใส่ก็ได้)
                               </label>
                               <div className="flex flex-col sm:flex-row gap-3">
                                   <input 
                                       type="password" 
-                                      placeholder="วาง API Key จาก Google AI Studio..." 
+                                      placeholder="วาง API Key จาก Google AI Studio (ถ้ามี)..." 
                                       value={geminiApiKey}
                                       onChange={e => setGeminiApiKey(e.target.value)}
                                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition-all font-mono"
                                   />
                               </div>
                               <p className="text-[10px] text-slate-400 ml-1">
-                                  หากใส่ Key นี้ บอทจะใช้ AI ตอบคำถามทั่วไปเมื่อหาข้อมูลงานไม่เจอ (สมัครฟรีที่ aistudio.google.com)
+                                  *ถ้าเว้นว่างไว้: บอทจะทำหน้าที่ค้นหาข้อมูลงานให้อย่างเดียว (Search Only)<br/>
+                                  *ถ้าใส่ Key: บอทจะใช้ AI ช่วยตอบคำถามลูกค้าเมื่อหาข้อมูลงานไม่เจอ (Smart Chat)
                               </p>
                           </div>
 
