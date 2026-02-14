@@ -4927,7 +4927,8 @@ const App = () => {
               >
                 <div className="flex justify-between items-start">
                    <div className="flex flex-col gap-2">
-                      <span className="font-black text-indigo-600 bg-indigo-50 px-2.5 py-1.5 rounded-lg text-sm w-fit shadow-sm border border-indigo-100">{item.id}</span>
+                      {/* [MODIFIED] Match Table ID UI (Mobile) - font-bold, text-xs, no shadow/border */}
+                      <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit whitespace-nowrap">{item.id}</span>
                       <div className="flex items-center gap-1.5 text-slate-500 text-xs font-bold whitespace-nowrap">
                         <Clock className="w-3.5 h-3.5" /> {item.date}
                       </div>
