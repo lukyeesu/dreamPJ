@@ -4927,8 +4927,7 @@ const App = () => {
               >
                 <div className="flex justify-between items-start">
                    <div className="flex flex-col gap-2">
-                      {/* [MODIFIED] Match Table ID UI (Mobile) - font-bold, text-xs, no shadow/border */}
-                      <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit whitespace-nowrap">{item.id}</span>
+                      <span className="font-black text-indigo-600 bg-indigo-50 px-2.5 py-1.5 rounded-lg text-sm w-fit shadow-sm border border-indigo-100">{item.id}</span>
                       <div className="flex items-center gap-1.5 text-slate-500 text-xs font-bold whitespace-nowrap">
                         <Clock className="w-3.5 h-3.5" /> {item.date}
                       </div>
@@ -6248,7 +6247,24 @@ const App = () => {
                                       onChange={e => setTelegramBotToken(e.target.value)}
                                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
                                   />
+                                  {/* [ADDED] Quick Link to Set Webhook for Telegram */}
+                                  {telegramBotToken && GOOGLE_SCRIPT_URL && (
+                                      <a 
+                                          href={`https://api.telegram.org/bot${telegramBotToken}/setWebhook?url=${GOOGLE_SCRIPT_URL}`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="shrink-0 px-4 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-[#0088cc] hover:text-white transition flex items-center justify-center gap-2 text-xs border border-slate-200"
+                                          title="คลิกเพื่อลงทะเบียน Webhook กับ Telegram"
+                                      >
+                                          <LinkIcon className="w-3.5 h-3.5" />
+                                          <span className="hidden sm:inline">เชื่อมต่อ Webhook</span>
+                                          <span className="sm:hidden">เชื่อมต่อ</span>
+                                      </a>
+                                  )}
                               </div>
+                              <p className="text-[10px] text-slate-400 ml-1">
+                                  *หลังจากใส่ Token แล้ว ให้กดปุ่ม "เชื่อมต่อ Webhook" ด้านขวา 1 ครั้ง เพื่อเริ่มใช้งานบอท
+                              </p>
                           </div>
 
                           {/* [ADDED] Gemini API Key Configuration */}
@@ -6827,8 +6843,7 @@ const App = () => {
                 <div className="relative -top-6 flex justify-center z-20 pointer-events-none">
                      <button
                         onClick={() => openModal()}
-                        // [MODIFIED] Added animation: hover scales up, active scales down + rotates 90deg
-                        className="w-14 h-14 bg-indigo-600 rounded-full text-white shadow-lg shadow-indigo-200 flex items-center justify-center transition-all duration-300 ease-out hover:scale-110 active:scale-90 active:rotate-90 border-4 border-[#F8FAFC] pointer-events-auto"
+                        className="w-14 h-14 bg-indigo-600 rounded-full text-white shadow-lg shadow-indigo-200 flex items-center justify-center transform active:scale-95 transition-all border-4 border-[#F8FAFC] pointer-events-auto"
                      >
                         <Plus className="w-7 h-7" />
                      </button>
