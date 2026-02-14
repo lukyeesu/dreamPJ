@@ -502,7 +502,8 @@ const ShopFooter = ({ shopInfo, maxWidthClass = "max-w-7xl" }) => {
 };
 
 // [UPDATED COMPONENT] Calendar View Implementation - Fixed Errors & Logic
-const CalendarView = ({ activities, onEventClick, onDayClick }) => {
+// [MODIFIED] Added dealStatuses and transportStatuses props
+const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [], transportStatuses = [] }) => {
   const [viewDate, setViewDate] = useState(new Date());
   const [viewMode, setViewMode] = useState('month'); // 'month', 'week', 'day', 'list'
   const [selectedDayDetails, setSelectedDayDetails] = useState(null); // Data for modal
@@ -510,6 +511,17 @@ const CalendarView = ({ activities, onEventClick, onDayClick }) => {
   const monthsTH = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
   const daysTH = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
   const daysShortTH = ['อา','จ','อ','พ','พฤ','ศ','ส'];
+
+  // [ADDED] Helper to resolve status for Calendar
+  const resolveStatus = (value, list) => {
+      const found = list.find(s => s.value === value);
+      if (found) return { label: found.label, color: found.color, type: found.type };
+      
+      const sys = systemStatusTypes.find(s => s.value === value);
+      if (sys) return { label: sys.label, color: sys.color, type: sys.value };
+
+      return { label: value || '-', color: 'bg-slate-100 text-slate-500 border-slate-200' };
+  };
 
   const changePeriod = (offset) => {
     const newDate = new Date(viewDate);
@@ -566,41 +578,46 @@ const CalendarView = ({ activities, onEventClick, onDayClick }) => {
 
   // --- Render Helpers ---
   const renderEventItem = (ev, idx) => {
-     // Status Color Logic
-     let statusColor = 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200';
-     let dotColor = 'bg-slate-400';
-     
-     if (ev.dealStatus === 'confirmed' || ev.dealStatus === 'active') {
-         statusColor = 'bg-blue-50 text-blue-700 border-blue-100 hover:bg-blue-100';
-         dotColor = 'bg-blue-500';
-     }
-     if (ev.dealStatus === 'completed') {
-         statusColor = 'bg-emerald-50 text-emerald-700 border-emerald-100 hover:bg-emerald-100';
-         dotColor = 'bg-emerald-500';
-     }
-     if (ev.dealStatus === 'cancelled') {
-         statusColor = 'bg-rose-50 text-rose-700 border-rose-100 hover:bg-rose-100';
-         dotColor = 'bg-rose-500';
-     }
-     if (ev.dealStatus === 'pending') {
-         statusColor = 'bg-amber-50 text-amber-700 border-amber-100 hover:bg-amber-100';
-         dotColor = 'bg-amber-500';
-     }
+     // [MODIFIED] Removed duplicate declarations and legacy logic. 
+     // Now resolving status first to get the correct type/color.
 
      const timeStr = ev.rawDeliveryStart 
         ? new Date(ev.rawDeliveryStart).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'})
         : (ev.rawDateTime ? new Date(ev.rawDateTime).toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'}) : '');
 
      // Requirement 2: Format "Time ProjectName (ArtistName)"
-     // [MODIFIED] Added artist name back as requested: Time ProjectName (ArtistName)
      const displayText = `${timeStr ? timeStr + ' ' : ''}${ev.name} (${ev.artist || '-'})`;
+
+     // [MODIFIED] Use dynamic color for event item in month/week view
+     const statusInfo = resolveStatus(ev.dealStatus, dealStatuses);
+     
+     // Override small view colors based on status type for better visibility
+     let itemColor = 'bg-slate-50 border-slate-200 text-slate-600';
+     let dotColor = 'bg-slate-400';
+
+     // Map status info color classes to simpler logic for small calendar items
+     const sType = statusInfo.type || ev.dealStatus;
+     
+     if (sType === 'confirmed' || sType === 'active') {
+         itemColor = 'bg-blue-50 border-blue-100 text-blue-700';
+         dotColor = 'bg-blue-500';
+     } else if (sType === 'completed') {
+         itemColor = 'bg-emerald-50 border-emerald-100 text-emerald-700';
+         dotColor = 'bg-emerald-500';
+     } else if (sType === 'cancelled') {
+         itemColor = 'bg-rose-50 border-rose-100 text-rose-700';
+         dotColor = 'bg-rose-500';
+     } else if (sType === 'pending') {
+         itemColor = 'bg-amber-50 border-amber-100 text-amber-700';
+         dotColor = 'bg-amber-500';
+     }
 
      return (
        <button 
           key={idx} 
           onClick={(e) => { e.stopPropagation(); onEventClick(ev); }}
           // [MODIFIED] Ultra compact for mobile (8px font, tighter tracking, hidden dot)
-          className={`text-[8px] sm:text-xs text-left px-0.5 py-0.5 sm:px-2 sm:py-1 rounded-[3px] sm:rounded-md border truncate transition-all w-full mb-0.5 sm:mb-1 flex items-center gap-0.5 sm:gap-1 shrink-0 h-auto min-h-[16px] sm:min-h-[26px] ${statusColor} leading-none`}
+          className={`text-[8px] sm:text-xs text-left px-0.5 py-0.5 sm:px-2 sm:py-1 rounded-[3px] sm:rounded-md border truncate transition-all w-full mb-0.5 sm:mb-1 flex items-center gap-0.5 sm:gap-1 shrink-0 h-auto min-h-[16px] sm:min-h-[26px] ${itemColor} leading-none`}
           title={`${timeStr} ${ev.name} (${ev.artist})`}
        >
           <div className={`w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full shrink-0 ${dotColor} hidden sm:block`}></div>
@@ -734,9 +751,16 @@ const CalendarView = ({ activities, onEventClick, onDayClick }) => {
                   </div>
               </div>
               <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-2">
-                  {events.length > 0 ? events.map((ev, idx) => (
+                  {events.length > 0 ? events.map((ev, idx) => {
+                      // [MODIFIED] Resolve Status for Day View List
+                      const statusInfo = resolveStatus(ev.dealStatus, dealStatuses);
+                      return (
                       <div key={idx} onClick={() => onEventClick(ev)} className="flex items-center gap-4 p-4 rounded-xl border border-slate-100 hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer bg-white group">
-                          <div className="w-16 text-center shrink-0">
+                          {/* [MODIFIED] Show ID above Time in Day View List - Match Table UI (No border/shadow) */}
+                          <div className="w-20 text-center shrink-0 flex flex-col items-center gap-1">
+                              <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit whitespace-nowrap">
+                                  {ev.id}
+                              </span>
                               <span className="text-sm font-black text-slate-700 block">
                                   {ev.rawDeliveryStart ? new Date(ev.rawDeliveryStart).toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}) : '-'}
                               </span>
@@ -745,11 +769,9 @@ const CalendarView = ({ activities, onEventClick, onDayClick }) => {
                           <div className="flex-1 min-w-0">
                               <div className="flex justify-between">
                                   <h4 className="font-bold text-slate-800 truncate">{ev.name}</h4>
-                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                                      ev.dealStatus === 'confirmed' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
-                                      ev.dealStatus === 'pending' ? 'bg-amber-50 text-amber-600 border-amber-100' : 
-                                      'bg-slate-50 text-slate-500 border-slate-100'
-                                  }`}>{ev.dealStatus}</span>
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusInfo.color}`}>
+                                      {statusInfo.label}
+                                  </span>
                               </div>
                               <p className="text-sm text-slate-500 truncate flex items-center gap-1">
                                   <User className="w-3 h-3" /> {ev.artist} 
@@ -758,7 +780,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick }) => {
                               </p>
                           </div>
                       </div>
-                  )) : (
+                  )}) : (
                       <div className="flex flex-col items-center justify-center h-48 text-slate-400">
                           <Calendar className="w-10 h-10 mb-2 opacity-20" />
                           <p>ไม่มีรายการในวันนี้</p>
@@ -799,8 +821,12 @@ const CalendarView = ({ activities, onEventClick, onDayClick }) => {
                               <div className="pl-4 space-y-2">
                                   {events.length > 0 ? events.map((ev, idx) => (
                                       <div key={idx} onClick={() => onEventClick(ev)} className="bg-white border border-slate-100 p-3 rounded-xl hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer flex gap-3">
-                                          <div className="text-xs font-bold text-slate-500 pt-1 w-12 shrink-0">
-                                              {ev.rawDeliveryStart ? new Date(ev.rawDeliveryStart).toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}) : '-'}
+                                          {/* [MODIFIED] Match Table ID UI in List View (No border/shadow) */}
+                                          <div className="text-xs font-bold text-slate-500 pt-1 w-20 shrink-0 flex flex-col items-center gap-1">
+                                              <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit whitespace-nowrap">
+                                                  {ev.id}
+                                              </span>
+                                              <span>{ev.rawDeliveryStart ? new Date(ev.rawDeliveryStart).toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}) : '-'}</span>
                                           </div>
                                           <div className="flex-1 min-w-0">
                                               <div className="flex justify-between items-start">
@@ -857,7 +883,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick }) => {
                                         <thead>
                                             <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-xs uppercase tracking-wide">
                                                 <th className="p-4 font-bold w-[10%]">เวลา</th>
-                                                <th className="p-4 font-bold w-[20%]">โครงการ</th>
+                                                <th className="p-4 font-bold w-[20%]">โปรเจค</th>
                                                 <th className="p-4 font-bold w-[20%]">ศิลปิน/ลูกค้า</th>
                                                 <th className="p-4 font-bold w-[20%]">ผู้รับ</th>
                                                 <th className="p-4 font-bold w-[15%]">สถานะ</th>
@@ -867,9 +893,20 @@ const CalendarView = ({ activities, onEventClick, onDayClick }) => {
                                         <tbody className="divide-y divide-slate-50">
                                             {events.map((item, i) => {
                                                 const time = item.rawDeliveryStart ? new Date(item.rawDeliveryStart).toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}) : '-';
+                                                // [MODIFIED] Resolve Status for Modal Table
+                                                const statusInfo = resolveStatus(item.dealStatus, dealStatuses);
+                                                
                                                 return (
                                                     <tr key={i} onClick={() => onEventClick(item)} className="hover:bg-indigo-50/30 cursor-pointer transition-colors group">
-                                                        <td className="p-4 font-bold text-slate-700 whitespace-nowrap align-top">{time}</td>
+                                                        {/* [MODIFIED] Match Table ID UI in Details Modal Table (No border/shadow) */}
+                                                        <td className="p-4 font-bold text-slate-700 whitespace-nowrap align-top">
+                                                            <div className="flex flex-col gap-1">
+                                                                <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit whitespace-nowrap">
+                                                                    {item.id}
+                                                                </span>
+                                                                <span className="mt-1">{time}</span>
+                                                            </div>
+                                                        </td>
                                                         <td className="p-4 align-top">
                                                             <div className="font-bold text-slate-900">{item.name}</div>
                                                             <div className="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded w-fit mt-1">{item.category}</div>
@@ -887,13 +924,9 @@ const CalendarView = ({ activities, onEventClick, onDayClick }) => {
                                                             )}
                                                         </td>
                                                         <td className="p-4 align-top">
-                                                            <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${
-                                                                item.dealStatus === 'confirmed' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
-                                                                item.dealStatus === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-100' :
-                                                                'bg-slate-50 text-slate-600 border-slate-200'
-                                                            }`}>
-                                                                <div className={`w-1.5 h-1.5 rounded-full ${item.dealStatus === 'confirmed' ? 'bg-emerald-500' : 'bg-slate-400'}`}></div>
-                                                                {item.dealStatus}
+                                                            <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${statusInfo.color}`}>
+                                                                <div className={`w-1.5 h-1.5 rounded-full ${statusInfo.type === 'confirmed' || statusInfo.type === 'completed' ? 'bg-emerald-500' : 'bg-slate-400'}`}></div>
+                                                                {statusInfo.label}
                                                             </span>
                                                         </td>
                                                         <td className="p-4 align-top text-right font-bold text-slate-800">
@@ -911,17 +944,23 @@ const CalendarView = ({ activities, onEventClick, onDayClick }) => {
                             <div className="md:hidden space-y-3">
                                 {events.map((item, i) => {
                                     const time = item.rawDeliveryStart ? new Date(item.rawDeliveryStart).toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}) : '-';
+                                    // [MODIFIED] Resolve Status for Mobile Card in Modal
+                                    const statusInfo = resolveStatus(item.dealStatus, dealStatuses);
+
                                     return (
                                         <div key={i} onClick={() => onEventClick(item)} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-3 active:scale-95 transition-transform">
+                                            {/* [MODIFIED] Match Table ID UI in Mobile Card Header (No border/shadow) */}
                                             <div className="flex justify-between items-start">
-                                                <span className="font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs">{time} น.</span>
-                                                <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${
-                                                    item.dealStatus === 'confirmed' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
-                                                    item.dealStatus === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-100' :
-                                                    'bg-slate-50 text-slate-600 border-slate-200'
-                                                }`}>
-                                                    <div className={`w-1.5 h-1.5 rounded-full ${item.dealStatus === 'confirmed' ? 'bg-emerald-500' : 'bg-slate-400'}`}></div>
-                                                    {item.dealStatus}
+                                                <div className="flex flex-col gap-1">
+                                                    <span className="font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg text-xs w-fit whitespace-nowrap">{item.id}</span>
+                                                    <div className="flex items-center gap-1">
+                                                         <Clock className="w-3 h-3 text-slate-400" />
+                                                         <span className="text-xs font-bold text-slate-500">{time} น.</span>
+                                                    </div>
+                                                </div>
+                                                <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${statusInfo.color}`}>
+                                                    <div className={`w-1.5 h-1.5 rounded-full ${statusInfo.type === 'confirmed' || statusInfo.type === 'completed' ? 'bg-emerald-500' : 'bg-slate-400'}`}></div>
+                                                    {statusInfo.label}
                                                 </span>
                                             </div>
                                             
@@ -5571,6 +5610,9 @@ const App = () => {
           <CalendarView 
             activities={allActivities} 
             onEventClick={(item) => openModal(item, true)} 
+            // [MODIFIED] Pass Statuses to Calendar for resolving custom IDs
+            dealStatuses={dealStatuses}
+            transportStatuses={transportStatuses}
           />
         </div>
 
@@ -6784,7 +6826,8 @@ const App = () => {
                 <div className="relative -top-6 flex justify-center z-20 pointer-events-none">
                      <button
                         onClick={() => openModal()}
-                        className="w-14 h-14 bg-indigo-600 rounded-full text-white shadow-lg shadow-indigo-200 flex items-center justify-center transform active:scale-95 transition-all border-4 border-[#F8FAFC] pointer-events-auto"
+                        // [MODIFIED] Added animation: hover scales up, active scales down + rotates 90deg
+                        className="w-14 h-14 bg-indigo-600 rounded-full text-white shadow-lg shadow-indigo-200 flex items-center justify-center transition-all duration-300 ease-out hover:scale-110 active:scale-90 active:rotate-90 border-4 border-[#F8FAFC] pointer-events-auto"
                      >
                         <Plus className="w-7 h-7" />
                      </button>
