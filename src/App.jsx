@@ -92,14 +92,15 @@ import {
   Table as TableIcon, 
   Pipette,
   Bot, 
-  Send
-  // [REMOVED] Sparkles icon
+  Send,
+  Sparkles
+  // [REMOVED] Unlink to fix crash
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
 // นำ Web App URL ที่ได้จากการ Deploy Apps Script มาวางที่นี่
 // [UPDATED] อัปเดต URL ให้ตรงกับที่คุณให้มาล่าสุด
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzkKVA5t2xL3ga6AFV-hTwOHQ8IGjr2X_UJHKj-1kEGpqKdeuViLOu5aWZOu24-f0FR/exec"; 
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw2WJ4tt7l__0U6XYtgHbyl0W1iGjm6oHXa9-2twBKfa1xP2-SBj2hMwaHUYp7ew_Ih/exec"; 
 // ---------------------
 
 // [ADDED] Helper Functions for Color Manipulation
@@ -3183,10 +3184,11 @@ const App = () => {
   const [telegramBotToken, setTelegramBotToken] = useState('');
   const [telegramChatId, setTelegramChatId] = useState('');
   const [webAppUrl, setWebAppUrl] = useState(''); 
-  // [REMOVED] geminiApiKey state
+  const [geminiApiKey, setGeminiApiKey] = useState('');
 
-  // New State for Shop Contact Info
-  // [MODIFIED] Initialize from localStorage directly
+  // [ADDED] State for Google Script Deploy URL (Initialized with constant)
+  const [deployUrl, setDeployUrl] = useState(GOOGLE_SCRIPT_URL);
+
   const [shopInfo, setShopInfo] = useState(() => {
       try {
           const saved = localStorage.getItem('nexus_shop_info');
@@ -3474,9 +3476,9 @@ const App = () => {
                 // [ADDED] Load Chatbot Tokens from settings
                 if (data.line_bot_token) setLineBotToken(data.line_bot_token);
                 if (data.telegram_bot_token) setTelegramBotToken(data.telegram_bot_token);
-                if (data.telegram_chat_id) setTelegramChatId(data.telegram_chat_id);
+                if (data.telegram_chat_id) setTelegramChatId(data.telegram_chat_id); // [ADDED] Load Chat ID
                 if (data.web_app_url) setWebAppUrl(data.web_app_url);
-                // [REMOVED] data.gemini_api_key check
+                if (data.gemini_api_key) setGeminiApiKey(data.gemini_api_key);
 
                 if (data.shop_info) {
                     setShopInfo(data.shop_info);
@@ -3687,8 +3689,9 @@ const App = () => {
           if (payloadData.web_app_url !== undefined) { 
               setWebAppUrl(payloadData.web_app_url);
           }
-          // [REMOVED] gemini_api_key saving logic
-
+          if (payloadData.gemini_api_key !== undefined) {
+              setGeminiApiKey(payloadData.gemini_api_key);
+          }
           if (payloadData.shop_info) {
               setShopInfo(payloadData.shop_info);
               localStorage.setItem('nexus_shop_info', JSON.stringify(payloadData.shop_info));
@@ -6278,11 +6281,24 @@ const App = () => {
                                           onChange={e => setTelegramBotToken(e.target.value)}
                                           className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
                                       />
-                                      <div className="flex flex-wrap gap-2">
+                                      
+                                      {/* [ADDED] Deploy Link Input for Webhook Registration */}
+                                      <div className="space-y-1 pt-1">
+                                          <span className="text-[10px] font-bold text-slate-400 ml-1">Google Apps Script URL (Deploy Link สำหรับ Webhook)</span>
+                                          <input 
+                                              type="text" 
+                                              placeholder="https://script.google.com/macros/s/.../exec" 
+                                              value={deployUrl}
+                                              onChange={e => setDeployUrl(e.target.value)}
+                                              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono text-slate-600"
+                                          />
+                                      </div>
+
+                                      <div className="flex flex-wrap gap-2 mt-1">
                                         {/* Set Webhook Button */}
-                                        {telegramBotToken && GOOGLE_SCRIPT_URL && (
+                                        {telegramBotToken && deployUrl && (
                                             <a 
-                                                href={`https://api.telegram.org/bot${telegramBotToken}/setWebhook?url=${GOOGLE_SCRIPT_URL}`}
+                                                href={`https://api.telegram.org/bot${telegramBotToken}/setWebhook?url=${deployUrl}`}
                                                 target="_blank"
                                                 rel="noreferrer"
                                                 className="px-3 py-2 bg-sky-50 text-sky-600 font-bold rounded-lg hover:bg-sky-100 transition flex items-center justify-center gap-2 text-xs border border-sky-100"
@@ -6335,7 +6351,26 @@ const App = () => {
                               </div>
                           </div>
 
-                          {/* [REMOVED] Gemini API Key Configuration Section */}
+                          {/* [ADDED] Gemini API Key Configuration */}
+                          <div className="space-y-2 pt-4 border-t border-slate-100">
+                              <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
+                                  <Sparkles className="w-4 h-4 text-purple-600" />
+                                  Gemini API Key (Optional - ไม่ใส่ก็ได้)
+                              </label>
+                              <div className="flex flex-col sm:flex-row gap-3">
+                                  <input 
+                                      type="password" 
+                                      placeholder="วาง API Key จาก Google AI Studio (ถ้ามี)..." 
+                                      value={geminiApiKey}
+                                      onChange={e => setGeminiApiKey(e.target.value)}
+                                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition-all font-mono"
+                                  />
+                              </div>
+                              <p className="text-[10px] text-slate-400 ml-1">
+                                  *ถ้าเว้นว่างไว้: บอทจะทำหน้าที่ค้นหาข้อมูลงานให้อย่างเดียว (Search Only)<br/>
+                                  *ถ้าใส่ Key: บอทจะใช้ AI ช่วยตอบคำถามลูกค้าเมื่อหาข้อมูลงานไม่เจอ (Smart Chat)
+                              </p>
+                          </div>
 
                           {/* Web App URL Configuration */}
                           <div className="space-y-2 pt-4 border-t border-slate-100">
@@ -6363,9 +6398,9 @@ const App = () => {
                               onClick={() => saveSystemSettings({ 
                                   line_bot_token: lineBotToken, 
                                   telegram_bot_token: telegramBotToken,
-                                  telegram_chat_id: telegramChatId,
-                                  web_app_url: webAppUrl
-                                  // [REMOVED] gemini_api_key
+                                  telegram_chat_id: telegramChatId, // [ADDED] Save Chat ID
+                                  web_app_url: webAppUrl,
+                                  gemini_api_key: geminiApiKey
                               })}
                               className="px-6 py-3 bg-sky-600 text-white font-bold rounded-xl hover:bg-sky-700 shadow-sm transition flex items-center justify-center gap-2 shrink-0"
                           >
