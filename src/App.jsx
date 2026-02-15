@@ -88,12 +88,12 @@ import {
   Instagram,
   MessageCircle,
   Music2,
-  LayoutList,      // [ADDED] เพิ่ม import ไอคอน
-  Table as TableIcon, // [ADDED] เพิ่ม import ไอคอน
-  Pipette, // [ADDED] เพิ่ม import ไอคอน Pipette
-  Bot, // [ADDED] เพิ่ม import ไอคอน Bot
-  Send, // [ADDED] เพิ่ม import ไอคอน Send สำหรับ Telegram
-  Sparkles // [ADDED] เพิ่ม import ไอคอน Sparkles สำหรับ AI
+  LayoutList,      
+  Table as TableIcon, 
+  Pipette,
+  Bot, 
+  Send
+  // [REMOVED] Sparkles icon
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -3178,11 +3178,12 @@ const App = () => {
   const [driveFolderId, setDriveFolderId] = useState('');
   const [assetsDriveFolderId, setAssetsDriveFolderId] = useState(''); 
   
-  // [ADDED] State for Chatbot Tokens (เก็บแยกจาก shopInfo เพื่อความปลอดภัยและจัดการง่าย)
+  // [ADDED] State for Chatbot Tokens
   const [lineBotToken, setLineBotToken] = useState('');
   const [telegramBotToken, setTelegramBotToken] = useState('');
+  const [telegramChatId, setTelegramChatId] = useState('');
   const [webAppUrl, setWebAppUrl] = useState(''); 
-  const [geminiApiKey, setGeminiApiKey] = useState(''); // [ADDED] State for Gemini API Key
+  // [REMOVED] geminiApiKey state
 
   // New State for Shop Contact Info
   // [MODIFIED] Initialize from localStorage directly
@@ -3473,8 +3474,9 @@ const App = () => {
                 // [ADDED] Load Chatbot Tokens from settings
                 if (data.line_bot_token) setLineBotToken(data.line_bot_token);
                 if (data.telegram_bot_token) setTelegramBotToken(data.telegram_bot_token);
+                if (data.telegram_chat_id) setTelegramChatId(data.telegram_chat_id);
                 if (data.web_app_url) setWebAppUrl(data.web_app_url);
-                if (data.gemini_api_key) setGeminiApiKey(data.gemini_api_key); // [ADDED] Load Gemini Key
+                // [REMOVED] data.gemini_api_key check
 
                 if (data.shop_info) {
                     setShopInfo(data.shop_info);
@@ -3673,16 +3675,20 @@ const App = () => {
           if (payloadData.assets_drive_folder_id) { 
               setAssetsDriveFolderId(payloadData.assets_drive_folder_id);
           }
-          // [ADDED] Update Token States
           if (payloadData.line_bot_token !== undefined) {
               setLineBotToken(payloadData.line_bot_token);
+          }
+          if (payloadData.telegram_bot_token !== undefined) {
+              setTelegramBotToken(payloadData.telegram_bot_token);
+          }
+          if (payloadData.telegram_chat_id !== undefined) { // [ADDED] Update Chat ID
+              setTelegramChatId(payloadData.telegram_chat_id);
           }
           if (payloadData.web_app_url !== undefined) { 
               setWebAppUrl(payloadData.web_app_url);
           }
-          if (payloadData.gemini_api_key !== undefined) { // [ADDED]
-              setGeminiApiKey(payloadData.gemini_api_key);
-          }
+          // [REMOVED] gemini_api_key saving logic
+
           if (payloadData.shop_info) {
               setShopInfo(payloadData.shop_info);
               localStorage.setItem('nexus_shop_info', JSON.stringify(payloadData.shop_info));
@@ -3694,6 +3700,27 @@ const App = () => {
       } finally {
           setIsSaving(false);
       }
+  };
+
+  // [ADDED] Function to fetch latest Telegram Chat ID from backend
+  const handleFetchTelegramId = async () => {
+    if (!GOOGLE_SCRIPT_URL) return;
+    showToast("กำลังดึง Chat ID ล่าสุด...", "info");
+    try {
+      const response = await fetch(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'getLatestChatId' })
+      });
+      const result = await response.json();
+      if (result.status === 'success' && result.chatId) {
+        setTelegramChatId(result.chatId);
+        showToast("ดึง Chat ID เรียบร้อย: " + result.chatId, "success");
+      } else {
+        showToast("ไม่พบ Chat ID ล่าสุด (ลองพิมพ์ /id หาบอทก่อน)", "error");
+      }
+    } catch (error) {
+      showToast("เกิดข้อผิดพลาดในการดึง ID", "error");
+    }
   };
 
   const handleAddUser = () => {
@@ -6234,59 +6261,81 @@ const App = () => {
                           </div>
 
                           {/* Telegram Bot Token */}
-                          <div className="space-y-2">
+                          <div className="space-y-4 pt-4 border-t border-slate-100">
                               <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
                                   <Send className="w-4 h-4 text-[#0088cc]" />
-                                  Telegram Bot Token
+                                  Telegram Settings
                               </label>
-                              <div className="flex flex-col sm:flex-row gap-3">
-                                  <input 
-                                      type="text" 
-                                      placeholder="วาง HTTP API Token จาก BotFather..." 
-                                      value={telegramBotToken}
-                                      onChange={e => setTelegramBotToken(e.target.value)}
-                                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
-                                  />
-                                  {/* [ADDED] Quick Link to Set Webhook for Telegram */}
-                                  {telegramBotToken && GOOGLE_SCRIPT_URL && (
-                                      <a 
-                                          href={`https://api.telegram.org/bot${telegramBotToken}/setWebhook?url=${GOOGLE_SCRIPT_URL}`}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="shrink-0 px-4 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-[#0088cc] hover:text-white transition flex items-center justify-center gap-2 text-xs border border-slate-200"
-                                          title="คลิกเพื่อลงทะเบียน Webhook กับ Telegram"
-                                      >
-                                          <LinkIcon className="w-3.5 h-3.5" />
-                                          <span className="hidden sm:inline">เชื่อมต่อ Webhook</span>
-                                          <span className="sm:hidden">เชื่อมต่อ</span>
-                                      </a>
-                                  )}
+                              
+                              {/* 1. Bot Token Input */}
+                              <div className="space-y-1">
+                                  <span className="text-[10px] font-bold text-slate-400 ml-1">Telegram Bot Token</span>
+                                  <div className="flex flex-col gap-2">
+                                      <input 
+                                          type="text" 
+                                          placeholder="วาง Token จาก BotFather (เช่น 12345:ABCdef...)" 
+                                          value={telegramBotToken}
+                                          onChange={e => setTelegramBotToken(e.target.value)}
+                                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
+                                      />
+                                      <div className="flex flex-wrap gap-2">
+                                        {/* Set Webhook Button */}
+                                        {telegramBotToken && GOOGLE_SCRIPT_URL && (
+                                            <a 
+                                                href={`https://api.telegram.org/bot${telegramBotToken}/setWebhook?url=${GOOGLE_SCRIPT_URL}`}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="px-3 py-2 bg-sky-50 text-sky-600 font-bold rounded-lg hover:bg-sky-100 transition flex items-center justify-center gap-2 text-xs border border-sky-100"
+                                                title="กด 1 ครั้งเพื่อเริ่มใช้งาน (Set Webhook)"
+                                            >
+                                                <LinkIcon className="w-3.5 h-3.5" />
+                                                เชื่อมต่อ Webhook
+                                            </a>
+                                        )}
+                                        {/* Delete Webhook Button */}
+                                        {telegramBotToken && (
+                                            <a 
+                                                href={`https://api.telegram.org/bot${telegramBotToken}/deleteWebhook`}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="px-3 py-2 bg-rose-50 text-rose-600 font-bold rounded-lg hover:bg-rose-100 transition flex items-center justify-center gap-2 text-xs border border-rose-100"
+                                                title="กดเมื่อบอทค้าง หรือส่งรัวๆ"
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                                ยกเลิก Webhook
+                                            </a>
+                                        )}
+                                      </div>
+                                  </div>
                               </div>
-                              <p className="text-[10px] text-slate-400 ml-1">
-                                  *หลังจากใส่ Token แล้ว ให้กดปุ่ม "เชื่อมต่อ Webhook" ด้านขวา 1 ครั้ง เพื่อเริ่มใช้งานบอท
-                              </p>
+
+                              {/* 2. Chat ID Input with Fetch Button */}
+                              <div className="space-y-1">
+                                  <span className="text-[10px] font-bold text-slate-400 ml-1">Telegram Chat ID (สำหรับแจ้งเตือน Admin)</span>
+                                  <div className="flex gap-2">
+                                      <input 
+                                          type="text" 
+                                          placeholder="ระบุ Chat ID (เช่น -100xxxx หรือ User ID)" 
+                                          value={telegramChatId}
+                                          onChange={e => setTelegramChatId(e.target.value)}
+                                          className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
+                                      />
+                                      <button
+                                          onClick={handleFetchTelegramId}
+                                          className="px-4 py-2 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-sky-50 hover:text-sky-600 hover:border-sky-100 transition flex items-center justify-center gap-2 text-xs border border-slate-200 whitespace-nowrap"
+                                          title="ดึง ID ล่าสุดที่ทักบอทมา"
+                                      >
+                                          <Bot className="w-4 h-4" />
+                                          ดึง ID ล่าสุด
+                                      </button>
+                                  </div>
+                                  <p className="text-[10px] text-slate-400 ml-1">
+                                      *วิธีใช้: ทักบอทด้วยคำว่า <code>/id</code> แล้วกดปุ่ม "ดึง ID ล่าสุด" ระบบจะใส่เลขให้อัตโนมัติ
+                                  </p>
+                              </div>
                           </div>
 
-                          {/* [ADDED] Gemini API Key Configuration */}
-                          <div className="space-y-2 pt-4 border-t border-slate-100">
-                              <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
-                                  <Sparkles className="w-4 h-4 text-purple-600" />
-                                  Gemini API Key (Optional - ไม่ใส่ก็ได้)
-                              </label>
-                              <div className="flex flex-col sm:flex-row gap-3">
-                                  <input 
-                                      type="password" 
-                                      placeholder="วาง API Key จาก Google AI Studio (ถ้ามี)..." 
-                                      value={geminiApiKey}
-                                      onChange={e => setGeminiApiKey(e.target.value)}
-                                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition-all font-mono"
-                                  />
-                              </div>
-                              <p className="text-[10px] text-slate-400 ml-1">
-                                  *ถ้าเว้นว่างไว้: บอทจะทำหน้าที่ค้นหาข้อมูลงานให้อย่างเดียว (Search Only)<br/>
-                                  *ถ้าใส่ Key: บอทจะใช้ AI ช่วยตอบคำถามลูกค้าเมื่อหาข้อมูลงานไม่เจอ (Smart Chat)
-                              </p>
-                          </div>
+                          {/* [REMOVED] Gemini API Key Configuration Section */}
 
                           {/* Web App URL Configuration */}
                           <div className="space-y-2 pt-4 border-t border-slate-100">
@@ -6314,8 +6363,9 @@ const App = () => {
                               onClick={() => saveSystemSettings({ 
                                   line_bot_token: lineBotToken, 
                                   telegram_bot_token: telegramBotToken,
-                                  web_app_url: webAppUrl,
-                                  gemini_api_key: geminiApiKey // [ADDED] Save Gemini Key
+                                  telegram_chat_id: telegramChatId,
+                                  web_app_url: webAppUrl
+                                  // [REMOVED] gemini_api_key
                               })}
                               className="px-6 py-3 bg-sky-600 text-white font-bold rounded-xl hover:bg-sky-700 shadow-sm transition flex items-center justify-center gap-2 shrink-0"
                           >
