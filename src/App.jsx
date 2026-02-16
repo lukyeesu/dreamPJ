@@ -92,9 +92,7 @@ import {
   Table as TableIcon, 
   Pipette,
   Bot, 
-  Send,
-  Sparkles
-  // [REMOVED] Unlink to fix crash
+  Send
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -232,6 +230,13 @@ const StoreIcon = ({ className }) => (
     </svg>
 );
 
+// [ADDED] Line Icon (Official Shape)
+const LineIcon = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
+        <path d="M22.2,10.6c0-4.8-4.6-8.6-10.2-8.6S1.9,5.9,1.9,10.6c0,4.2,3.6,7.7,8.5,8.5c0.3,0.1,0.8,0.2,0.9,0.5 c0.1,0.3,0,0.8-0.1,1.4c0,0-0.3,1.9-0.4,2.3c-0.1,0.7,0.3,0.9,0.7,0.5c0.5-0.5,5.1-4.8,7.1-6.6C21,15.6,22.2,13.2,22.2,10.6z M18.4,12.7h-6.2c-0.4,0-0.7-0.3-0.7-0.7V6.9c0-0.4,0.3-0.7,0.7-0.7c0.4,0,0.7,0.3,0.7,0.7V11h5.5c0.4,0,0.7,0.3,0.7,0.7 S18.7,12.7,18.4,12.7z M6.4,12.7H5.6c-0.4,0-0.7-0.3-0.7-0.7V6.9c0-0.4,0.3-0.7,0.7-0.7c0.4,0,0.7,0.3,0.7,0.7v5.1 C6.2,12.4,6.5,12.7,6.4,12.7z M9.9,12.7H9.2c-0.4,0-0.7-0.3-0.7-0.7V6.9c0-0.4,0.3-0.7,0.7-0.7s0.7,0.3,0.7,0.7V10l3.1-3.9 c0.1-0.2,0.4-0.2,0.6-0.1c0.2,0.1,0.3,0.3,0.3,0.5v5.1c0,0.4-0.3,0.7-0.7,0.7c-0.4,0-0.7-0.3-0.7-0.7v-3.2l-3.1,3.9 C9.7,12.6,9.9,12.7,9.9,12.7z" />
+    </svg>
+);
+
 // [ADDED] X (Twitter) Icon
 const XIcon = ({ className }) => (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -239,10 +244,17 @@ const XIcon = ({ className }) => (
     </svg>
 );
 
-// [ADDED] WeChat Icon
+// [MODIFIED] WeChat Icon (Official 100% - Two bubbles with eyes)
 const WeChatIcon = ({ className }) => (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
-        <path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.067 5.591-.13.858-.478 2.238-.549 2.553-.087.385.344.698.638.384.455-.386 2.45-1.728 2.87-1.926a9.5 9.5 0 002.665.385c.162 0 .321-.007.479-.017-.11.583-.17 1.189-.17 1.808 0 4.055 3.891 7.342 8.691 7.342 4.8 0 8.691-3.287 8.691-7.342 0-4.055-3.891-7.342-8.691-7.342-1.908 0-3.676.52-5.118 1.408a9.42 9.42 0 01-3.882-.81zM18.66 8.513c-3.626 0-6.568 2.379-6.568 5.313 0 2.934 2.942 5.313 6.568 5.313 1.183 0 2.316-.312 3.32-1.077.347.164 1.341.745 1.545.834.223.1.558.113.43-.223l-.364-1.29c1.11-1.037 1.802-2.368 1.802-3.805 0-2.934-2.942-5.313-6.568-5.313z" />
+        <path d="M8.5,1.5c-4.4,0-8,3.3-8,7.3c0,2.3,1.3,4.4,3.4,5.9c-0.4,1.4-1.3,3.7-1.4,3.9c0,0,0,0,0,0c0,0,0,0.1,0.1,0.1c0.2,0,3.3-0.5,5.4-2.1c0.1,0,0.3,0,0.4,0c0.3,0,0.7,0,1,0c0.1-4.1,3.7-7.4,8.1-7.4c0.3,0,0.6,0,0.9,0C17.2,4.3,13.2,1.5,8.5,1.5z M6,6.3c0.8,0,1.5,0.7,1.5,1.5S6.8,9.3,6,9.3S4.5,8.6,4.5,7.8S5.2,6.3,6,6.3z M11,6.3c0.8,0,1.5,0.7,1.5,1.5S11.8,9.3,11,9.3S9.5,8.6,9.5,7.8S10.2,6.3,11,6.3z M17.5,10.6c-3.9,0-7,2.8-7,6.3c0,3.5,3.1,6.3,7,6.3c0.4,0,0.8,0,1.1-0.1c1.8,1.4,4.5,1.8,4.7,1.8c0,0,0.1,0,0.1-0.1c0,0,0-0.1,0-0.1c-0.1-0.2-0.9-2.2-1.3-3.4c1.8-1.3,3-3.1,3-5.1C24.5,13.4,21.4,10.6,17.5,10.6z M15.4,14.6c0.6,0,1.1,0.5,1.1,1.1s-0.5,1.1-1.1,1.1c-0.6,0-1.1-0.5-1.1-1.1S14.8,14.6,15.4,14.6z M19.6,14.6c0.6,0,1.1,0.5,1.1,1.1s-0.5,1.1-1.1,1.1c-0.6,0-1.1-0.5-1.1-1.1S19,14.6,19.6,14.6z"/>
+    </svg>
+);
+
+// [ADDED] Telegram Icon
+const TelegramIcon = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.58-.35-.88.22-1.39.13-.13 2.39-2.38 2.43-2.58.01-.05.01-.1-.02-.15-.04-.05-.12-.06-.18-.04-.08.02-1.35.85-3.82 2.52-.36.25-.69.37-1 .36-.67-.02-1.96-.4-2.84-.71-.43-.15-1.15-.35-1.01-.85.07-.25.39-.5.99-.75 3.89-1.69 6.48-2.81 7.78-3.34 3.7-.1.58 4.05-1.42 3.86.32z" />
     </svg>
 );
 
@@ -487,9 +499,10 @@ const ShopFooter = ({ shopInfo, maxWidthClass = "max-w-7xl" }) => {
               )}
 
               <div className="flex items-center gap-3">
+                  {/* [MODIFIED] Use LineIcon instead of MessageCircle */}
                   {shopInfo.line && (
                       <a href={shopInfo.line} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-[#06C755] transition-all hover:scale-110">
-                          <MessageCircle className="w-5 h-5 fill-current" />
+                          <LineIcon className="w-5 h-5" />
                       </a>
                   )}
                   {shopInfo.facebook && (
@@ -518,6 +531,12 @@ const ShopFooter = ({ shopInfo, maxWidthClass = "max-w-7xl" }) => {
                           <WeChatIcon className="w-5 h-5" />
                       </a>
                   )}
+                  {/* [ADDED] Telegram Icon in Footer */}
+                  {shopInfo.telegram && (
+                      <a href={shopInfo.telegram} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-[#0088cc] transition-all hover:scale-110">
+                          <TelegramIcon className="w-5 h-5" />
+                      </a>
+                  )}
               </div>
           </div>
       </div>
@@ -533,6 +552,8 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
   const [selectedDayDetails, setSelectedDayDetails] = useState(null); // Data for modal
   
   const monthsTH = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+  // [FIX] Added missing monthsShortTH definition
+  const monthsShortTH = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
   const daysTH = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
   const daysShortTH = ['อา','จ','อ','พ','พฤ','ศ','ส'];
 
@@ -1665,6 +1686,21 @@ const SharePreviewModal = ({ data, onClose }) => {
             moneyOrderDetails += `- ${type} ${item.denomination} (${item.quantity} ${unit}): ${parseFloat(item.price).toLocaleString()} บ.\n`;
         });
     }
+
+    // [FIX] Added Logic for Quotation Details generation
+    let quotationDetails = "";
+    if (hasQuotationItems) {
+        quotationDetails += "\n📄 *รายการเสนอราคา (Quotation)*\n";
+        data.quotationItems.forEach(item => {
+             quotationDetails += `- ${item.category ? `[${item.category}] ` : ''}${item.detail || '-'}: ${parseFloat(item.price).toLocaleString()} บ.\n`;
+        });
+    } else {
+        // Fallback for legacy wage display
+        if (parseFloat(data.wage) > 0) {
+            quotationDetails += `\n📄 *ค่าบริการรวม:* ${parseFloat(data.wage).toLocaleString()} บ.\n`;
+        }
+    }
+
     // Fix for potential undefined error in renderDeliveryTime text extraction
     const deliveryElement = renderDeliveryTime(data);
     let deliveryText = '-';
@@ -3207,8 +3243,7 @@ const App = () => {
   const [telegramBotToken, setTelegramBotToken] = useState('');
   const [telegramChatId, setTelegramChatId] = useState('');
   const [webAppUrl, setWebAppUrl] = useState(''); 
-  const [geminiApiKey, setGeminiApiKey] = useState('');
-
+  
   // [ADDED] State for Google Script Deploy URL (Initialized with constant)
   const [deployUrl, setDeployUrl] = useState(GOOGLE_SCRIPT_URL);
 
@@ -3224,8 +3259,9 @@ const App = () => {
               facebook: '',
               instagram: '',
               tiktok: '',
-              twitter: '', // [ADDED]
-              wechat: '',  // [ADDED]
+              twitter: '', 
+              wechat: '',  
+              telegram: '', // [ADDED]
               logo: '',
               themeColor: 'indigo',
               themeMode: 'gradient',
@@ -3241,8 +3277,9 @@ const App = () => {
               facebook: '',
               instagram: '',
               tiktok: '',
-              twitter: '', // [ADDED]
-              wechat: '',  // [ADDED]
+              twitter: '', 
+              wechat: '',  
+              telegram: '', // [ADDED]
               logo: '',
               themeColor: 'indigo',
               themeMode: 'gradient',
@@ -3251,8 +3288,6 @@ const App = () => {
       }
   });
 
-  // [MODIFIED] Effect to Apply Theme Styles dynamically
-  // [MODIFIED] Effect to Apply Theme Styles dynamically - Changed to useLayoutEffect to apply styles BEFORE paint
   useLayoutEffect(() => {
       let theme;
       const isGradient = shopInfo.themeMode === 'gradient';
@@ -3503,9 +3538,8 @@ const App = () => {
                 // [ADDED] Load Chatbot Tokens from settings
                 if (data.line_bot_token) setLineBotToken(data.line_bot_token);
                 if (data.telegram_bot_token) setTelegramBotToken(data.telegram_bot_token);
-                if (data.telegram_chat_id) setTelegramChatId(data.telegram_chat_id); // [ADDED] Load Chat ID
+                if (data.telegram_chat_id) setTelegramChatId(data.telegram_chat_id);
                 if (data.web_app_url) setWebAppUrl(data.web_app_url);
-                if (data.gemini_api_key) setGeminiApiKey(data.gemini_api_key);
 
                 if (data.shop_info) {
                     setShopInfo(data.shop_info);
@@ -6276,21 +6310,16 @@ const App = () => {
                                   <MessageCircle className="w-4 h-4 text-[#06C755]" />
                                   LINE Channel Access Token
                               </label>
-                              <div className="flex flex-col sm:flex-row gap-3">
-                                  <input 
-                                      type="text" 
-                                      placeholder="วาง Long-lived Access Token จาก LINE Developers..." 
-                                      value={lineBotToken}
-                                      onChange={e => setLineBotToken(e.target.value)}
-                                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
-                                  />
-                              </div>
-                              <p className="text-[10px] text-slate-400 ml-1">
-                                  *ต้องใช้ Token นี้เพื่อให้ระบบตอบกลับข้อความอัตโนมัติ (ใส่ใน code.gs ไม่พอ ต้องใส่ที่นี่ด้วยเพื่อบันทึกลง Sheet)
-                              </p>
+                              <input 
+                                  type="text" 
+                                  placeholder="วาง Long-lived Access Token จาก LINE Developers ที่นี่..." 
+                                  value={lineBotToken}
+                                  onChange={e => setLineBotToken(e.target.value)}
+                                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
+                              />
                           </div>
 
-                          {/* Telegram Bot Token */}
+                          {/* [RESTORED] Telegram Settings Section */}
                           <div className="space-y-4 pt-4 border-t border-slate-100">
                               <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
                                   <Send className="w-4 h-4 text-[#0088cc]" />
@@ -6309,7 +6338,7 @@ const App = () => {
                                           className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
                                       />
                                       
-                                      {/* [ADDED] Deploy Link Input for Webhook Registration */}
+                                      {/* Deploy Link Input for Webhook Registration */}
                                       <div className="space-y-1 pt-1">
                                           <span className="text-[10px] font-bold text-slate-400 ml-1">Google Apps Script URL (Deploy Link สำหรับ Webhook)</span>
                                           <input 
@@ -6378,27 +6407,6 @@ const App = () => {
                               </div>
                           </div>
 
-                          {/* [ADDED] Gemini API Key Configuration */}
-                          <div className="space-y-2 pt-4 border-t border-slate-100">
-                              <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
-                                  <Sparkles className="w-4 h-4 text-purple-600" />
-                                  Gemini API Key (Optional - ไม่ใส่ก็ได้)
-                              </label>
-                              <div className="flex flex-col sm:flex-row gap-3">
-                                  <input 
-                                      type="password" 
-                                      placeholder="วาง API Key จาก Google AI Studio (ถ้ามี)..." 
-                                      value={geminiApiKey}
-                                      onChange={e => setGeminiApiKey(e.target.value)}
-                                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition-all font-mono"
-                                  />
-                              </div>
-                              <p className="text-[10px] text-slate-400 ml-1">
-                                  *ถ้าเว้นว่างไว้: บอทจะทำหน้าที่ค้นหาข้อมูลงานให้อย่างเดียว (Search Only)<br/>
-                                  *ถ้าใส่ Key: บอทจะใช้ AI ช่วยตอบคำถามลูกค้าเมื่อหาข้อมูลงานไม่เจอ (Smart Chat)
-                              </p>
-                          </div>
-
                           {/* Web App URL Configuration */}
                           <div className="space-y-2 pt-4 border-t border-slate-100">
                               <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
@@ -6425,9 +6433,8 @@ const App = () => {
                               onClick={() => saveSystemSettings({ 
                                   line_bot_token: lineBotToken, 
                                   telegram_bot_token: telegramBotToken,
-                                  telegram_chat_id: telegramChatId, // [ADDED] Save Chat ID
-                                  web_app_url: webAppUrl,
-                                  gemini_api_key: geminiApiKey
+                                  telegram_chat_id: telegramChatId,
+                                  web_app_url: webAppUrl
                               })}
                               className="px-6 py-3 bg-sky-600 text-white font-bold rounded-xl hover:bg-sky-700 shadow-sm transition flex items-center justify-center gap-2 shrink-0"
                           >
@@ -6534,7 +6541,8 @@ const App = () => {
                           </div>
                           
                           <div className="space-y-1">
-                              <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><MessageCircle className="w-3 h-3 text-[#06C755]"/> Line URL</label>
+                              {/* [MODIFIED] Use LineIcon in Settings Label */}
+                              <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><LineIcon className="w-3 h-3 text-[#06C755]"/> Line URL</label>
                               <input 
                                   type="text" 
                                   placeholder="https://line.me/ti/p/..." 
@@ -6592,6 +6600,18 @@ const App = () => {
                                   placeholder="WeChat ID หรือ Link" 
                                   value={shopInfo.wechat || ''}
                                   onChange={e => setShopInfo({...shopInfo, wechat: e.target.value})}
+                                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              />
+                          </div>
+                          
+                          {/* [ADDED] Telegram Input in Settings */}
+                          <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><TelegramIcon className="w-3 h-3 text-[#0088cc]"/> Telegram Contact URL</label>
+                              <input 
+                                  type="text" 
+                                  placeholder="https://t.me/..." 
+                                  value={shopInfo.telegram || ''}
+                                  onChange={e => setShopInfo({...shopInfo, telegram: e.target.value})}
                                   className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                               />
                           </div>
