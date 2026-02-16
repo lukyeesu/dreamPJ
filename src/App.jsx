@@ -230,14 +230,14 @@ const StoreIcon = ({ className }) => (
     </svg>
 );
 
-// [MODIFIED] Line Icon (Official Image 100%)
+// [MODIFIED] Line Icon (New SVG Layout - Adaptable Theme Color)
 const LineIcon = ({ className }) => (
-    <img 
-        src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/LINE_logo.svg/960px-LINE_logo.svg.png" 
-        alt="LINE" 
-        className={className}
-        style={{ objectFit: 'contain' }}
-    />
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" className={className}>
+        <path d="M64 27.487c0-14.32-14.355-25.97-32-25.97S0 13.168 0 27.487c0 12.837 11.384 23.588 26.762 25.62 1.042.225 2.46.688 2.82 1.578.322.81.21 2.076.103 2.894l-.457 2.74c-.14.81-.643 3.164 2.772 1.725s18.428-10.852 25.143-18.58h-.001C61.78 38.38 64 33.218 64 27.487" fill="currentColor"/>
+        <g fill="#fff">
+            <path d="M25.498 20.568h-2.245c-.344 0-.623.28-.623.623v13.943a.62.62 0 0 0 .623.62h2.245a.62.62 0 0 0 .623-.62V21.2c0-.343-.28-.623-.623-.623m15.45-.01h-2.244c-.345 0-.624.28-.624.623v8.284l-6.4-8.63c-.014-.022-.03-.043-.048-.063l-.004-.004a.4.4 0 0 0-.038-.038l-.044-.04c-.006-.004-.01-.008-.016-.012l-.032-.022-.02-.012-.033-.02c-.006-.002-.014-.006-.02-.01-.012-.006-.023-.012-.036-.016s-.014-.006-.02-.006c-.012-.006-.025-.008-.037-.012l-.022-.006c-.012-.002-.023-.006-.035-.008l-.026-.004c-.008-.002-.022-.004-.033-.004l-.032-.002c-.008 0-.014-.001-.022-.001h-2.244c-.344 0-.623.28-.623.623V35.13a.62.62 0 0 0 .623.62h2.244c.344 0 .624-.278.624-.62v-8.28l6.397 8.64a.63.63 0 0 0 .158.154c.018.014.032.022.045.03.006.004.012.008.018.01s.02.01.03.014.02.008.03.014l.06.022a.62.62 0 0 0 .168.022h2.244a.62.62 0 0 0 .623-.62V21.2c0-.343-.28-.623-.623-.623"/><path d="M20.087 32.264h-6.1V21.2c0-.344-.28-.623-.623-.623H11.12c-.344 0-.623.28-.623.623v13.942a.62.62 0 0 0 .174.431c.012.012.014.016.016.018.113.107.264.174.43.174h8.968c.344 0 .623-.28.623-.623v-2.245c0-.344-.278-.623-.623-.623m33.258-8.214c.344 0 .623-.28.623-.623V21.2c0-.344-.278-.623-.623-.623h-8.968c-.168 0-.32.067-.432.176-.012.01-.016.014-.018.018-.107.1-.173.262-.173.43v13.943a.62.62 0 0 0 .174.431l.016.016a.62.62 0 0 0 .431.174h8.968c.344 0 .623-.28.623-.623v-2.246c0-.344-.278-.623-.623-.623h-6.098v-2.357h6.098a.62.62 0 0 0 .623-.623V27.04c0-.344-.278-.624-.623-.624h-6.098V24.06h6.098z"/>
+        </g>
+    </svg>
 );
 
 // [ADDED] X (Twitter) Icon
@@ -247,23 +247,19 @@ const XIcon = ({ className }) => (
     </svg>
 );
 
-// [MODIFIED] WeChat Icon (Custom SVG Path provided)
-// Adjusted viewBox to 0 0 400 400 to fit the coordinates provided (max ~262)
+// [MODIFIED] WeChat Icon (Official Shape from User)
 const WeChatIcon = ({ className }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" fill="currentColor" className={className}>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" fill="currentColor" className={className}>
         <path d="M200.803 111.88c-24.213 1.265-45.268 8.605-62.362 25.188-17.271 16.754-25.155 37.284-23 62.734-9.464-1.172-18.084-2.462-26.753-3.192-2.994-.252-6.547.106-9.083 1.537-8.418 4.75-16.488 10.113-26.053 16.092 1.755-7.938 2.891-14.889 4.902-21.575 1.479-4.914.794-7.649-3.733-10.849-29.066-20.521-41.318-51.232-32.149-82.85 8.483-29.25 29.315-46.989 57.621-56.236 38.635-12.62 82.054.253 105.547 30.927 8.485 11.08 13.688 23.516 15.063 38.224zm-111.437-9.852c.223-5.783-4.788-10.993-10.74-11.167-6.094-.179-11.106 4.478-11.284 10.483-.18 6.086 4.475 10.963 10.613 11.119 6.085.154 11.186-4.509 11.411-10.435zm58.141-11.171c-5.974.11-11.022 5.198-10.916 11.004.109 6.018 5.061 10.726 11.204 10.652 6.159-.074 10.83-4.832 10.772-10.977-.051-6.032-4.981-10.79-11.06-10.679z"/>
         <path d="M255.201 262.83c-7.667-3.414-14.7-8.536-22.188-9.318-7.459-.779-15.3 3.524-23.104 4.322-23.771 2.432-45.067-4.193-62.627-20.432-33.397-30.89-28.625-78.254 10.014-103.568 34.341-22.498 84.704-14.998 108.916 16.219 21.129 27.24 18.646 63.4-7.148 86.284-7.464 6.623-10.15 12.073-5.361 20.804.884 1.612.985 3.653 1.498 5.689zm-87.274-84.499c4.881.005 8.9-3.815 9.085-8.636.195-5.104-3.91-9.385-9.021-9.406-5.06-.023-9.299 4.318-9.123 9.346.166 4.804 4.213 8.69 9.059 8.696zm56.261-18.022c-4.736-.033-8.76 3.844-8.953 8.629-.205 5.117 3.772 9.319 8.836 9.332 4.898.016 8.768-3.688 8.946-8.562.19-5.129-3.789-9.364-8.829-9.399z"/>
     </svg>
 );
 
-// [MODIFIED] Telegram Icon (Official Image 100%)
+// [MODIFIED] Telegram Icon (SVG Version for Theme Coloring)
 const TelegramIcon = ({ className }) => (
-    <img 
-        src="https://encrypted-tbn3.gstatic.com/images?q=tbn:ANd9GcS1dA1q2q4dstM3Yb_dxuEW19gK30xlXJFhjmKhOgBjX286MNlV" 
-        alt="Telegram" 
-        className={className}
-        style={{ objectFit: 'contain', borderRadius: '50%' }}
-    />
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
+        <path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z"/>
+    </svg>
 );
 
 const generateTrackingToken = (id, dateStr) => {
@@ -3490,7 +3486,7 @@ const App = () => {
     }
   }, []);
 
-  // [MODIFIED] Updated Title Logic to respect Tracking/Quotation modes
+  // [MODIFIED] Updated Title Logic to respect Tracking/Quotation modes and Shop Name
   useEffect(() => {
     // ถ้าอยู่ในโหมดติดตามหรือเสนอราคา ให้ข้ามการตั้งชื่อตาม Tab หลักไปเลย
     // ปล่อยให้ Component ลูก (CustomerTrackingView/CustomerQuotationView) จัดการชื่อเองเมื่อข้อมูลพร้อม
@@ -3503,13 +3499,15 @@ const App = () => {
         return;
     }
 
+    const appTitle = shopInfo?.shopName || 'NexusPlan';
     const currentTab = navItems.find(item => item.name === activeTab);
+    
     if (currentTab) {
-      document.title = `${currentTab.label} - NexusPlan`;
+      document.title = `${currentTab.label} - ${appTitle}`;
     } else {
-      document.title = "NexusPlan Dashboard";
+      document.title = `${appTitle} Dashboard`;
     }
-  }, [activeTab, trackingId, quotationId]);
+  }, [activeTab, trackingId, quotationId, shopInfo]);
 
   const fetchSettings = async () => {
     if (!GOOGLE_SCRIPT_URL) {
