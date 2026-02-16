@@ -232,7 +232,20 @@ const StoreIcon = ({ className }) => (
     </svg>
 );
 
-// [ADDED] Helper Function to generate secure tracking token
+// [ADDED] X (Twitter) Icon
+const XIcon = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
+        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </svg>
+);
+
+// [ADDED] WeChat Icon
+const WeChatIcon = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
+        <path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.067 5.591-.13.858-.478 2.238-.549 2.553-.087.385.344.698.638.384.455-.386 2.45-1.728 2.87-1.926a9.5 9.5 0 002.665.385c.162 0 .321-.007.479-.017-.11.583-.17 1.189-.17 1.808 0 4.055 3.891 7.342 8.691 7.342 4.8 0 8.691-3.287 8.691-7.342 0-4.055-3.891-7.342-8.691-7.342-1.908 0-3.676.52-5.118 1.408a9.42 9.42 0 01-3.882-.81zM18.66 8.513c-3.626 0-6.568 2.379-6.568 5.313 0 2.934 2.942 5.313 6.568 5.313 1.183 0 2.316-.312 3.32-1.077.347.164 1.341.745 1.545.834.223.1.558.113.43-.223l-.364-1.29c1.11-1.037 1.802-2.368 1.802-3.805 0-2.934-2.942-5.313-6.568-5.313z" />
+    </svg>
+);
+
 const generateTrackingToken = (id, dateStr) => {
   if (!id || !dateStr) return id;
   const d = new Date(dateStr);
@@ -244,7 +257,6 @@ const generateTrackingToken = (id, dateStr) => {
   const HH = String(d.getHours()).padStart(2, '0');
   const mn = String(d.getMinutes()).padStart(2, '0');
   
-  // Format: ID + DDMMYYYYHHmm (e.g. P-0007100225690056)
   return `${id}${dd}${mm}${yyyy}${HH}${mn}`;
 };
 
@@ -493,6 +505,17 @@ const ShopFooter = ({ shopInfo, maxWidthClass = "max-w-7xl" }) => {
                   {shopInfo.tiktok && (
                       <a href={shopInfo.tiktok} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-black transition-all hover:scale-110">
                           <Music2 className="w-5 h-5" />
+                      </a>
+                  )}
+                  {/* [ADDED] Twitter (X) & WeChat Icons in Footer */}
+                  {shopInfo.twitter && (
+                      <a href={shopInfo.twitter} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-black transition-all hover:scale-110">
+                          <XIcon className="w-4 h-4" />
+                      </a>
+                  )}
+                  {shopInfo.wechat && (
+                      <a href={shopInfo.wechat} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-[#07C160] transition-all hover:scale-110">
+                          <WeChatIcon className="w-5 h-5" />
                       </a>
                   )}
               </div>
@@ -3201,6 +3224,8 @@ const App = () => {
               facebook: '',
               instagram: '',
               tiktok: '',
+              twitter: '', // [ADDED]
+              wechat: '',  // [ADDED]
               logo: '',
               themeColor: 'indigo',
               themeMode: 'gradient',
@@ -3216,6 +3241,8 @@ const App = () => {
               facebook: '',
               instagram: '',
               tiktok: '',
+              twitter: '', // [ADDED]
+              wechat: '',  // [ADDED]
               logo: '',
               themeColor: 'indigo',
               themeMode: 'gradient',
@@ -6546,9 +6573,30 @@ const App = () => {
                                   className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                               />
                           </div>
-                      </div>
 
-                      {/* [REMOVED] Old Chatbot Configuration Section from Shop Contact */}
+                          {/* [ADDED] Twitter (X) & WeChat Inputs */}
+                          <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><XIcon className="w-3 h-3 text-black"/> Twitter (X) URL</label>
+                              <input 
+                                  type="text" 
+                                  placeholder="https://x.com/..." 
+                                  value={shopInfo.twitter || ''}
+                                  onChange={e => setShopInfo({...shopInfo, twitter: e.target.value})}
+                                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              />
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><WeChatIcon className="w-3 h-3 text-[#07C160]"/> WeChat URL / ID</label>
+                              <input 
+                                  type="text" 
+                                  placeholder="WeChat ID หรือ Link" 
+                                  value={shopInfo.wechat || ''}
+                                  onChange={e => setShopInfo({...shopInfo, wechat: e.target.value})}
+                                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              />
+                          </div>
+
+                      </div>
 
                       <div className="flex justify-end">
                           <button
