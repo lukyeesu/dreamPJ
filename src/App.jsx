@@ -1662,7 +1662,7 @@ const CustomerTrackingView = ({ data, shopInfo, dealStatuses = [], transportStat
   );
 };
 
-// [MODIFIED] Added shopInfo prop to SharePreviewModal
+// [MODIFIED] Removed userProfile prop
 const SharePreviewModal = ({ data, onClose, shopInfo }) => {
   const [isCopied, setIsCopied] = useState(false);
   const [isLinkCopied, setIsLinkCopied] = useState(false); // New state for link copy
@@ -1824,24 +1824,21 @@ ${moneyOrderDetails}${quotationDetails}
     const sAddress = shopInfo?.address || '-';
     const sPhone = shopInfo?.phone || '-';
     const sEmail = shopInfo?.email || '-';
-    // [MODIFIED] Get Tax ID from shopInfo
     const sTaxId = shopInfo?.taxId || '-'; 
     const sLogo = shopInfo?.logo ? processImageUrl(shopInfo.logo) : null;
     
     // Customer Info
     const cName = data.customer || 'ลูกค้าทั่วไป';
     const cAddress = '-'; 
-    // [MODIFIED] Try to get Tax ID from customerInfo if exists, else dash
     const cTaxId = data.customerInfo?.taxId || '-'; 
     const cPhone = data.customerInfo?.phone || '-';
     const cEmail = data.customerInfo?.email || '-';
 
-    // [MODIFIED] Recipient & Delivery Info with Time Logic Fallback
+    // Recipient & Delivery Info
     const rName = data.recipient || '-';
     const rPhone = data.recipientPhone || '-';
     const rLocation = data.location || '-';
     
-    // Calculate Delivery Date String (Include Time)
     let rDate = data.deliveryDate;
     if (!rDate || rDate === '-') {
         if (data.rawDeliveryStart || data.rawDeliveryEnd || data.rawDeliveryDateTime) {
@@ -1857,276 +1854,302 @@ ${moneyOrderDetails}${quotationDetails}
         }
     }
 
-    // Items & Totals
+    // Prepare Items List
+    const allItems = [];
+    if (data.quotationItems) {
+        data.quotationItems.forEach(item => {
+            allItems.push({ ...item, type: 'quotation' });
+        });
+    }
+    // Convert legacy wage if no items
+    if (allItems.length === 0 && parseFloat(data.wage) > 0) {
+        allItems.push({ category: '', detail: 'ค่าบริการรวม', price: data.wage, type: 'quotation' });
+    }
+    if (data.customerSupport) {
+        data.customerSupport.forEach(item => {
+            if (parseFloat(item.price) > 0) {
+                allItems.push({ ...item, type: 'support' });
+            }
+        });
+    }
+
+    // Totals Calculation
     const totalSupport = data.customerSupport ? data.customerSupport.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) : 0;
-    const hasQuotationItems = data.quotationItems && data.quotationItems.length > 0;
-    const totalQuotation = hasQuotationItems
-        ? data.quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) 
-        : (parseFloat(data.wage) || 0);
-    
+    const totalQuotation = data.quotationItems ? data.quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) : (parseFloat(data.wage) || 0);
     const grandTotal = totalSupport + totalQuotation;
     
-    // [MODIFIED] Tax Calculation: VAT Inclusive (Calculated from Total)
-    // Formula: PreVat = Total / 1.07
-    const vatableAmount = totalQuotation; // Only quotation is vatable
+    const vatableAmount = totalQuotation; 
     const vatRate = 0.07;
     const preVatAmount = vatableAmount / 1.07;
     const vatAmount = vatableAmount - preVatAmount;
-    
-    // Support is non-vatable
     const nonVatableAmount = totalSupport;
 
     // Helper: Arabic Number to Thai Text
     const ArabicNumberToText = (n) => {
+        n = parseFloat(n);
         if (n === 0) return "ศูนย์บาทถ้วน";
+        
         const nums = ["ศูนย์", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า"];
         const units = ["", "สิบ", "ร้อย", "พัน", "หมื่น", "แสน", "ล้าน"];
+        
         let nStr = n.toFixed(2).toString();
         let [integer, fraction] = nStr.split('.');
-        
         let text = "";
-        
-        // Integer part
+
+        // Integer Part
         if (parseInt(integer) === 0) {
             text = "ศูนย์";
         } else {
             let len = integer.length;
             for (let i = 0; i < len; i++) {
                 let digit = parseInt(integer.charAt(i));
-                let unitIndex = (len - i - 1) % 6;
-                
+                let pos = len - i - 1;
+                let unitIndex = pos % 6;
+
                 if (digit !== 0) {
-                    if (unitIndex === 0 && digit === 1 && len > 1 && i > 0) { // ลงท้ายด้วยเอ็ด
+                    if (unitIndex === 0 && digit === 1 && i > 0 && parseInt(integer.charAt(i - 1)) !== 0) {
+                        // Case: Ends with 1 (Ed) e.g., 11, 21, 101, but not 1, 10, 100
+                        // Logic: Unit position, digit is 1, not the first digit of the number
+                        // Exception: 1,000,001 (One Million One) -> The last 1 is Ed.
+                        // Exception: 101,000,000 (One Hundred One Million) -> The 1 at pos 6 is Ed.
                         text += "เอ็ด";
-                    } else if (unitIndex === 1 && digit === 2) { // ยี่สิบ
+                    } else if (unitIndex === 1 && digit === 2) {
                         text += "ยี่";
-                    } else if (unitIndex === 1 && digit === 1) { // สิบ (ไม่พูดหนึ่ง)
-                        text += "";
+                    } else if (unitIndex === 1 && digit === 1) {
+                        // Sip (10) - do not pronounce "Nueng"
                     } else {
                         text += nums[digit];
                     }
                     text += units[unitIndex];
-                } else if (unitIndex === 6) { // ล้าน (ใส่หน่วยล้านแม้เลขเป็น 0 ถ้าเป็นหลักล้าน)
+                }
+
+                // Add 'Lan' (Million) logic
+                // Must add "Lan" at position 6, 12, 18, etc. even if digit is 0
+                // (e.g. 200,000,000 -> "Song Roi" + "Lan")
+                if (pos > 0 && pos % 6 === 0) {
                     text += "ล้าน";
                 }
             }
         }
+        
         text += "บาท";
 
-        // Fraction part
+        // Fraction Part (Satang)
         if (parseInt(fraction) === 0) {
             text += "ถ้วน";
         } else {
-            let len = fraction.length;
-            for (let i = 0; i < len; i++) {
-                let digit = parseInt(fraction.charAt(i));
-                let unitIndex = (len - i - 1); // 1 = สิบ, 0 = หน่วย
-                if (digit !== 0) {
-                     if (unitIndex === 0 && digit === 1 && len > 1 && i > 0) {
-                        text += "เอ็ด";
-                     } else if (unitIndex === 1 && digit === 2) {
-                        text += "ยี่";
-                     } else if (unitIndex === 1 && digit === 1) {
-                        text += "";
-                     } else {
-                        text += nums[digit];
-                     }
-                     if (unitIndex === 1) text += "สิบ";
+            if (parseInt(fraction) > 0) {
+                let fLen = fraction.length;
+                for (let i = 0; i < fLen; i++) {
+                    let digit = parseInt(fraction.charAt(i));
+                    let pos = fLen - i - 1; // 1 (Ten), 0 (Unit)
+                    
+                    if (digit !== 0) {
+                        if (pos === 0 && digit === 1 && i > 0) { 
+                            text += "เอ็ด";
+                        } else if (pos === 1 && digit === 2) {
+                            text += "ยี่";
+                        } else if (pos === 1 && digit === 1) {
+                            // Sip
+                        } else {
+                            text += nums[digit];
+                        }
+                        
+                        if (pos === 1) text += "สิบ";
+                    }
                 }
+                text += "สตางค์";
             }
-            text += "สตางค์";
         }
         return text;
     };
 
     const bahtText = ArabicNumberToText(grandTotal);
-    const dateStr = formatDate(data.rawDateTime || new Date().toISOString()).split(' ')[0]; // dd/mm/yyyy only
-    const docNo = `INV${data.id.replace(/\D/g, '')}`; // Generate a simple doc number based on ID
+    const dateStr = formatDate(data.rawDateTime || new Date().toISOString()).split(' ')[0];
+    const docNo = `INV${data.id.replace(/\D/g, '')}`; 
 
-    // Build Rows HTML
-    let rowsHtml = '';
-    let seq = 1;
+    // [MODIFIED] Pagination Logic - Dynamic capacity based on page index
+    const pages = [];
+    // หน้าแรก (มี Header/Info): จุได้น้อยกว่า - ปรับเพิ่มจำนวนแถวเนื่องจากลดขนาดตารางลงแล้ว
+    const ROWS_FIRST_PAGE_MAX = 24; // ปรับเพิ่มเพื่อให้รองรับรายการได้มากขึ้นกรณีไม่มีสรุป
+    const ROWS_FIRST_PAGE_WITH_SUM = 16; // [FIXED] ปรับเป็น 16 ตามที่แจ้งว่าพื้นที่พอสำหรับ 16 รายการ + สรุปยอด
+    // หน้าถัดไป (ไม่มี Header): จุได้เยอะกว่า
+    const ROWS_OTHER_PAGE_MAX = 36; // ปรับเพิ่มตามสัดส่วน
+    const ROWS_OTHER_PAGE_WITH_SUM = 30; // ปรับเพิ่มตามสัดส่วน
+    
+    let remainingItems = [...allItems];
+    let currentPageIdx = 0;
 
-    // 1. Quotation Items
-    if (hasQuotationItems) {
-        data.quotationItems.forEach(item => {
+    // ถ้าไม่มีรายการเลย ให้สร้าง array เปล่าเพื่อให้ลูปทำงานอย่างน้อย 1 ครั้ง
+    if (remainingItems.length === 0) {
+        pages.push({ items: [], isLast: true, pageIndex: 0 });
+    } else {
+        while (remainingItems.length > 0) {
+            const isFirstPage = currentPageIdx === 0;
+            const capacityFull = isFirstPage ? ROWS_FIRST_PAGE_MAX : ROWS_OTHER_PAGE_MAX;
+            const capacityWithSum = isFirstPage ? ROWS_FIRST_PAGE_WITH_SUM : ROWS_OTHER_PAGE_WITH_SUM;
+
+            if (remainingItems.length <= capacityWithSum) {
+                // เหลือรายการน้อย ใส่ลงหน้าปัจจุบันพร้อมสรุปยอดได้เลย
+                pages.push({ items: remainingItems, isLast: true, pageIndex: currentPageIdx });
+                remainingItems = [];
+            } else if (remainingItems.length <= capacityFull) {
+                // ใส่หน้าปัจจุบันพอดี แต่ไม่พอสำหรับสรุปยอด -> แยกรายการไว้หน้านี้ แล้วปัดสรุปไปหน้าถัดไป (หน้าเปล่า)
+                pages.push({ items: remainingItems, isLast: false, pageIndex: currentPageIdx });
+                remainingItems = [];
+                // เพิ่มหน้าสรุป
+                currentPageIdx++;
+                pages.push({ items: [], isLast: true, pageIndex: currentPageIdx });
+            } else {
+                // รายการเยอะเกิน ตัดใส่หน้าปัจจุบันเต็มความจุ แล้ววนลูปต่อ
+                pages.push({ items: remainingItems.slice(0, capacityFull), isLast: false, pageIndex: currentPageIdx });
+                remainingItems = remainingItems.slice(capacityFull);
+            }
+            currentPageIdx++;
+        }
+    }
+
+    // Template Generator (Per Page)
+    const generatePageHtml = (pageData, pageIndex, totalPages, type) => {
+        let rowsHtml = '';
+        // คำนวณลำดับที่ต่อเนื่อง
+        let startSeq = 0;
+        for (let i = 0; i < pageIndex; i++) {
+            startSeq += pages[i].items.length;
+        }
+        let seq = startSeq + 1;
+
+        pageData.items.forEach(item => {
+             const isSupport = item.type === 'support';
+             // [MODIFIED] Compact single-line description
+             const desc = isSupport 
+                ? `<span class="font-semibold text-gray-800">เงินสนับสนุน (${item.denomination >= 20 ? 'แบงค์' : 'เหรียญ'} ${item.denomination})</span> <span class="text-[10px] text-gray-400">* Non-Vat</span>`
+                : `<span class="font-semibold text-gray-800">${item.category || '-'}</span> <span class="text-xs text-gray-600 ml-1">${item.detail || ''}</span>`;
+
              rowsHtml += `
              <tr class="border-b border-gray-200">
-                <td class="p-2 text-center align-top">${seq++}</td>
-                <td class="p-2 align-top">
-                    <p class="font-semibold">${item.category || '-'}</p>
-                    <p class="text-xs text-gray-500">${item.detail || ''}</p>
-                </td>
-                <td class="p-2 text-right align-top">1.00</td>
-                <td class="p-2 text-right align-top">${parseFloat(item.price).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                <td class="p-2 text-right align-top">0.00</td>
-                <td class="p-2 text-right font-semibold align-top">${parseFloat(item.price).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <!-- [MODIFIED] Reduced padding for compact rows -->
+                <td class="py-1 px-1.5 text-center align-top">${seq++}</td>
+                <td class="py-1 px-1.5 align-top leading-tight">${desc}</td>
+                <td class="py-1 px-1.5 text-right align-top">${isSupport ? item.quantity : '1.00'}</td>
+                <td class="py-1 px-1.5 text-right align-top">${isSupport 
+                    ? (parseFloat(item.price)/parseInt(item.quantity || 1)).toLocaleString(undefined, {minimumFractionDigits: 2}) 
+                    : parseFloat(item.price).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="py-1 px-1.5 text-right align-top">0.00</td>
+                <td class="py-1 px-1.5 text-right font-semibold align-top">${parseFloat(item.price).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
              </tr>`;
         });
-    } else if (parseFloat(data.wage) > 0) {
-         rowsHtml += `
-         <tr class="border-b border-gray-200">
-            <td class="p-2 text-center align-top">${seq++}</td>
-            <td class="p-2 align-top"><p class="font-semibold">ค่าบริการรวม</p></td>
-            <td class="p-2 text-right align-top">1.00</td>
-            <td class="p-2 text-right align-top">${parseFloat(data.wage).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-            <td class="p-2 text-right align-top">0.00</td>
-            <td class="p-2 text-right font-semibold align-top">${parseFloat(data.wage).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-         </tr>`;
-    }
 
-    // 2. Support Items
-    if (data.customerSupport) {
-        data.customerSupport.forEach(item => {
-            if (parseFloat(item.price) > 0) {
-                // [MODIFIED] Removed bg-gray-50/50 class
-                rowsHtml += `
-                <tr class="border-b border-gray-200">
-                    <td class="p-2 text-center align-top">${seq++}</td>
-                    <td class="p-2 align-top">
-                        <p class="font-semibold text-gray-800">เงินสนับสนุน (${item.denomination >= 20 ? 'แบงค์' : 'เหรียญ'} ${item.denomination})</p>
-                        <p class="text-[10px] text-gray-400">* รายการยกเว้นภาษี (Non-Vatable)</p>
-                    </td>
-                    <td class="p-2 text-right align-top">${item.quantity}</td>
-                    <td class="p-2 text-right align-top">${(parseFloat(item.price)/parseInt(item.quantity || 1)).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                    <td class="p-2 text-right align-top">0.00</td>
-                    <td class="p-2 text-right font-semibold align-top">${parseFloat(item.price).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                </tr>`;
-            }
-        });
-    }
+        // [MODIFIED] Check if it's the first page
+        const isFirstPage = pageIndex === 0;
 
-    // [MODIFIED] Image Block Logic
-    const imageBlockHtml = `
-        <div class="h-full w-full min-h-[120px] max-h-[140px] border border-gray-200 rounded-xl bg-gray-50 flex items-center justify-center overflow-hidden relative">
-             ${data.image 
-                ? `<img src="${processImageUrl(data.image)}" class="w-full h-full object-contain" style="object-position: center;" />` 
-                : `<div class="flex flex-col items-center gap-1 opacity-20"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg><span class="text-xs font-bold">รูปภาพ</span></div>`
-             }
-        </div>
-    `;
-
-    // Template Generator
-    const generateReceiptContent = (type) => `
-        <div class="receipt-a4-container ${type === 'ต้นฉบับ' ? 'page-break-after' : ''} bg-white p-8 relative flex flex-col">
-            
-            <!-- Header Section -->
-            <div class="flex justify-between items-start mb-6">
-                <!-- Left: Shop & Customer Info -->
-                <div class="flex flex-col gap-5 w-[60%]">
-                    
-                    <!-- Shop Info -->
+        return `
+        <div class="receipt-a4-container ${type === 'ต้นฉบับ' ? 'page-break-after' : ''} bg-white px-8 py-6 relative flex flex-col">
+            <!-- Header (Only on First Page) -->
+            ${isFirstPage ? `
+            <div class="flex justify-between items-start mb-2 shrink-0"> <!-- ADDED shrink-0 to prevent overlapping -->
+                <div class="flex flex-col gap-3 w-[60%] mt-2">
                     <div class="flex gap-4">
                         ${sLogo ? `<img src="${sLogo}" class="w-20 h-20 object-contain rounded-md" />` : ''}
                         <div>
-                            <h2 class="text-xl font-bold text-gray-800">${sName}</h2>
-                            <p class="text-sm text-gray-500 mt-1 leading-snug">${sAddress}</p>
-                            <!-- [MODIFIED] Added Shop Tax ID display -->
-                            <p class="text-xs text-gray-500 mt-1 font-medium">เลขประจำตัวผู้เสียภาษี: ${sTaxId}</p>
-                            <div class="flex gap-4 mt-2 text-xs text-gray-500">
-                                ${sPhone ? `<span class="flex items-center gap-1"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg> ${sPhone}</span>` : ''}
-                                ${sEmail ? `<span class="flex items-center gap-1"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg> ${sEmail}</span>` : ''}
+                            <h2 class="text-lg font-bold text-gray-800 leading-tight">${sName}</h2>
+                            <p class="text-xs text-gray-500 mt-0.5 leading-tight">${sAddress}</p>
+                            <p class="text-[10px] text-gray-500 mt-0.5 font-medium">เลขประจำตัวผู้เสียภาษี: ${sTaxId}</p>
+                            <div class="flex gap-3 mt-1 text-[10px] text-gray-500">
+                                ${sPhone ? `<span class="flex items-center gap-1"><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg> ${sPhone}</span>` : ''}
+                                ${sEmail ? `<span class="flex items-center gap-1"><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg> ${sEmail}</span>` : ''}
                             </div>
                         </div>
                     </div>
-
-                    <!-- [MODIFIED] Customer Info with Labels -->
-                    <div class="border-t border-dashed border-gray-300 pt-3">
-                        <div class="flex items-center gap-2 mb-2">
-                            <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">ลูกค้า (Customer)</h3>
-                        </div>
-                        <div class="grid grid-cols-[60px,1fr] gap-y-1 text-sm">
-                             <span class="text-gray-500 text-xs font-bold pt-0.5">ชื่อ:</span>
-                             <div class="text-gray-800 font-bold">${cName}</div>
-                             
-                             ${cPhone !== '-' ? `
-                                 <span class="text-gray-500 text-xs font-bold pt-0.5">เบอร์โทร:</span>
-                                 <div class="text-gray-800">${cPhone}</div>
-                             ` : ''}
-                             
-                             ${cEmail !== '-' ? `
-                                 <span class="text-gray-500 text-xs font-bold pt-0.5">อีเมล:</span>
-                                 <div class="text-gray-800">${cEmail}</div>
-                             ` : ''}
-                             
-                             <!-- [MODIFIED] Changed Label from เลขภาษี to เลขที่ภาษี -->
-                             <span class="text-gray-500 text-xs font-bold pt-0.5">เลขที่ภาษี:</span>
-                             <div class="text-gray-800">${cTaxId}</div>
-                             
-                             <span class="text-gray-500 text-xs font-bold pt-0.5">ที่อยู่:</span>
-                             <div class="text-gray-800 leading-snug">${cAddress}</div>
-                        </div>
-                    </div>
-
                 </div>
-
-                <!-- Right: Document Info -->
-                <div class="text-right">
-                    <div class="text-sm text-gray-500 mb-1">(${type})</div>
-                    <h1 class="text-2xl font-bold text-green-600 tracking-tight">ใบเสร็จรับเงิน/ใบกำกับภาษี</h1>
-                    <div class="mt-4 border border-green-200 bg-green-50 rounded-lg p-3 text-sm text-left shadow-sm force-print-bg">
-                        <div class="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
-                            <strong class="text-green-800">เลขที่:</strong> <span class="text-gray-700 font-mono">${docNo}</span>
+                <div class="flex flex-col justify-between items-end text-right w-[38%]">
+                    <div>
+                        <div class="text-xs text-gray-500 mb-0.5">(${type})</div>
+                        <h1 class="text-xl font-bold text-green-600 tracking-tight leading-none">ใบเสร็จรับเงิน/ใบกำกับภาษี</h1>
+                    </div>
+                    <div class="border border-green-200 bg-green-50 rounded-lg p-2 text-xs text-left shadow-sm force-print-bg w-[65%] mt-2">
+                        <div class="grid grid-cols-[auto,1fr] gap-x-2 gap-y-0.5">
+                            <strong class="text-green-800">เลขที่:</strong> <span class="text-gray-700 font-mono font-bold">${docNo}</span>
                             <strong class="text-green-800">วันที่:</strong> <span class="text-gray-700">${dateStr}</span>
-                            <strong class="text-green-800">อ้างอิง:</strong> <span class="text-gray-700">${data.id}</span>
+                            <strong class="text-green-800">อ้างอิง:</strong> <span class="text-gray-700 truncate">${data.id}</span>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <hr class="border-t-2 border-gray-100 my-4" />
+            <hr class="border-t-2 border-gray-100 my-2 shrink-0" />
 
-            <!-- [MODIFIED] Middle Section: Recipient & Image -->
-            <div class="grid grid-cols-12 gap-6 text-sm mb-4">
-                
-                <!-- Left: Recipient Info (Replaced Customer Card) -->
-                <div class="col-span-7">
-                    <div class="flex flex-col h-full">
-                        <h3 class="font-bold text-gray-800 mb-2 flex items-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>
-                            ข้อมูลจัดส่ง (Recipient & Shipping)
-                        </h3>
-                        <div class="bg-gray-50 rounded-xl p-4 border border-gray-100 flex-grow">
-                            <div class="grid grid-cols-[80px,1fr] gap-y-2">
-                                <span class="text-gray-500 text-xs font-bold pt-0.5">ผู้รับ:</span>
-                                <div class="text-gray-800 font-bold">
-                                    ${rName} 
-                                    ${rPhone !== '-' ? `<span class="font-normal text-gray-600 text-xs ml-2">(${rPhone})</span>` : ''}
-                                </div>
-
-                                <span class="text-gray-500 text-xs font-bold pt-0.5">กำหนดส่ง:</span>
-                                <div class="text-gray-800">${rDate}</div>
-
-                                <span class="text-gray-500 text-xs font-bold pt-0.5">สถานที่:</span>
-                                <div class="text-gray-800 leading-snug">${rLocation}</div>
-                            </div>
+            <!-- Info Section & Image (Only on First Page) -->
+            <div class="grid grid-cols-12 gap-3 text-xs mb-6 items-stretch min-h-[145px] shrink-0"> <!-- MODIFIED: mb-2 to mb-6 for equal spacing -->
+                <div class="col-span-7 flex flex-col gap-2">
+                    <div class="bg-gray-50 rounded-lg p-2.5 border border-gray-100 relative flex-1 flex flex-col justify-center">
+                        <div class="absolute top-0 right-0 p-1.5 opacity-10 pointer-events-none">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        </div>
+                        <div class="flex items-center gap-1.5 mb-1">
+                            <h3 class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">ลูกค้า (Customer)</h3>
+                        </div>
+                        <div class="grid grid-cols-[80px,1fr] gap-y-0.5 text-xs relative z-10">
+                             <span class="text-gray-500 font-bold">ชื่อ:</span>
+                             <div class="text-gray-800 font-bold truncate">${cName}</div>
+                             ${cPhone !== '-' ? `<span class="text-gray-500 font-bold">เบอร์โทร:</span><div class="text-gray-800 truncate">${cPhone}</div>` : ''}
+                             ${cEmail !== '-' ? `<span class="text-gray-500 font-bold">อีเมล:</span><div class="text-gray-800 truncate">${cEmail}</div>` : ''}
+                             <span class="text-gray-500 font-bold">เลขที่ภาษี:</span><div class="text-gray-800 truncate">${cTaxId}</div>
+                             <span class="text-gray-500 font-bold">ที่อยู่:</span><div class="text-gray-800 leading-tight line-clamp-2">${cAddress}</div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-2.5 border border-gray-100 relative flex-1 flex flex-col justify-center">
+                        <div class="absolute top-0 right-0 p-1.5 opacity-10 pointer-events-none">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>
+                        </div>
+                         <div class="flex items-center gap-1.5 mb-1">
+                            <h3 class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">จัดส่ง (Shipping)</h3>
+                        </div>
+                        <div class="grid grid-cols-[80px,1fr] gap-y-1 relative z-10">
+                            <span class="text-gray-500 font-bold">ผู้รับ:</span>
+                            <div class="text-gray-800 font-bold truncate">${rName} ${rPhone !== '-' ? `<span class="font-normal text-gray-600 text-[10px] ml-1">(${rPhone})</span>` : ''}</div>
+                            <span class="text-gray-500 font-bold">กำหนดส่ง:</span><div class="text-gray-800 truncate">${rDate}</div>
+                            <span class="text-gray-500 font-bold">สถานที่:</span><div class="text-gray-800 leading-tight line-clamp-2">${rLocation}</div>
                         </div>
                     </div>
                 </div>
-                
-                <!-- Right: Image (Same Position) -->
-                <div class="col-span-5">
-                     <div class="flex flex-col h-full">
-                        <h3 class="font-bold text-gray-800 mb-2 flex items-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
-                            รูปภาพ (Image)
-                        </h3>
-                        ${imageBlockHtml}
+                <div class="col-span-5 relative">
+                     <div class="absolute inset-0 bg-gray-50 border border-gray-100 rounded-lg flex flex-col overflow-hidden">
+                        <div class="absolute top-2 left-3 z-10 bg-white/80 backdrop-blur-sm px-1.5 py-0.5 rounded border border-gray-100 shadow-sm">
+                            <h3 class="text-[9px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                                รูปภาพ
+                            </h3>
+                        </div>
+                        <div class="w-full h-full flex items-center justify-center bg-gray-50">
+                            ${data.image 
+                                ? `<img src="${processImageUrl(data.image)}" class="w-full h-full object-contain" />` 
+                                : `<div class="flex flex-col items-center gap-1 opacity-20"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg><span class="text-xs font-bold">No Image</span></div>`
+                            }
+                        </div>
                      </div>
                 </div>
             </div>
+            ` : `
+            <!-- Minimal Header for Subsequent Pages -->
+            <div class="flex justify-between items-center mb-6 pb-2 border-b border-gray-100 shrink-0"> <!-- MODIFIED: mb-4 to mb-6 for equal spacing -->
+                <div class="text-xs font-bold text-gray-400">ใบเสร็จรับเงิน (ต่อ)</div>
+                <div class="text-xs text-gray-400">อ้างอิง: ${data.id}</div>
+            </div>
+            `}
 
-            <!-- Table Section -->
-            <div class="mb-4">
-                <table class="w-full text-sm">
+            <!-- Table (Paginated) - Display only if there are items -->
+            ${pageData.items.length > 0 ? `
+            <div class="mb-6 mt-0"> <!-- MODIFIED: fixed mb-6 and mt-0 to maintain consistent spacing from header -->
+                <table class="w-full text-xs">
                     <thead>
                         <tr class="bg-green-50 text-green-800 border-y border-green-100 force-print-bg">
-                            <th class="p-3 w-12 text-center font-bold first:rounded-l-lg">ลำดับ</th>
-                            <th class="p-3 text-left font-bold">รายละเอียด</th>
-                            <th class="p-3 w-20 text-right font-bold">จำนวน</th>
-                            <th class="p-3 w-28 text-right font-bold">ราคา/หน่วย</th>
-                            <th class="p-3 w-24 text-right font-bold">ส่วนลด</th>
-                            <th class="p-3 w-32 text-right font-bold last:rounded-r-lg">จำนวนเงิน</th>
+                            <th class="p-1.5 w-10 text-center font-bold first:rounded-l-lg">ลำดับ</th>
+                            <th class="p-1.5 text-left font-bold">รายละเอียด</th>
+                            <th class="p-1.5 w-16 text-right font-bold">จำนวน</th>
+                            <th class="p-1.5 w-24 text-right font-bold">ราคา/หน่วย</th>
+                            <th class="p-1.5 w-20 text-right font-bold">ส่วนลด</th>
+                            <th class="p-1.5 w-28 text-right font-bold last:rounded-r-lg">จำนวนเงิน</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -2134,68 +2157,63 @@ ${moneyOrderDetails}${quotationDetails}
                     </tbody>
                 </table>
             </div>
+            ` : ''}
 
-            <!-- [MODIFIED] Summary & Signature Section - Keep together on page break -->
-            <div class="keep-together mt-4">
+            <!-- Summary & Signature Section (Only on Last Page) -->
+            ${pageData.isLast ? `
+            <div class="mt-0 break-inside-avoid"> <!-- MODIFIED: mt-4 to mt-0 because table has mb-6 -->
                 
-                <!-- [MODIFIED] Baht Text -->
-                <div class="mb-4 p-2 bg-green-50/50 border border-green-100 rounded-lg flex items-center gap-2 text-sm force-print-bg">
-                    <strong class="text-green-800 min-w-fit">จำนวนเงินตัวอักษร:</strong> 
-                    <span class="font-bold text-green-700">(${bahtText})</span>
+                <!-- [MODIFIED] Section 1: Notes & Subtotals List (Aligned Top) -->
+                <div class="flex flex-col sm:flex-row justify-between items-start gap-6 mb-2">
+                    <div class="flex-1 text-xs">
+                        <strong class="text-gray-700 mr-1">หมายเหตุ:</strong>
+                        <span class="text-gray-600 leading-relaxed">${data.note || '-'}</span>
+                    </div>
+                    <div class="w-full sm:w-[350px] space-y-1.5 text-xs">
+                        <div class="flex justify-between text-gray-600"><span>มูลค่าสินค้า (ก่อนภาษี)</span><span>${preVatAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
+                        <div class="flex justify-between text-gray-600"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>${vatAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>
+                        ${nonVatableAmount > 0 ? `<div class="flex justify-between text-gray-600"><span>เงินสนับสนุน (ยกเว้นภาษี)</span><span>${nonVatableAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></div>` : ''}
+                        <div class="flex justify-between text-gray-600 border-b border-gray-200 pb-2"><span>ส่วนลด</span><span>0.00</span></div>
+                    </div>
                 </div>
 
-                <div class="grid grid-cols-12 gap-8 text-sm">
-                    <div class="col-span-7 flex flex-col justify-between">
-                        <div class="space-y-2">
-                            <div class="flex gap-2 items-start">
-                                <strong class="min-w-[70px]">หมายเหตุ:</strong>
-                                <span class="text-gray-500 text-xs leading-relaxed">${data.note || '-'}</span>
-                            </div>
-                        </div>
-                        <div class="mt-8 pt-4 border-t border-gray-200 flex gap-8">
-                            <div class="text-center w-1/2">
-                                <!-- [MODIFIED] Darker border and text for visibility -->
-                                <div class="h-10 border-b border-dotted border-gray-800 w-full mb-2"></div>
-                                <span class="text-xs font-bold text-black">ผู้รับวางบิล</span>
-                            </div>
-                            <div class="text-center w-1/2">
-                                <!-- [MODIFIED] Darker border and text for visibility -->
-                                <div class="h-10 border-b border-dotted border-gray-800 w-full mb-2"></div>
-                                <span class="text-xs font-bold text-black">ผู้รับเงิน</span>
-                            </div>
-                        </div>
+                <!-- [MODIFIED] Section 2: Equal Height Cards (Text Amount & Grand Total) -->
+                <div class="flex flex-col sm:flex-row justify-between items-stretch gap-6 mb-4">
+                    <div class="flex-1 flex flex-col justify-center items-start bg-green-50 p-2 rounded-lg border border-green-200 force-print-bg">
+                        <span class="text-green-700 text-[10px] font-bold">จำนวนเงินตัวอักษร</span>
+                        <strong class="text-green-800 text-sm font-bold tracking-tight leading-tight mt-0.5">(${bahtText})</strong>
                     </div>
-                    <div class="col-span-5">
-                        <div class="space-y-2">
-                            <div class="flex justify-between text-gray-600">
-                                <span>มูลค่าสินค้า (ก่อนภาษี)</span>
-                                <span>${preVatAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
-                            </div>
-                            <div class="flex justify-between text-gray-600">
-                                <span>ภาษีมูลค่าเพิ่ม 7%</span>
-                                <span>${vatAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
-                            </div>
-                            ${nonVatableAmount > 0 ? `
-                            <div class="flex justify-between text-gray-600">
-                                <span>เงินสนับสนุน (ยกเว้นภาษี)</span>
-                                <span>${nonVatableAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
-                            </div>` : ''}
-                            <div class="flex justify-between text-gray-600 border-b border-gray-200 pb-2">
-                                <span>ส่วนลด</span>
-                                <span>0.00</span>
-                            </div>
-                            
-                            <!-- [MODIFIED] Grand Total Layout: Right aligned, small label, big amount -->
-                            <div class="flex flex-col items-end bg-green-50 p-3 rounded-lg border border-green-200 mt-2 force-print-bg">
-                                <span class="text-green-700 text-xs font-bold">จำนวนเงินทั้งสิ้น</span>
-                                <strong class="text-green-800 text-2xl font-black tracking-tight leading-none mt-1">฿${grandTotal.toLocaleString(undefined, {minimumFractionDigits: 2})}</strong>
-                            </div>
-                        </div>
+                    <div class="w-full sm:w-[350px] flex flex-col justify-center items-end bg-green-50 p-2 rounded-lg border border-green-200 force-print-bg">
+                        <span class="text-green-700 text-[10px] font-bold">จำนวนเงินทั้งสิ้น</span>
+                        <strong class="text-green-800 text-xl font-black tracking-tight leading-none mt-0.5">฿${grandTotal.toLocaleString(undefined, {minimumFractionDigits: 2})}</strong>
                     </div>
                 </div>
+                
+                <div class="flex gap-8 justify-between mt-2">
+                    <div class="text-center w-1/2 px-8">
+                        <div class="h-8 border-b border-dotted border-gray-800 w-full mb-1"></div>
+                        <span class="text-xs font-bold text-black">ผู้รับวางบิล</span>
+                        <div class="mt-1 text-[9px] text-gray-400">วันที่ ...../...../..........</div>
+                    </div>
+                    <div class="text-center w-1/2 px-8">
+                        <div class="h-8 border-b border-dotted border-gray-800 w-full mb-1"></div>
+                        <span class="text-xs font-bold text-black">ผู้รับเงิน</span>
+                        <div class="mt-1 text-[9px] text-gray-400">วันที่ ...../...../..........</div>
+                    </div>
+                </div>
+            </div>` : ``}
+            
+            <!-- Page Number Footer -->
+            <div class="absolute bottom-4 right-8 text-[10px] text-gray-400">
+                หน้า ${pageIndex + 1} / ${totalPages}
             </div>
         </div>
-    `;
+        `;
+    };
+
+    const generateFullDoc = (type) => {
+        return pages.map((page, idx) => generatePageHtml(page, idx, pages.length, type)).join('');
+    };
 
     const fullHtml = `
       <!DOCTYPE html>
@@ -2210,39 +2228,52 @@ ${moneyOrderDetails}${quotationDetails}
             @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;700&display=swap');
             body { 
                 font-family: 'Sarabun', sans-serif; 
-                background: #f3f4f6;
+                background: #52525b; 
                 padding: 20px;
                 -webkit-print-color-adjust: exact !important;
                 print-color-adjust: exact !important;
             }
             .receipt-a4-container {
                 width: 210mm;
+                height: 297mm; /* [MODIFIED] Fixed A4 Height */
                 min-height: 297mm;
                 margin: 0 auto 20px auto;
                 background: white;
                 box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
                 padding: 40px;
                 position: relative;
+                overflow: hidden; /* Ensure content stays in page */
+                box-sizing: border-box;
             }
             .keep-together {
                 page-break-inside: avoid;
                 break-inside: avoid;
             }
             @media print {
-                body { 
+                /* [MODIFIED] Target both html and body to force text color white on browser UI */
+                html, body { 
+                    width: 100%;
+                    height: auto; /* [MODIFIED] Changed from 100% to auto to avoid forcing height issues */
                     background: white; 
+                    margin: 0;
                     padding: 0;
+                    /* color: white !important;  REMOVED to prevent interfering with content colors */
                 }
                 .receipt-a4-container {
                     width: 100%;
-                    /* [MODIFIED] Adjust min-height for print with 0.5in margins (approx 270mm) */
-                    min-height: 270mm; 
+                    height: 297mm; /* Force A4 height in print */
                     box-shadow: none;
                     margin: 0;
-                    /* [MODIFIED] Remove padding to rely on @page margin for consistency across pages */
-                    padding: 0 !important; 
+                    padding: 40px !important; /* Keep padding */
                     page-break-after: always;
+                    color: initial; /* [MODIFIED] Allow colors to show */
+                    visibility: visible;
+                    overflow: hidden;
                 }
+                .receipt-a4-container:last-child {
+                    page-break-after: auto;
+                }
+                
                 .page-break-after {
                     page-break-after: always;
                 }
@@ -2250,40 +2281,74 @@ ${moneyOrderDetails}${quotationDetails}
                     -webkit-print-color-adjust: exact;
                     print-color-adjust: exact;
                 }
-                /* [MODIFIED] Set margin to 0.5 inch */
                 @page { 
                     size: A4; 
-                    margin: 0.5in; 
+                    margin: 0; /* [MODIFIED] Reset margins to 0 to prevent overflow causing extra blank pages */
                 }
                 .no-print { display: none !important; }
             }
         </style>
       </head>
       <body>
-        <!-- [MODIFIED] Desktop Controls (Top Right) - Hidden on mobile -->
-        <div class="no-print hidden sm:flex fixed top-4 right-4 z-50 gap-2">
+        <!-- [MODIFIED] Desktop Controls with Toggle -->
+        <div class="no-print hidden sm:flex fixed top-4 right-4 z-50 gap-3 items-center">
+            <div class="flex bg-gray-800/80 backdrop-blur-md rounded-lg p-1 border border-white/10">
+                <button id="desk-btn-original" onclick="setMode('original')" class="px-4 py-2 rounded-md text-sm font-bold bg-white text-gray-900 shadow-sm transition-all">ต้นฉบับ</button>
+                <button id="desk-btn-copy" onclick="setMode('copy')" class="px-4 py-2 rounded-md text-sm font-bold text-gray-300 hover:text-white transition-all">สำเนา</button>
+            </div>
             <button onclick="window.print()" class="bg-blue-600 text-white px-6 py-2 rounded-lg shadow-lg font-bold hover:bg-blue-700 transition flex items-center gap-2 border border-white/20">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
-                พิมพ์เอกสาร
+                พิมพ์
             </button>
             <button onclick="window.close()" class="bg-gray-500 text-white px-6 py-2 rounded-lg shadow-lg font-bold hover:bg-gray-600 transition border border-white/20">
                 ปิด
             </button>
         </div>
 
-        <!-- [MODIFIED] Mobile Controls (Floating Bottom Right) - Adjusted Size to 125px -->
-        <div class="no-print flex sm:hidden fixed bottom-8 right-8 z-50 flex-col-reverse gap-6 items-center">
-            <!-- Print Button (Big 125px) -->
+        <!-- [MODIFIED] Mobile Controls with Toggle & Big Print Button -->
+        <div class="no-print flex sm:hidden fixed bottom-8 right-8 z-50 flex-col gap-4 items-end">
+            <div class="flex bg-white rounded-full p-1.5 shadow-xl border border-gray-100 mb-2">
+                <button id="mob-btn-original" onclick="setMode('original')" class="px-5 py-2.5 rounded-full text-xs font-bold bg-indigo-600 text-white shadow-sm transition-all">ต้นฉบับ</button>
+                <button id="mob-btn-copy" onclick="setMode('copy')" class="px-5 py-2.5 rounded-full text-xs font-bold text-gray-500 hover:bg-gray-50 transition-all">สำเนา</button>
+            </div>
             <button onclick="window.print()" class="w-[125px] h-[125px] bg-blue-600 text-white rounded-full shadow-2xl flex items-center justify-center border-4 border-white/30 backdrop-blur-md active:scale-95 transition-all">
                 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
             </button>
-            <!-- Close Button Removed -->
         </div>
 
-        ${generateReceiptContent('ต้นฉบับ')}
-        ${generateReceiptContent('สำเนา')}
+        <!-- [MODIFIED] Generate Paginated Content -->
+        <div id="original-container">
+            ${generateFullDoc('ต้นฉบับ')}
+        </div>
+        <div id="copy-container" style="display:none;">
+            ${generateFullDoc('สำเนา')}
+        </div>
+        
         <script>
-           // window.onload = function() { window.print(); }
+            function setMode(mode) {
+                const orig = document.getElementById('original-container');
+                const copy = document.getElementById('copy-container');
+                const dOrig = document.getElementById('desk-btn-original');
+                const dCopy = document.getElementById('desk-btn-copy');
+                const mOrig = document.getElementById('mob-btn-original');
+                const mCopy = document.getElementById('mob-btn-copy');
+
+                if (mode === 'original') {
+                    orig.style.display = 'block';
+                    copy.style.display = 'none';
+                    dOrig.className = 'px-4 py-2 rounded-md text-sm font-bold bg-white text-gray-900 shadow-sm transition-all';
+                    dCopy.className = 'px-4 py-2 rounded-md text-sm font-bold text-gray-300 hover:text-white transition-all';
+                    mOrig.className = 'px-5 py-2.5 rounded-full text-xs font-bold bg-indigo-600 text-white shadow-sm transition-all';
+                    mCopy.className = 'px-5 py-2.5 rounded-full text-xs font-bold text-gray-500 hover:bg-gray-50 transition-all';
+                } else {
+                    orig.style.display = 'none';
+                    copy.style.display = 'block';
+                    dOrig.className = 'px-4 py-2 rounded-md text-sm font-bold text-gray-300 hover:text-white transition-all';
+                    dCopy.className = 'px-4 py-2 rounded-md text-sm font-bold bg-white text-gray-900 shadow-sm transition-all';
+                    mOrig.className = 'px-5 py-2.5 rounded-full text-xs font-bold text-gray-500 hover:bg-gray-50 transition-all';
+                    mCopy.className = 'px-5 py-2.5 rounded-full text-xs font-bold bg-indigo-600 text-white shadow-sm transition-all';
+                }
+            }
         </script>
       </body>
       </html>
@@ -7372,6 +7437,7 @@ const App = () => {
         <SharePreviewModal 
           data={shareData} 
           shopInfo={shopInfo} // [MODIFIED] Pass shopInfo prop to modal
+          // [REMOVED] userProfile prop
           onClose={() => setShareData(null)} 
         />
       )}
