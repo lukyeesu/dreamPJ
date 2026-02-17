@@ -325,11 +325,11 @@ ${te}${Se}
             </button>
         </div>
 
-        <!-- [MODIFIED] Mobile Controls (Floating Bottom Right) - Print Button Only -->
+        <!-- [MODIFIED] Mobile Controls (Floating Bottom Right) - Adjusted Size to 125px -->
         <div class="no-print flex sm:hidden fixed bottom-8 right-8 z-50 flex-col-reverse gap-6 items-center">
-            <!-- Print Button (Massive 150px) -->
-            <button onclick="window.print()" class="w-[150px] h-[150px] bg-blue-600 text-white rounded-full shadow-2xl flex items-center justify-center border-4 border-white/30 backdrop-blur-md active:scale-95 transition-all">
-                <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+            <!-- Print Button (Big 125px) -->
+            <button onclick="window.print()" class="w-[125px] h-[125px] bg-blue-600 text-white rounded-full shadow-2xl flex items-center justify-center border-4 border-white/30 backdrop-blur-md active:scale-95 transition-all">
+                <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
             </button>
             <!-- Close Button Removed -->
         </div>
