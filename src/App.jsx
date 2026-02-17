@@ -2201,6 +2201,8 @@ ${moneyOrderDetails}${quotationDetails}
       <!DOCTYPE html>
       <html>
       <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>พิมพ์ใบเสร็จ - ${data.id}</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;700&display=swap" rel="stylesheet">
@@ -2269,14 +2271,13 @@ ${moneyOrderDetails}${quotationDetails}
             </button>
         </div>
 
-        <!-- [ADDED] Mobile Controls (Floating Bottom Right) - Visible only on mobile -->
-        <div class="no-print flex sm:hidden fixed bottom-6 right-6 z-50 flex-col-reverse gap-4 items-center">
-            <button onclick="window.print()" class="w-16 h-16 bg-blue-600 text-white rounded-full shadow-2xl flex items-center justify-center border-4 border-white/30 backdrop-blur-md active:scale-95 transition-all">
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+        <!-- [MODIFIED] Mobile Controls (Floating Bottom Right) - Print Button Only -->
+        <div class="no-print flex sm:hidden fixed bottom-8 right-8 z-50 flex-col-reverse gap-6 items-center">
+            <!-- Print Button (Massive 150px) -->
+            <button onclick="window.print()" class="w-[150px] h-[150px] bg-blue-600 text-white rounded-full shadow-2xl flex items-center justify-center border-4 border-white/30 backdrop-blur-md active:scale-95 transition-all">
+                <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
             </button>
-            <button onclick="window.close()" class="w-12 h-12 bg-white text-gray-600 rounded-full shadow-xl flex items-center justify-center border-2 border-gray-100 active:scale-95 transition-all">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
+            <!-- Close Button Removed -->
         </div>
 
         ${generateReceiptContent('ต้นฉบับ')}
