@@ -75,7 +75,7 @@ ${te}${Se}
             <hr class="border-t-2 border-gray-100 my-2 shrink-0" />
 
             <!-- Info Section & Image (Only on First Page) -->
-            <div class="grid grid-cols-12 gap-3 text-xs mb-6 items-stretch min-h-[145px] shrink-0"> <!-- MODIFIED: mb-2 to mb-6 for equal spacing -->
+            <div class="grid grid-cols-12 gap-3 text-xs mb-2 items-stretch min-h-[145px] shrink-0"> <!-- MODIFIED: mb-1 to mb-2 -->
                 <div class="col-span-7 flex flex-col gap-2">
                     <div class="bg-gray-50 rounded-lg p-2.5 border border-gray-100 relative flex-1 flex flex-col justify-center">
                         <div class="absolute top-0 right-0 p-1.5 opacity-10 pointer-events-none">
@@ -119,7 +119,7 @@ ${te}${Se}
             </div>
             `:`
             <!-- Minimal Header for Subsequent Pages -->
-            <div class="flex justify-between items-center mb-6 pb-2 border-b border-gray-100 shrink-0"> <!-- MODIFIED: mb-4 to mb-6 for equal spacing -->
+            <div class="flex justify-between items-center mb-2 pb-2 border-b border-gray-100 shrink-0"> <!-- MODIFIED: mb-1 to mb-2 -->
                 <div class="text-xs font-bold text-gray-400">ใบเสร็จรับเงิน (ต่อ)</div>
                 <div class="text-xs text-gray-400">อ้างอิง: ${d.id}</div>
             </div>
@@ -127,7 +127,7 @@ ${te}${Se}
 
             <!-- Table (Paginated) - Display only if there are items -->
             ${Ve.items.length>0?`
-            <div class="mb-6 mt-0"> <!-- MODIFIED: fixed mb-6 and mt-0 to maintain consistent spacing from header -->
+            <div class="mb-6 mt-0">
                 <table class="w-full text-xs">
                     <thead>
                         <tr class="bg-green-50 text-green-800 border-y border-green-100 force-print-bg">
