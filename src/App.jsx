@@ -2115,12 +2115,7 @@ ${moneyOrderDetails}${quotationDetails}
                 </div>
                 <div class="col-span-5 relative">
                      <div class="absolute inset-0 bg-gray-50 border border-gray-100 rounded-lg flex flex-col overflow-hidden">
-                        <div class="absolute top-2 left-3 z-10 bg-white/80 backdrop-blur-sm px-1.5 py-0.5 rounded border border-gray-100 shadow-sm">
-                            <h3 class="text-[9px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
-                                รูปภาพ
-                            </h3>
-                        </div>
+                        <!-- [MODIFIED] Removed "Picture" label overlay -->
                         <div class="w-full h-full flex items-center justify-center bg-gray-50">
                             ${data.image 
                                 ? `<img src="${processImageUrl(data.image)}" class="w-full h-full object-contain" />` 
