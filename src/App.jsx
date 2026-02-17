@@ -1662,7 +1662,8 @@ const CustomerTrackingView = ({ data, shopInfo, dealStatuses = [], transportStat
   );
 };
 
-const SharePreviewModal = ({ data, onClose }) => {
+// [MODIFIED] Added shopInfo prop to SharePreviewModal
+const SharePreviewModal = ({ data, onClose, shopInfo }) => {
   const [isCopied, setIsCopied] = useState(false);
   const [isLinkCopied, setIsLinkCopied] = useState(false); // New state for link copy
   const [isQuoteLinkCopied, setIsQuoteLinkCopied] = useState(false); // [NEW] state for quote link copy
@@ -1818,7 +1819,469 @@ ${moneyOrderDetails}${quotationDetails}
   };
 
   const handlePrint = () => {
-    window.print();
+    // 1. Prepare Data & Calculations
+    const sName = shopInfo?.shopName || 'ไม่ระบุชื่อร้านค้า';
+    const sAddress = shopInfo?.address || '-';
+    const sPhone = shopInfo?.phone || '-';
+    const sEmail = shopInfo?.email || '-';
+    // [MODIFIED] Get Tax ID from shopInfo
+    const sTaxId = shopInfo?.taxId || '-'; 
+    const sLogo = shopInfo?.logo ? processImageUrl(shopInfo.logo) : null;
+    
+    // Customer Info
+    const cName = data.customer || 'ลูกค้าทั่วไป';
+    const cAddress = '-'; 
+    // [MODIFIED] Try to get Tax ID from customerInfo if exists, else dash
+    const cTaxId = data.customerInfo?.taxId || '-'; 
+    const cPhone = data.customerInfo?.phone || '-';
+    const cEmail = data.customerInfo?.email || '-';
+
+    // [MODIFIED] Recipient & Delivery Info with Time Logic Fallback
+    const rName = data.recipient || '-';
+    const rPhone = data.recipientPhone || '-';
+    const rLocation = data.location || '-';
+    
+    // Calculate Delivery Date String (Include Time)
+    let rDate = data.deliveryDate;
+    if (!rDate || rDate === '-') {
+        if (data.rawDeliveryStart || data.rawDeliveryEnd || data.rawDeliveryDateTime) {
+            const start = formatDate(data.rawDeliveryStart);
+            const end = formatDate(data.rawDeliveryEnd || data.rawDeliveryDateTime);
+            if (data.rawDeliveryStart && (data.rawDeliveryEnd || data.rawDeliveryDateTime)) {
+                rDate = `${start} - ${end}`;
+            } else {
+                rDate = end || start;
+            }
+        } else {
+            rDate = '-';
+        }
+    }
+
+    // Items & Totals
+    const totalSupport = data.customerSupport ? data.customerSupport.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) : 0;
+    const hasQuotationItems = data.quotationItems && data.quotationItems.length > 0;
+    const totalQuotation = hasQuotationItems
+        ? data.quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) 
+        : (parseFloat(data.wage) || 0);
+    
+    const grandTotal = totalSupport + totalQuotation;
+    
+    // [MODIFIED] Tax Calculation: VAT Inclusive (Calculated from Total)
+    // Formula: PreVat = Total / 1.07
+    const vatableAmount = totalQuotation; // Only quotation is vatable
+    const vatRate = 0.07;
+    const preVatAmount = vatableAmount / 1.07;
+    const vatAmount = vatableAmount - preVatAmount;
+    
+    // Support is non-vatable
+    const nonVatableAmount = totalSupport;
+
+    // Helper: Arabic Number to Thai Text
+    const ArabicNumberToText = (n) => {
+        if (n === 0) return "ศูนย์บาทถ้วน";
+        const nums = ["ศูนย์", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า"];
+        const units = ["", "สิบ", "ร้อย", "พัน", "หมื่น", "แสน", "ล้าน"];
+        let nStr = n.toFixed(2).toString();
+        let [integer, fraction] = nStr.split('.');
+        
+        let text = "";
+        
+        // Integer part
+        if (parseInt(integer) === 0) {
+            text = "ศูนย์";
+        } else {
+            let len = integer.length;
+            for (let i = 0; i < len; i++) {
+                let digit = parseInt(integer.charAt(i));
+                let unitIndex = (len - i - 1) % 6;
+                
+                if (digit !== 0) {
+                    if (unitIndex === 0 && digit === 1 && len > 1 && i > 0) { // ลงท้ายด้วยเอ็ด
+                        text += "เอ็ด";
+                    } else if (unitIndex === 1 && digit === 2) { // ยี่สิบ
+                        text += "ยี่";
+                    } else if (unitIndex === 1 && digit === 1) { // สิบ (ไม่พูดหนึ่ง)
+                        text += "";
+                    } else {
+                        text += nums[digit];
+                    }
+                    text += units[unitIndex];
+                } else if (unitIndex === 6) { // ล้าน (ใส่หน่วยล้านแม้เลขเป็น 0 ถ้าเป็นหลักล้าน)
+                    text += "ล้าน";
+                }
+            }
+        }
+        text += "บาท";
+
+        // Fraction part
+        if (parseInt(fraction) === 0) {
+            text += "ถ้วน";
+        } else {
+            let len = fraction.length;
+            for (let i = 0; i < len; i++) {
+                let digit = parseInt(fraction.charAt(i));
+                let unitIndex = (len - i - 1); // 1 = สิบ, 0 = หน่วย
+                if (digit !== 0) {
+                     if (unitIndex === 0 && digit === 1 && len > 1 && i > 0) {
+                        text += "เอ็ด";
+                     } else if (unitIndex === 1 && digit === 2) {
+                        text += "ยี่";
+                     } else if (unitIndex === 1 && digit === 1) {
+                        text += "";
+                     } else {
+                        text += nums[digit];
+                     }
+                     if (unitIndex === 1) text += "สิบ";
+                }
+            }
+            text += "สตางค์";
+        }
+        return text;
+    };
+
+    const bahtText = ArabicNumberToText(grandTotal);
+    const dateStr = formatDate(data.rawDateTime || new Date().toISOString()).split(' ')[0]; // dd/mm/yyyy only
+    const docNo = `INV${data.id.replace(/\D/g, '')}`; // Generate a simple doc number based on ID
+
+    // Build Rows HTML
+    let rowsHtml = '';
+    let seq = 1;
+
+    // 1. Quotation Items
+    if (hasQuotationItems) {
+        data.quotationItems.forEach(item => {
+             rowsHtml += `
+             <tr class="border-b border-gray-200">
+                <td class="p-2 text-center align-top">${seq++}</td>
+                <td class="p-2 align-top">
+                    <p class="font-semibold">${item.category || '-'}</p>
+                    <p class="text-xs text-gray-500">${item.detail || ''}</p>
+                </td>
+                <td class="p-2 text-right align-top">1.00</td>
+                <td class="p-2 text-right align-top">${parseFloat(item.price).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                <td class="p-2 text-right align-top">0.00</td>
+                <td class="p-2 text-right font-semibold align-top">${parseFloat(item.price).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+             </tr>`;
+        });
+    } else if (parseFloat(data.wage) > 0) {
+         rowsHtml += `
+         <tr class="border-b border-gray-200">
+            <td class="p-2 text-center align-top">${seq++}</td>
+            <td class="p-2 align-top"><p class="font-semibold">ค่าบริการรวม</p></td>
+            <td class="p-2 text-right align-top">1.00</td>
+            <td class="p-2 text-right align-top">${parseFloat(data.wage).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+            <td class="p-2 text-right align-top">0.00</td>
+            <td class="p-2 text-right font-semibold align-top">${parseFloat(data.wage).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+         </tr>`;
+    }
+
+    // 2. Support Items
+    if (data.customerSupport) {
+        data.customerSupport.forEach(item => {
+            if (parseFloat(item.price) > 0) {
+                // [MODIFIED] Removed bg-gray-50/50 class
+                rowsHtml += `
+                <tr class="border-b border-gray-200">
+                    <td class="p-2 text-center align-top">${seq++}</td>
+                    <td class="p-2 align-top">
+                        <p class="font-semibold text-gray-800">เงินสนับสนุน (${item.denomination >= 20 ? 'แบงค์' : 'เหรียญ'} ${item.denomination})</p>
+                        <p class="text-[10px] text-gray-400">* รายการยกเว้นภาษี (Non-Vatable)</p>
+                    </td>
+                    <td class="p-2 text-right align-top">${item.quantity}</td>
+                    <td class="p-2 text-right align-top">${(parseFloat(item.price)/parseInt(item.quantity || 1)).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                    <td class="p-2 text-right align-top">0.00</td>
+                    <td class="p-2 text-right font-semibold align-top">${parseFloat(item.price).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                </tr>`;
+            }
+        });
+    }
+
+    // [MODIFIED] Image Block Logic
+    const imageBlockHtml = `
+        <div class="h-full w-full min-h-[120px] max-h-[140px] border border-gray-200 rounded-xl bg-gray-50 flex items-center justify-center overflow-hidden relative">
+             ${data.image 
+                ? `<img src="${processImageUrl(data.image)}" class="w-full h-full object-contain" style="object-position: center;" />` 
+                : `<div class="flex flex-col items-center gap-1 opacity-20"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg><span class="text-xs font-bold">รูปภาพ</span></div>`
+             }
+        </div>
+    `;
+
+    // Template Generator
+    const generateReceiptContent = (type) => `
+        <div class="receipt-a4-container ${type === 'ต้นฉบับ' ? 'page-break-after' : ''} bg-white p-8 relative flex flex-col">
+            
+            <!-- Header Section -->
+            <div class="flex justify-between items-start mb-6">
+                <!-- Left: Shop & Customer Info -->
+                <div class="flex flex-col gap-5 w-[60%]">
+                    
+                    <!-- Shop Info -->
+                    <div class="flex gap-4">
+                        ${sLogo ? `<img src="${sLogo}" class="w-20 h-20 object-contain rounded-md" />` : ''}
+                        <div>
+                            <h2 class="text-xl font-bold text-gray-800">${sName}</h2>
+                            <p class="text-sm text-gray-500 mt-1 leading-snug">${sAddress}</p>
+                            <!-- [MODIFIED] Added Shop Tax ID display -->
+                            <p class="text-xs text-gray-500 mt-1 font-medium">เลขประจำตัวผู้เสียภาษี: ${sTaxId}</p>
+                            <div class="flex gap-4 mt-2 text-xs text-gray-500">
+                                ${sPhone ? `<span class="flex items-center gap-1"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg> ${sPhone}</span>` : ''}
+                                ${sEmail ? `<span class="flex items-center gap-1"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg> ${sEmail}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- [MODIFIED] Customer Info with Labels -->
+                    <div class="border-t border-dashed border-gray-300 pt-3">
+                        <div class="flex items-center gap-2 mb-2">
+                            <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">ลูกค้า (Customer)</h3>
+                        </div>
+                        <div class="grid grid-cols-[60px,1fr] gap-y-1 text-sm">
+                             <span class="text-gray-500 text-xs font-bold pt-0.5">ชื่อ:</span>
+                             <div class="text-gray-800 font-bold">${cName}</div>
+                             
+                             ${cPhone !== '-' ? `
+                                 <span class="text-gray-500 text-xs font-bold pt-0.5">เบอร์โทร:</span>
+                                 <div class="text-gray-800">${cPhone}</div>
+                             ` : ''}
+                             
+                             ${cEmail !== '-' ? `
+                                 <span class="text-gray-500 text-xs font-bold pt-0.5">อีเมล:</span>
+                                 <div class="text-gray-800">${cEmail}</div>
+                             ` : ''}
+                             
+                             <!-- [MODIFIED] Changed Label from เลขภาษี to เลขที่ภาษี -->
+                             <span class="text-gray-500 text-xs font-bold pt-0.5">เลขที่ภาษี:</span>
+                             <div class="text-gray-800">${cTaxId}</div>
+                             
+                             <span class="text-gray-500 text-xs font-bold pt-0.5">ที่อยู่:</span>
+                             <div class="text-gray-800 leading-snug">${cAddress}</div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Right: Document Info -->
+                <div class="text-right">
+                    <div class="text-sm text-gray-500 mb-1">(${type})</div>
+                    <h1 class="text-2xl font-bold text-green-600 tracking-tight">ใบเสร็จรับเงิน/ใบกำกับภาษี</h1>
+                    <div class="mt-4 border border-green-200 bg-green-50 rounded-lg p-3 text-sm text-left shadow-sm force-print-bg">
+                        <div class="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+                            <strong class="text-green-800">เลขที่:</strong> <span class="text-gray-700 font-mono">${docNo}</span>
+                            <strong class="text-green-800">วันที่:</strong> <span class="text-gray-700">${dateStr}</span>
+                            <strong class="text-green-800">อ้างอิง:</strong> <span class="text-gray-700">${data.id}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <hr class="border-t-2 border-gray-100 my-4" />
+
+            <!-- [MODIFIED] Middle Section: Recipient & Image -->
+            <div class="grid grid-cols-12 gap-6 text-sm mb-4">
+                
+                <!-- Left: Recipient Info (Replaced Customer Card) -->
+                <div class="col-span-7">
+                    <div class="flex flex-col h-full">
+                        <h3 class="font-bold text-gray-800 mb-2 flex items-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>
+                            ข้อมูลจัดส่ง (Recipient & Shipping)
+                        </h3>
+                        <div class="bg-gray-50 rounded-xl p-4 border border-gray-100 flex-grow">
+                            <div class="grid grid-cols-[80px,1fr] gap-y-2">
+                                <span class="text-gray-500 text-xs font-bold pt-0.5">ผู้รับ:</span>
+                                <div class="text-gray-800 font-bold">
+                                    ${rName} 
+                                    ${rPhone !== '-' ? `<span class="font-normal text-gray-600 text-xs ml-2">(${rPhone})</span>` : ''}
+                                </div>
+
+                                <span class="text-gray-500 text-xs font-bold pt-0.5">กำหนดส่ง:</span>
+                                <div class="text-gray-800">${rDate}</div>
+
+                                <span class="text-gray-500 text-xs font-bold pt-0.5">สถานที่:</span>
+                                <div class="text-gray-800 leading-snug">${rLocation}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Right: Image (Same Position) -->
+                <div class="col-span-5">
+                     <div class="flex flex-col h-full">
+                        <h3 class="font-bold text-gray-800 mb-2 flex items-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                            รูปภาพ (Image)
+                        </h3>
+                        ${imageBlockHtml}
+                     </div>
+                </div>
+            </div>
+
+            <!-- Table Section -->
+            <div class="mb-4">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="bg-green-50 text-green-800 border-y border-green-100 force-print-bg">
+                            <th class="p-3 w-12 text-center font-bold first:rounded-l-lg">ลำดับ</th>
+                            <th class="p-3 text-left font-bold">รายละเอียด</th>
+                            <th class="p-3 w-20 text-right font-bold">จำนวน</th>
+                            <th class="p-3 w-28 text-right font-bold">ราคา/หน่วย</th>
+                            <th class="p-3 w-24 text-right font-bold">ส่วนลด</th>
+                            <th class="p-3 w-32 text-right font-bold last:rounded-r-lg">จำนวนเงิน</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowsHtml}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- [MODIFIED] Summary & Signature Section - Keep together on page break -->
+            <div class="keep-together mt-4">
+                
+                <!-- [MODIFIED] Baht Text -->
+                <div class="mb-4 p-2 bg-green-50/50 border border-green-100 rounded-lg flex items-center gap-2 text-sm force-print-bg">
+                    <strong class="text-green-800 min-w-fit">จำนวนเงินตัวอักษร:</strong> 
+                    <span class="font-bold text-green-700">(${bahtText})</span>
+                </div>
+
+                <div class="grid grid-cols-12 gap-8 text-sm">
+                    <div class="col-span-7 flex flex-col justify-between">
+                        <div class="space-y-2">
+                            <div class="flex gap-2 items-start">
+                                <strong class="min-w-[70px]">หมายเหตุ:</strong>
+                                <span class="text-gray-500 text-xs leading-relaxed">${data.note || '-'}</span>
+                            </div>
+                        </div>
+                        <div class="mt-8 pt-4 border-t border-gray-200 flex gap-8">
+                            <div class="text-center w-1/2">
+                                <div class="h-10 border-b border-dotted border-gray-400 w-full mb-2"></div>
+                                <span class="text-xs text-gray-400">ผู้รับวางบิล</span>
+                            </div>
+                            <div class="text-center w-1/2">
+                                <div class="h-10 border-b border-dotted border-gray-400 w-full mb-2"></div>
+                                <span class="text-xs text-gray-400">ผู้รับเงิน</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-span-5">
+                        <div class="space-y-2">
+                            <div class="flex justify-between text-gray-600">
+                                <span>มูลค่าสินค้า (ก่อนภาษี)</span>
+                                <span>${preVatAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                            </div>
+                            <div class="flex justify-between text-gray-600">
+                                <span>ภาษีมูลค่าเพิ่ม 7%</span>
+                                <span>${vatAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                            </div>
+                            ${nonVatableAmount > 0 ? `
+                            <div class="flex justify-between text-gray-600">
+                                <span>เงินสนับสนุน (ยกเว้นภาษี)</span>
+                                <span>${nonVatableAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                            </div>` : ''}
+                            <div class="flex justify-between text-gray-600 border-b border-gray-200 pb-2">
+                                <span>ส่วนลด</span>
+                                <span>0.00</span>
+                            </div>
+                            
+                            <!-- [MODIFIED] Grand Total Layout: Right aligned, small label, big amount -->
+                            <div class="flex flex-col items-end bg-green-50 p-3 rounded-lg border border-green-200 mt-2 force-print-bg">
+                                <span class="text-green-700 text-xs font-bold">จำนวนเงินทั้งสิ้น</span>
+                                <strong class="text-green-800 text-2xl font-black tracking-tight leading-none mt-1">฿${grandTotal.toLocaleString(undefined, {minimumFractionDigits: 2})}</strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const fullHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>พิมพ์ใบเสร็จ - ${data.id}</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;700&display=swap" rel="stylesheet">
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;700&display=swap');
+            body { 
+                font-family: 'Sarabun', sans-serif; 
+                background: #f3f4f6;
+                padding: 20px;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            .receipt-a4-container {
+                width: 210mm;
+                min-height: 297mm;
+                margin: 0 auto 20px auto;
+                background: white;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                padding: 40px;
+                position: relative;
+            }
+            .keep-together {
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            @media print {
+                body { 
+                    background: white; 
+                    padding: 0;
+                }
+                .receipt-a4-container {
+                    width: 100%;
+                    /* [MODIFIED] Adjust min-height for print with 0.5in margins (approx 270mm) */
+                    min-height: 270mm; 
+                    box-shadow: none;
+                    margin: 0;
+                    /* [MODIFIED] Remove padding to rely on @page margin for consistency across pages */
+                    padding: 0 !important; 
+                    page-break-after: always;
+                }
+                .page-break-after {
+                    page-break-after: always;
+                }
+                .force-print-bg {
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
+                }
+                /* [MODIFIED] Set margin to 0.5 inch */
+                @page { 
+                    size: A4; 
+                    margin: 0.5in; 
+                }
+                .no-print { display: none !important; }
+            }
+        </style>
+      </head>
+      <body>
+        <div class="no-print fixed top-4 right-4 z-50 flex gap-2">
+            <button onclick="window.print()" class="bg-blue-600 text-white px-6 py-2 rounded-lg shadow-lg font-bold hover:bg-blue-700 transition flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+                พิมพ์เอกสาร
+            </button>
+            <button onclick="window.close()" class="bg-gray-500 text-white px-6 py-2 rounded-lg shadow-lg font-bold hover:bg-gray-600 transition">
+                ปิด
+            </button>
+        </div>
+
+        ${generateReceiptContent('ต้นฉบับ')}
+        ${generateReceiptContent('สำเนา')}
+        <script>
+           // window.onload = function() { window.print(); }
+        </script>
+      </body>
+      </html>
+    `;
+
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+        printWindow.document.write(fullHtml);
+        printWindow.document.close();
+    } else {
+        alert('Pop-up ถูกบล็อก กรุณาอนุญาต Pop-up สำหรับเว็บไซต์นี้');
+    }
   };
 
   return createPortal(
@@ -3450,6 +3913,7 @@ const App = () => {
   const [customerLine, setCustomerLine] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
+  const [customerTaxId, setCustomerTaxId] = useState(''); // [ADDED] State for Customer Tax ID
   const [projectCategory, setProjectCategory] = useState('');
 
   const [deliveryStart, setDeliveryStart] = useState('');
@@ -3645,7 +4109,8 @@ const App = () => {
                     social: item.customerInfo?.social || '',
                     line: item.customerInfo?.line || '',
                     phone: item.customerInfo?.phone || '',
-                    email: item.customerInfo?.email || ''
+                    email: item.customerInfo?.email || '',
+                    taxId: item.customerInfo?.taxId || '' // [ADDED] Map taxId
                 });
             }
         });
@@ -4582,6 +5047,7 @@ const App = () => {
       setCustomerLine(existingCustomer.line || '');
       setCustomerPhone(existingCustomer.phone || '');
       setCustomerEmail(existingCustomer.email || '');
+      setCustomerTaxId(existingCustomer.taxId || ''); // [ADDED] Set taxId on autocomplete
     }
   };
 
@@ -4610,11 +5076,13 @@ const App = () => {
         setCustomerLine(activity.customerInfo.line || '');
         setCustomerPhone(activity.customerInfo.phone || '');
         setCustomerEmail(activity.customerInfo.email || '');
+        setCustomerTaxId(activity.customerInfo.taxId || ''); // [ADDED] Load taxId
       } else {
         setCustomerSocial('');
         setCustomerLine('');
         setCustomerPhone('');
         setCustomerEmail('');
+        setCustomerTaxId(''); // [ADDED] Reset taxId
       }
       setDeliveryStart(activity.rawDeliveryStart || '');
       setDeliveryEnd(activity.rawDeliveryEnd || activity.rawDeliveryDateTime || '');
@@ -4684,6 +5152,7 @@ const App = () => {
       setCustomerLine('');
       setCustomerPhone('');
       setCustomerEmail('');
+      setCustomerTaxId(''); // [ADDED] Reset taxId
       setRecipientName('');
       setRecipientPhone('');
       setLocationName('');
@@ -4710,7 +5179,8 @@ const App = () => {
         social: customerSocial,
         line: customerLine,
         phone: customerPhone,
-        email: customerEmail
+        email: customerEmail,
+        taxId: customerTaxId // [ADDED] Save taxId to customer list
       };
       const existingCustomerIndex = savedCustomers.findIndex(c => c.name === customerName);
       if (existingCustomerIndex === -1) {
@@ -4736,7 +5206,8 @@ const App = () => {
         social: customerSocial,
         line: customerLine,
         phone: customerPhone,
-        email: customerEmail
+        email: customerEmail,
+        taxId: customerTaxId // [ADDED] Save taxId to activity data
       },
       date: displayDate,
       rawDateTime: projectDateTime,
@@ -6515,6 +6986,19 @@ const App = () => {
                                   className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                               />
                           </div>
+                          
+                          {/* [ADDED] Tax ID Input for Shop */}
+                          <div className="space-y-1 sm:col-span-2">
+                              <label className="text-xs font-bold text-slate-500 ml-1">เลขประจำตัวผู้เสียภาษี (Tax ID)</label>
+                              <input 
+                                  type="text" 
+                                  placeholder="เลขผู้เสียภาษีร้านค้า..." 
+                                  value={shopInfo.taxId || ''}
+                                  onChange={e => setShopInfo({...shopInfo, taxId: e.target.value})}
+                                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              />
+                          </div>
+
                           <div className="space-y-1">
                               <label className="text-xs font-bold text-slate-500 ml-1">เบอร์โทรศัพท์</label>
                               <input 
@@ -6873,6 +7357,7 @@ const App = () => {
       {shareData && (
         <SharePreviewModal 
           data={shareData} 
+          shopInfo={shopInfo} // [MODIFIED] Pass shopInfo prop to modal
           onClose={() => setShareData(null)} 
         />
       )}
@@ -7266,6 +7751,14 @@ const App = () => {
                                 rawDateTime: projectDateTime,
                                 artist: artistName,
                                 customer: customerName,
+                                // [MODIFIED] Add customerInfo object to ensure contact details appear in print
+                                customerInfo: {
+                                    social: customerSocial,
+                                    line: customerLine,
+                                    phone: customerPhone,
+                                    email: customerEmail,
+                                    taxId: customerTaxId // [FIX] Added missing Tax ID
+                                },
                                 rawDeliveryStart: deliveryStart,
                                 rawDeliveryEnd: deliveryEnd,
                                 rawDeliveryDateTime: deliveryEnd,
@@ -7275,9 +7768,9 @@ const App = () => {
                                 recipientPhone: recipientPhone,
                                 image: uploadedImage,
                                 wage: wage,
-                                quotationItems: quotationItems, // [FIX] เพิ่มบรรทัดนี้เพื่อให้ส่งข้อมูลรายการย่อยไปด้วย
+                                quotationItems: quotationItems, 
                                 customerSupport: customerSupportItems,
-                                dealStatus: dealStatus, // เพิ่ม status ส่งไปด้วย
+                                dealStatus: dealStatus, 
                                 transportStatus: transportStatus
                             };
                             setShareData(currentData);
@@ -7392,6 +7885,21 @@ const App = () => {
                                         value={customerEmail}
                                         onChange={(e) => setCustomerEmail(e.target.value)}
                                         className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                                      />
+                                 )}
+
+                                 {/* [ADDED] Customer Tax ID Input */}
+                                 {viewOnlyMode ? (
+                                      <div className="sm:col-span-2">
+                                        <ViewOnlyField value={customerTaxId} type="text" icon={FileText} />
+                                      </div>
+                                 ) : (
+                                      <input
+                                        type="text"
+                                        placeholder="เลขประจำตัวผู้เสียภาษี (Tax ID)"
+                                        value={customerTaxId}
+                                        onChange={(e) => setCustomerTaxId(e.target.value)}
+                                        className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 sm:col-span-2"
                                       />
                                  )}
                              </div>
