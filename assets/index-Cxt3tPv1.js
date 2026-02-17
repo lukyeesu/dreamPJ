@@ -210,12 +210,14 @@ ${te}${Se}
                         </div>
                         <div class="mt-8 pt-4 border-t border-gray-200 flex gap-8">
                             <div class="text-center w-1/2">
-                                <div class="h-10 border-b border-dotted border-gray-400 w-full mb-2"></div>
-                                <span class="text-xs text-gray-400">ผู้รับวางบิล</span>
+                                <!-- [MODIFIED] Darker border and text for visibility -->
+                                <div class="h-10 border-b border-dotted border-gray-800 w-full mb-2"></div>
+                                <span class="text-xs font-bold text-black">ผู้รับวางบิล</span>
                             </div>
                             <div class="text-center w-1/2">
-                                <div class="h-10 border-b border-dotted border-gray-400 w-full mb-2"></div>
-                                <span class="text-xs text-gray-400">ผู้รับเงิน</span>
+                                <!-- [MODIFIED] Darker border and text for visibility -->
+                                <div class="h-10 border-b border-dotted border-gray-800 w-full mb-2"></div>
+                                <span class="text-xs font-bold text-black">ผู้รับเงิน</span>
                             </div>
                         </div>
                     </div>
