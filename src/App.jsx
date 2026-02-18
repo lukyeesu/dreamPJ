@@ -1829,7 +1829,8 @@ ${moneyOrderDetails}${quotationDetails}
     
     // Customer Info
     const cName = data.customer || 'ลูกค้าทั่วไป';
-    const cAddress = '-'; 
+    // [MODIFIED] Use address from data instead of placeholder
+    const cAddress = data.customerInfo?.address || '-'; 
     const cTaxId = data.customerInfo?.taxId || '-'; 
     const cPhone = data.customerInfo?.phone || '-';
     const cEmail = data.customerInfo?.email || '-';
@@ -3988,6 +3989,8 @@ const App = () => {
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [customerTaxId, setCustomerTaxId] = useState(''); // [ADDED] State for Customer Tax ID
+  // [ADDED] State for Customer Address
+  const [customerAddress, setCustomerAddress] = useState(''); 
   const [projectCategory, setProjectCategory] = useState('');
 
   const [deliveryStart, setDeliveryStart] = useState('');
@@ -4177,14 +4180,19 @@ const App = () => {
 
         const customersMap = new Map();
         uniqueItems.forEach(item => {
-            if (item.customer && !customersMap.has(item.customer)) {
+            // [MODIFIED] Improved logic to merge customer info (keep latest available data including Address)
+            if (item.customer) {
+                const existing = customersMap.get(item.customer) || {};
+                const info = item.customerInfo || {};
+                
                 customersMap.set(item.customer, {
                     name: item.customer,
-                    social: item.customerInfo?.social || '',
-                    line: item.customerInfo?.line || '',
-                    phone: item.customerInfo?.phone || '',
-                    email: item.customerInfo?.email || '',
-                    taxId: item.customerInfo?.taxId || '' // [ADDED] Map taxId
+                    social: info.social || existing.social || '',
+                    line: info.line || existing.line || '',
+                    phone: info.phone || existing.phone || '',
+                    email: info.email || existing.email || '',
+                    taxId: info.taxId || existing.taxId || '', 
+                    address: info.address || existing.address || '' // [ADDED] Map Address for Auto-complete
                 });
             }
         });
@@ -5121,7 +5129,9 @@ const App = () => {
       setCustomerLine(existingCustomer.line || '');
       setCustomerPhone(existingCustomer.phone || '');
       setCustomerEmail(existingCustomer.email || '');
-      setCustomerTaxId(existingCustomer.taxId || ''); // [ADDED] Set taxId on autocomplete
+      setCustomerTaxId(existingCustomer.taxId || '');
+      // [ADDED] Load address from saved customer
+      setCustomerAddress(existingCustomer.address || ''); 
     }
   };
 
@@ -5150,13 +5160,17 @@ const App = () => {
         setCustomerLine(activity.customerInfo.line || '');
         setCustomerPhone(activity.customerInfo.phone || '');
         setCustomerEmail(activity.customerInfo.email || '');
-        setCustomerTaxId(activity.customerInfo.taxId || ''); // [ADDED] Load taxId
+        setCustomerTaxId(activity.customerInfo.taxId || '');
+        // [ADDED] Load address
+        setCustomerAddress(activity.customerInfo.address || ''); 
       } else {
         setCustomerSocial('');
         setCustomerLine('');
         setCustomerPhone('');
         setCustomerEmail('');
-        setCustomerTaxId(''); // [ADDED] Reset taxId
+        setCustomerTaxId('');
+        // [ADDED] Reset address
+        setCustomerAddress(''); 
       }
       setDeliveryStart(activity.rawDeliveryStart || '');
       setDeliveryEnd(activity.rawDeliveryEnd || activity.rawDeliveryDateTime || '');
@@ -5226,7 +5240,9 @@ const App = () => {
       setCustomerLine('');
       setCustomerPhone('');
       setCustomerEmail('');
-      setCustomerTaxId(''); // [ADDED] Reset taxId
+      setCustomerTaxId('');
+      // [ADDED] Reset address
+      setCustomerAddress(''); 
       setRecipientName('');
       setRecipientPhone('');
       setLocationName('');
@@ -5254,7 +5270,9 @@ const App = () => {
         line: customerLine,
         phone: customerPhone,
         email: customerEmail,
-        taxId: customerTaxId // [ADDED] Save taxId to customer list
+        taxId: customerTaxId,
+        // [ADDED] Save address to customer list
+        address: customerAddress 
       };
       const existingCustomerIndex = savedCustomers.findIndex(c => c.name === customerName);
       if (existingCustomerIndex === -1) {
@@ -5281,7 +5299,9 @@ const App = () => {
         line: customerLine,
         phone: customerPhone,
         email: customerEmail,
-        taxId: customerTaxId // [ADDED] Save taxId to activity data
+        taxId: customerTaxId,
+        // [ADDED] Save address to activity data
+        address: customerAddress 
       },
       date: displayDate,
       rawDateTime: projectDateTime,
@@ -7975,6 +7995,21 @@ const App = () => {
                                         value={customerTaxId}
                                         onChange={(e) => setCustomerTaxId(e.target.value)}
                                         className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 sm:col-span-2"
+                                      />
+                                 )}
+
+                                 {/* [ADDED] Customer Address Input (New Row) */}
+                                 {viewOnlyMode ? (
+                                      <div className="sm:col-span-2">
+                                        <ViewOnlyField value={customerAddress} type="text" icon={MapPin} />
+                                      </div>
+                                 ) : (
+                                      <textarea
+                                        rows={2}
+                                        placeholder="ที่อยู่ลูกค้า (แสดงบนใบเสร็จ)"
+                                        value={customerAddress}
+                                        onChange={(e) => setCustomerAddress(e.target.value)}
+                                        className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 sm:col-span-2 resize-none"
                                       />
                                  )}
                              </div>
