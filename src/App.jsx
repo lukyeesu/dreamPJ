@@ -554,6 +554,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
   const [viewDate, setViewDate] = useState(new Date());
   const [viewMode, setViewMode] = useState('month'); // 'month', 'week', 'day', 'list'
   const [selectedDayDetails, setSelectedDayDetails] = useState(null); // Data for modal
+  const [isDayModalClosing, setIsDayModalClosing] = useState(false); // [ADDED] State for modal closing animation
   
   const monthsTH = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
   // [FIX] Added missing monthsShortTH definition
@@ -898,14 +899,25 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
   };
 
   // --- Requirement 3: Day Details Modal (Using Portal for better z-index management) ---
+  const closeDayDetailsModal = () => {
+      setIsDayModalClosing(true);
+      setTimeout(() => {
+          setSelectedDayDetails(null);
+          setIsDayModalClosing(false);
+      }, 300); // 300ms matches animation duration
+  };
+
   const renderDayDetailsModal = () => {
       if (!selectedDayDetails) return null;
       const { date, events } = selectedDayDetails;
 
       return createPortal(
         <div className="fixed inset-0 z-[55] flex items-center justify-center p-4">
-            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setSelectedDayDetails(null)} />
-            <div className="bg-white w-full max-w-5xl rounded-[2rem] shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
+            <div 
+                className={`fixed inset-0 bg-slate-900/60 backdrop-blur-sm ${isDayModalClosing ? 'backdrop-animate-out' : 'animate-in fade-in duration-300'}`} 
+                onClick={closeDayDetailsModal} 
+            />
+            <div className={`bg-white w-full max-w-5xl rounded-[2rem] shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[90vh] ${isDayModalClosing ? 'modal-animate-out' : 'modal-animate-in'}`}>
                 <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-white">
                     <div className="flex items-center gap-3">
                         <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex flex-col items-center justify-center border border-indigo-100">
@@ -917,7 +929,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                             <p className="text-slate-500 text-sm font-medium">{daysTH[date.getDay()]}ที่ {date.getDate()} {monthsTH[date.getMonth()]} {date.getFullYear()+543}</p>
                         </div>
                     </div>
-                    <button onClick={() => setSelectedDayDetails(null)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition">
+                    <button onClick={closeDayDetailsModal} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition">
                         <X className="w-6 h-6" />
                     </button>
                 </div>
@@ -944,6 +956,8 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                                                 const time = item.rawDeliveryStart ? new Date(item.rawDeliveryStart).toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}) : '-';
                                                 // [MODIFIED] Resolve Status for Modal Table
                                                 const statusInfo = resolveStatus(item.dealStatus, dealStatuses);
+                                                // [ADDED] Resolve Transport Status
+                                                const transportInfo = resolveStatus(item.transportStatus, transportStatuses);
                                                 
                                                 return (
                                                     <tr key={i} onClick={() => onEventClick(item)} className="hover:bg-indigo-50/30 cursor-pointer transition-colors group">
@@ -973,10 +987,17 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                                                             )}
                                                         </td>
                                                         <td className="p-4 align-top">
-                                                            <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${statusInfo.color}`}>
-                                                                <div className={`w-1.5 h-1.5 rounded-full ${statusInfo.type === 'confirmed' || statusInfo.type === 'completed' ? 'bg-emerald-500' : 'bg-slate-400'}`}></div>
-                                                                {statusInfo.label}
-                                                            </span>
+                                                            {/* [MODIFIED] Show both Deal and Transport Status */}
+                                                            <div className="flex flex-col gap-1.5 items-start">
+                                                                <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${statusInfo.color}`}>
+                                                                    <div className={`w-1.5 h-1.5 rounded-full ${statusInfo.type === 'confirmed' || statusInfo.type === 'completed' ? 'bg-emerald-500' : 'bg-slate-400'}`}></div>
+                                                                    {statusInfo.label}
+                                                                </span>
+                                                                <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${transportInfo.color}`}>
+                                                                    <Truck className="w-3 h-3" />
+                                                                    {transportInfo.label}
+                                                                </span>
+                                                            </div>
                                                         </td>
                                                         <td className="p-4 align-top text-right font-bold text-slate-800">
                                                             {parseFloat(item.wage || 0).toLocaleString()}
@@ -995,6 +1016,8 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                                     const time = item.rawDeliveryStart ? new Date(item.rawDeliveryStart).toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}) : '-';
                                     // [MODIFIED] Resolve Status for Mobile Card in Modal
                                     const statusInfo = resolveStatus(item.dealStatus, dealStatuses);
+                                    // [ADDED] Resolve Transport Status
+                                    const transportInfo = resolveStatus(item.transportStatus, transportStatuses);
 
                                     return (
                                         <div key={i} onClick={() => onEventClick(item)} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-3 active:scale-95 transition-transform">
@@ -1007,10 +1030,17 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                                                          <span className="text-xs font-bold text-slate-500">{time} น.</span>
                                                     </div>
                                                 </div>
-                                                <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${statusInfo.color}`}>
-                                                    <div className={`w-1.5 h-1.5 rounded-full ${statusInfo.type === 'confirmed' || statusInfo.type === 'completed' ? 'bg-emerald-500' : 'bg-slate-400'}`}></div>
-                                                    {statusInfo.label}
-                                                </span>
+                                                {/* [MODIFIED] Show both statuses stacked on mobile */}
+                                                <div className="flex flex-col gap-1 items-end">
+                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${statusInfo.color}`}>
+                                                        <div className={`w-1.5 h-1.5 rounded-full ${statusInfo.type === 'confirmed' || statusInfo.type === 'completed' ? 'bg-emerald-500' : 'bg-slate-400'}`}></div>
+                                                        {statusInfo.label}
+                                                    </span>
+                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${transportInfo.color}`}>
+                                                        <Truck className="w-3 h-3" />
+                                                        {transportInfo.label}
+                                                    </span>
+                                                </div>
                                             </div>
                                             
                                             <div>
@@ -1055,7 +1085,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                     )}
                 </div>
                 <div className="p-4 border-t border-slate-100 bg-white flex justify-end">
-                    <button onClick={() => setSelectedDayDetails(null)} className="px-6 py-2 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition">
+                    <button onClick={closeDayDetailsModal} className="px-6 py-2 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition">
                         ปิด
                     </button>
                 </div>
@@ -2185,16 +2215,16 @@ ${moneyOrderDetails}${quotationDetails}
                     </div>
                 </div>
                 
-                <div class="flex gap-8 justify-between mt-2">
+                <div class="flex gap-8 justify-between mt-10"> <!-- [MODIFIED] Increased margin-top (approx 1.5 lines spacing) -->
                     <div class="text-center w-1/2 px-8">
                         <div class="h-8 border-b border-dotted border-gray-800 w-full mb-1"></div>
                         <span class="text-xs font-bold text-black">ผู้รับวางบิล</span>
-                        <div class="mt-1 text-[9px] text-gray-400">วันที่ ...../...../..........</div>
+                        <div class="mt-1 text-xs font-bold text-black">วันที่ ...../...../..........</div> <!-- [MODIFIED] Increased font size and weight -->
                     </div>
                     <div class="text-center w-1/2 px-8">
                         <div class="h-8 border-b border-dotted border-gray-800 w-full mb-1"></div>
                         <span class="text-xs font-bold text-black">ผู้รับเงิน</span>
-                        <div class="mt-1 text-[9px] text-gray-400">วันที่ ...../...../..........</div>
+                        <div class="mt-1 text-xs font-bold text-black">วันที่ ...../...../..........</div> <!-- [MODIFIED] Increased font size and weight -->
                     </div>
                 </div>
             </div>` : ``}
@@ -2665,7 +2695,8 @@ const LoadingOverlay = () => createPortal(
   document.body
 );
 
-const LoginScreen = ({ onLogin, isLoading, loginError }) => {
+// [MODIFIED] Added shopInfo prop to LoginScreen for branding
+const LoginScreen = ({ onLogin, isLoading, loginError, shopInfo }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
@@ -2680,11 +2711,30 @@ const LoginScreen = ({ onLogin, isLoading, loginError }) => {
     <div className="fixed inset-0 z-[200] bg-slate-50 flex items-center justify-center p-4">
       <div className="bg-white w-full max-w-md p-8 rounded-[2.5rem] shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-500">
         <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 bg-indigo-600 rounded-3xl flex items-center justify-center shadow-lg shadow-indigo-200 mb-4 rotate-3 hover:rotate-6 transition-transform">
-            <Clipboard className="w-8 h-8 text-white" />
+          {/* [MODIFIED] Logo Display Logic */}
+          <div className={`w-20 h-20 rounded-3xl flex items-center justify-center shadow-lg shadow-indigo-200 mb-4 rotate-3 hover:rotate-6 transition-transform overflow-hidden relative ${shopInfo?.logo ? 'bg-transparent' : 'bg-indigo-600'}`}>
+             {shopInfo?.logo ? (
+                <img 
+                    src={processImageUrl(shopInfo.logo)} 
+                    alt="App Logo" 
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => { 
+                        e.target.style.display = 'none'; 
+                        if(e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                        e.target.parentElement.classList.add('bg-indigo-600');
+                    }}
+                />
+             ) : null}
+             <div className={`w-full h-full flex items-center justify-center ${shopInfo?.logo ? 'hidden' : 'flex'}`}>
+                <Clipboard className="w-10 h-10 text-white" />
+             </div>
           </div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">ProjectPlan</h1>
-          <p className="text-slate-500 text-sm mt-1">เข้าสู่ระบบเพื่อจัดการแผนงาน</p>
+          
+          <h1 className="text-3xl font-black bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent tracking-tight text-center leading-tight">
+            {shopInfo?.shopName || 'ProjectPlan'}
+          </h1>
+          <p className="text-slate-500 text-sm mt-2 font-medium">เข้าสู่ระบบเพื่อจัดการแผนงาน</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
@@ -2768,11 +2818,7 @@ const LoginScreen = ({ onLogin, isLoading, loginError }) => {
           </div>
         </form>
         
-        <div className="mt-6 text-center">
-           <p className="text-xs text-slate-400 bg-slate-50 py-2 px-4 rounded-lg inline-block border border-slate-100">
-             ค่าเริ่มต้น: admin / password1234
-           </p>
-        </div>
+        {/* Removed default credentials hint */}
       </div>
     </div>
   );
@@ -4269,46 +4315,63 @@ const App = () => {
       setIsSaving(true);
       
       // [MODIFIED] Support saving object (multiple keys) or single key
-      const payloadData = (typeof key === 'object') ? key : { [key]: value };
+      const partialData = (typeof key === 'object') ? key : { [key]: value };
+
+      // [FIXED] Construct FULL data from current state to prevent overwriting/data loss on backend
+      // รวมค่าปัจจุบันทั้งหมดใน State เข้าไปด้วย เพื่อให้ Backend บันทึกทับได้ครบถ้วนไม่สูญหาย
+      const fullPayload = {
+          project_categories: projectCategories,
+          expense_categories: expenseCategories,
+          deal_statuses: dealStatuses,
+          transport_statuses: transportStatuses,
+          drive_folder_id: driveFolderId,
+          assets_drive_folder_id: assetsDriveFolderId,
+          line_bot_token: lineBotToken,
+          telegram_bot_token: telegramBotToken,
+          telegram_chat_id: telegramChatId,
+          web_app_url: webAppUrl,
+          shop_info: shopInfo,
+          // ใช้ข้อมูลใหม่จาก partialData ถ้ามี ถ้าไม่มีให้ใช้จาก State ปัจจุบัน
+          app_credentials: partialData.app_credentials || authorizedUsers,
+          ...partialData // Override with new values
+      };
 
       try {
           await fetch(GOOGLE_SCRIPT_URL, {
               method: 'POST',
               body: JSON.stringify({
                   action: 'saveSettings',
-                  data: payloadData
+                  data: fullPayload // Send Full Data instead of partial
               })
           });
           
-          // Update Local States based on payload keys
-          if (payloadData.app_credentials) {
-              setAuthorizedUsers(payloadData.app_credentials);
-              localStorage.setItem('nexus_authorized_users', JSON.stringify(payloadData.app_credentials));
+          // Update Local States based on payload keys (partialData)
+          if (partialData.app_credentials) {
+              setAuthorizedUsers(partialData.app_credentials);
+              localStorage.setItem('nexus_authorized_users', JSON.stringify(partialData.app_credentials));
           }
-          if (payloadData.drive_folder_id) {
-              setDriveFolderId(payloadData.drive_folder_id);
+          if (partialData.drive_folder_id) {
+              setDriveFolderId(partialData.drive_folder_id);
           }
-          if (payloadData.assets_drive_folder_id) { 
-              setAssetsDriveFolderId(payloadData.assets_drive_folder_id);
+          if (partialData.assets_drive_folder_id) { 
+              setAssetsDriveFolderId(partialData.assets_drive_folder_id);
           }
-          if (payloadData.line_bot_token !== undefined) {
-              setLineBotToken(payloadData.line_bot_token);
+          if (partialData.line_bot_token !== undefined) {
+              setLineBotToken(partialData.line_bot_token);
           }
-          if (payloadData.telegram_bot_token !== undefined) {
-              setTelegramBotToken(payloadData.telegram_bot_token);
+          if (partialData.telegram_bot_token !== undefined) {
+              setTelegramBotToken(partialData.telegram_bot_token);
           }
-          if (payloadData.telegram_chat_id !== undefined) { // [ADDED] Update Chat ID
-              setTelegramChatId(payloadData.telegram_chat_id);
+          if (partialData.telegram_chat_id !== undefined) { 
+              setTelegramChatId(partialData.telegram_chat_id);
           }
-          if (payloadData.web_app_url !== undefined) { 
-              setWebAppUrl(payloadData.web_app_url);
+          if (partialData.web_app_url !== undefined) { 
+              setWebAppUrl(partialData.web_app_url);
           }
-          if (payloadData.gemini_api_key !== undefined) {
-              setGeminiApiKey(payloadData.gemini_api_key);
-          }
-          if (payloadData.shop_info) {
-              setShopInfo(payloadData.shop_info);
-              localStorage.setItem('nexus_shop_info', JSON.stringify(payloadData.shop_info));
+          // if (partialData.gemini_api_key !== undefined) { ... }
+          if (partialData.shop_info) {
+              setShopInfo(partialData.shop_info);
+              localStorage.setItem('nexus_shop_info', JSON.stringify(partialData.shop_info));
           }
           showToast("บันทึกการตั้งค่าสำเร็จ", "success");
       } catch (error) {
@@ -4519,10 +4582,12 @@ const App = () => {
   const handleProfileImageUpload = async (file) => {
       if (!file) return;
       
-      // ตรวจสอบว่าตั้งค่า Assets Folder ID หรือยัง
-      if (!assetsDriveFolderId && GOOGLE_SCRIPT_URL) {
-          showToast("กรุณาระบุ Assets Folder ID ในตั้งค่าก่อนอัปโหลดรูปโปรไฟล์", "error");
-          return;
+      // [MODIFIED] Stricter check for Assets Folder ID
+      if (!assetsDriveFolderId || typeof assetsDriveFolderId !== 'string' || assetsDriveFolderId.trim() === '') {
+          if (GOOGLE_SCRIPT_URL) {
+             showToast("กรุณาระบุ Assets Folder ID ในตั้งค่าก่อนอัปโหลดรูปโปรไฟล์", "error");
+             return;
+          }
       }
 
       setIsUploadingProfile(true);
@@ -4546,19 +4611,21 @@ const App = () => {
           setUserProfile(tempProfile);
 
           if (GOOGLE_SCRIPT_URL) {
-              const cleanBase64 = base64Data.split(',')[1];
+              // [FIX] Send FULL base64 string (Data URI) so backend can parse mimeType correctly
+              // ไม่ต้องตัด cleanBase64 เอง ให้ส่งไปทั้งเส้นเลย เพื่อให้ฟังก์ชัน uploadImageToDrive ทำงานได้
               const mimeType = base64Data.split(',')[0].match(/:(.*?);/)[1];
-              const fileName = `profile_${userProfile.username}_${Date.now()}.jpg`;
+              const extension = mimeType.includes('png') ? 'png' : 'jpg';
+              const fileName = `profile_${userProfile.username}_${Date.now()}.${extension}`;
 
               const response = await fetch(GOOGLE_SCRIPT_URL, {
                   method: 'POST',
                   body: JSON.stringify({
                       action: 'uploadAsset', 
                       data: {
-                          fileData: cleanBase64,
+                          fileData: base64Data, // [FIX] Send full Data URI
                           mimeType: mimeType,
                           fileName: fileName,
-                          folderId: assetsDriveFolderId
+                          folderId: assetsDriveFolderId.trim()
                       }
                   })
               });
@@ -4678,9 +4745,12 @@ const App = () => {
   const handleLogoUpload = async (file) => {
       if (!file) return;
       
-      if (!assetsDriveFolderId && GOOGLE_SCRIPT_URL) {
-          showToast("กรุณาระบุ Assets Folder ID ในตั้งค่าก่อนอัปโหลดโลโก้", "error");
-          return;
+      // [MODIFIED] Stricter check for Assets Folder ID
+      if (!assetsDriveFolderId || typeof assetsDriveFolderId !== 'string' || assetsDriveFolderId.trim() === '') {
+          if (GOOGLE_SCRIPT_URL) {
+             showToast("กรุณาระบุ Assets Folder ID ในตั้งค่าก่อนอัปโหลดโลโก้", "error");
+             return;
+          }
       }
 
       setIsUploadingLogo(true);
@@ -4704,19 +4774,21 @@ const App = () => {
           setShopInfo(tempShopInfo);
 
           if (GOOGLE_SCRIPT_URL) {
-              const cleanBase64 = base64Data.split(',')[1];
+              // [FIX] Send FULL base64 string (Data URI)
               const mimeType = base64Data.split(',')[0].match(/:(.*?);/)[1];
-              const fileName = `shop_logo_${Date.now()}.jpg`;
+              // [FIX] Determine extension dynamically from mimeType instead of hardcoding .jpg
+              const extension = mimeType.includes('png') ? 'png' : 'jpg';
+              const fileName = `shop_logo_${Date.now()}.${extension}`;
 
               const response = await fetch(GOOGLE_SCRIPT_URL, {
                   method: 'POST',
                   body: JSON.stringify({
                       action: 'uploadAsset', 
                       data: {
-                          fileData: cleanBase64,
+                          fileData: base64Data, // [FIX] Send full Data URI
                           mimeType: mimeType,
                           fileName: fileName,
-                          folderId: assetsDriveFolderId
+                          folderId: assetsDriveFolderId.trim() // [FIX] Ensure trimmed ID
                       }
                   })
               });
@@ -5458,6 +5530,33 @@ const App = () => {
     setQuotationItems(newItems);
   };
 
+  // [FIX] Added missing handler for Support Items (Money Order Calculator)
+  const handleSupportItemChange = (index, field, value) => {
+    const newItems = [...customerSupportItems];
+    const item = { ...newItems[index] };
+
+    if (field === 'denomination') {
+        item.denomination = parseFloat(value) || 0;
+        // Recalculate price based on new denomination
+        item.price = item.denomination * (parseFloat(item.quantity) || 0);
+    } else if (field === 'quantity') {
+        item.quantity = parseFloat(value) || 0;
+        // Recalculate price based on new quantity
+        item.price = (parseFloat(item.denomination) || 0) * item.quantity;
+    } else if (field === 'price') {
+        item.price = parseFloat(value) || 0;
+        // Optional: Reverse calculate quantity if denomination is set
+        if (item.denomination > 0) {
+             const qty = item.price / item.denomination;
+             // Keep decimal if not exact division, but money usually integers
+             item.quantity = Number.isInteger(qty) ? qty : parseFloat(qty.toFixed(2));
+        }
+    }
+
+    newItems[index] = item;
+    setCustomerSupportItems(newItems);
+  };
+
   // [NEW] Support Item Handlers with Calculator Logic
   const handleAddSupportItem = () => {
     setCustomerSupportItems([...customerSupportItems, { denomination: 20, quantity: 0, price: 0 }]);
@@ -6182,7 +6281,8 @@ const App = () => {
 
     // 2. ถ้าไม่มี Tracking ID ก็เข้า Flow ปกติ (Login -> Dashboard)
     if (!isLoggedIn) {
-        return <LoginScreen onLogin={handleLogin} isLoading={isLoading} loginError={loginError} />;
+        // [MODIFIED] Pass shopInfo to LoginScreen
+        return <LoginScreen onLogin={handleLogin} isLoading={isLoading} loginError={loginError} shopInfo={shopInfo} />;
     }
     // [MODIFIED] Use isSettingsLoaded to prevent flash of wrong theme
     if ((isLoading && allActivities.length === 0) || !isSettingsLoaded) {
@@ -7470,8 +7570,8 @@ const App = () => {
             </button>
 
             <div className={`p-6 pb-4 flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
-            {/* [MODIFIED] Sidebar Logo & Title based on Shop Info */}
-            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200 shrink-0 overflow-hidden relative">
+            {/* [MODIFIED] Sidebar Logo: Remove shadow and background if logo exists to avoid white box effect */}
+            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 overflow-hidden relative ${shopInfo.logo ? '' : 'bg-indigo-600 shadow-lg shadow-indigo-200'}`}>
                 {shopInfo.logo ? (
                     <img 
                         src={processImageUrl(shopInfo.logo)} 
@@ -7481,6 +7581,8 @@ const App = () => {
                         onError={(e) => { 
                             e.target.style.display = 'none'; 
                             if(e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                            // If image fails, add background and shadow back
+                            e.target.parentElement.classList.add('bg-indigo-600', 'shadow-lg', 'shadow-indigo-200');
                         }}
                     />
                 ) : null}
@@ -8070,7 +8172,19 @@ const App = () => {
                              <div className="grid grid-cols-2 gap-2">
                                 <ModernDateTimePicker 
                                     value={deliveryStart} 
-                                    onChange={(e) => setDeliveryStart(e.target.value)} 
+                                    onChange={(e) => {
+                                        setDeliveryStart(e.target.value);
+                                        // [ADDED] Auto increment End Time by 1 hour
+                                        if (e.target.value) {
+                                            const startDate = new Date(e.target.value);
+                                            if (!isNaN(startDate.getTime())) {
+                                                const endDate = new Date(startDate.getTime() + 60 * 60 * 1000); // Add 1 hour
+                                                const offset = endDate.getTimezoneOffset() * 60000;
+                                                const localISOEnd = new Date(endDate.getTime() - offset).toISOString().slice(0, 16);
+                                                setDeliveryEnd(localISOEnd);
+                                            }
+                                        }
+                                    }}
                                     placeholder="เริ่ม..." 
                                     disabled={viewOnlyMode} 
                                 />
@@ -8276,11 +8390,11 @@ const App = () => {
                                   {customerSupportItems.map((item, idx) => (
                                       <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center animate-in fade-in slide-in-from-left-2 duration-300 bg-white p-2 sm:p-0 rounded-xl sm:bg-transparent border sm:border-none border-indigo-100 shadow-sm sm:shadow-none">
                                           <div className="sm:col-span-4 relative">
-                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block">ประเภทแบงค์</span>
+                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">ประเภทแบงค์</span>
                                               <select
                                                   value={item.denomination}
                                                   onChange={(e) => handleSupportItemChange(idx, 'denomination', e.target.value)}
-                                                  className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none font-bold text-slate-700"
+                                                  className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none font-bold text-slate-700 text-center sm:text-left"
                                               >
                                                   {[1000, 500, 100, 50, 20, 10, 5, 2, 1].map(val => (
                                                       <option key={val} value={val}>{val >= 20 ? `แบงค์ ${val}` : `เหรียญ ${val}`}</option>
@@ -8289,23 +8403,23 @@ const App = () => {
                                               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none hidden sm:block" />
                                           </div>
                                           <div className="sm:col-span-3">
-                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block">จำนวน</span>
+                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">จำนวน</span>
                                               <input
                                                   type="number"
                                                   placeholder="จำนวน"
-                                                  value={item.quantity}
+                                                  value={item.quantity === 0 ? '' : item.quantity} // [MODIFIED] Show empty if 0
                                                   onChange={(e) => handleSupportItemChange(idx, 'quantity', e.target.value)}
                                                   className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-center"
                                               />
                                           </div>
                                           <div className="sm:col-span-4">
-                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block">รวมเงิน</span>
+                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">รวมเงิน</span>
                                               <input
                                                   type="number"
                                                   placeholder="0.00"
-                                                  value={item.price}
+                                                  value={item.price === 0 ? '' : item.price} // [MODIFIED] Show empty if 0
                                                   onChange={(e) => handleSupportItemChange(idx, 'price', e.target.value)}
-                                                  className="w-full px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-sm font-black text-indigo-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-right"
+                                                  className="w-full px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-sm font-black text-indigo-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-center sm:text-right"
                                               />
                                           </div>
                                           <div className="sm:col-span-1 flex justify-center sm:justify-end">
