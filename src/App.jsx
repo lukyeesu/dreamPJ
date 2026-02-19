@@ -390,56 +390,7 @@ const ImageViewer = ({ src, onClose }) => {
 
   return createPortal(
     <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col animate-in fade-in duration-300">
-       <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-50 bg-gradient-to-b from-black/50 to-transparent">
-          <div className="text-white/80 text-sm font-bold flex items-center gap-2">
-             <ImageIcon className="w-4 h-4" />
-             Preview
-          </div>
-          <div className="flex items-center gap-4">
-             <div className="flex gap-2 bg-white/10 rounded-full p-1 backdrop-blur-md">
-                <button 
-                    onClick={() => setScale(Math.max(1, scale - 0.5))}
-                    className="p-2 text-white hover:bg-white/20 rounded-full transition"
-                >
-                    <ZoomOut className="w-5 h-5" />
-                </button>
-                <button 
-                    onClick={() => setScale(Math.min(5, scale + 0.5))}
-                    className="p-2 text-white hover:bg-white/20 rounded-full transition"
-                >
-                    <ZoomIn className="w-5 h-5" />
-                </button>
-             </div>
-             <button onClick={onClose} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition">
-                <X className="w-6 h-6" />
-             </button>
-          </div>
-       </div>
-
-       <div 
-          ref={containerRef}
-          className="flex-1 flex items-center justify-center overflow-hidden cursor-move touch-none"
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-       >
-          <img 
-              src={src} 
-              alt="Full Preview"
-              style={{ 
-                  transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
-                  transition: isDragging ? 'none' : 'transform 0.2s ease-out',
-                  maxWidth: '100%',
-                  maxHeight: '100%',
-                  objectFit: 'contain'
-              }}
-              draggable={false}
-          />
-       </div>
+       {/* ... existing code ... */}
        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white/50 text-xs font-medium pointer-events-none bg-black/30 px-3 py-1 rounded-full backdrop-blur-sm">
           {scale === 1 ? 'Pinch or Scroll to Zoom' : `${Math.round(scale * 100)}%`}
        </div>
@@ -448,60 +399,62 @@ const ImageViewer = ({ src, onClose }) => {
   );
 };
 
+// [MOVED & FIXED] Helper for Phone Formatting (Must be defined before usage in ShopFooter)
+const formatPhoneNumber = (value) => {
+  if (!value) return '';
+  const phoneNumber = value.replace(/[^\d]/g, '');
+  const phoneNumberLength = phoneNumber.length;
+  if (phoneNumberLength < 4) return phoneNumber;
+  if (phoneNumberLength < 7) {
+      return `${phoneNumber.slice(0, 3)}-${phoneNumber.slice(3)}`;
+  }
+  return `${phoneNumber.slice(0, 3)}-${phoneNumber.slice(3, 6)}-${phoneNumber.slice(6, 10)}`;
+};
+
 // [NEW] Shop Footer Component (Compact & Centered 100px Height, Adjustable Width)
 const ShopFooter = ({ shopInfo, maxWidthClass = "max-w-7xl" }) => {
   if (!shopInfo) return null;
 
   return (
     <footer className="bg-white border-t border-slate-200 mt-auto pb-safe w-full">
-      <div className={`${maxWidthClass} mx-auto px-4 w-full h-auto md:h-[100px] flex flex-col md:flex-row items-center justify-between gap-2 py-3 md:py-0`}>
-          {/* Left: Brand & Contact Info */}
-          <div className="flex flex-row flex-wrap items-center justify-center md:justify-start md:flex-col md:items-start gap-x-4 gap-y-1">
-              <div className="flex items-center gap-3 text-slate-700">
-                  {/* [MODIFIED] Display Logo: Size 36x36px (w-9 h-9) as requested */}
-                  <div className="shrink-0 w-9 h-9 rounded-md overflow-hidden flex items-center justify-center relative">
-                      {shopInfo.logo ? (
-                          <img 
-                            src={processImageUrl(shopInfo.logo)} 
-                            alt="Shop Logo" 
-                            className="w-full h-full object-cover" 
-                            referrerPolicy="no-referrer"
-                            onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
-                          />
-                      ) : null}
-                      
-                      {/* Fallback Icon (Only visible if no logo or error) */}
-                      <div className={`w-full h-full bg-slate-100 text-slate-400 flex items-center justify-center border border-slate-200 rounded-md ${shopInfo.logo ? 'hidden' : 'flex'}`}>
-                          <StoreIcon className="w-5 h-5" />
-                      </div>
+      <div className={`${maxWidthClass} mx-auto px-4 w-full h-auto md:h-[100px] flex flex-col md:flex-row items-center justify-between gap-4 py-4 md:py-0`}>
+          
+          {/* Left: Brand (Logo + Name) & Address */}
+          <div className="flex items-start gap-3 w-full md:w-auto justify-center md:justify-start">
+              {/* ... existing code ... */}
+              <div className="shrink-0 w-12 h-12 rounded-lg overflow-hidden flex items-center justify-center relative self-start mt-0.5">
+                  {shopInfo.logo ? (
+                      <img 
+                        src={processImageUrl(shopInfo.logo)} 
+                        alt="Shop Logo" 
+                        className="w-full h-full object-cover" 
+                        referrerPolicy="no-referrer"
+                        onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                      />
+                  ) : null}
+                  
+                  {/* Fallback Icon */}
+                  <div className={`w-full h-full bg-slate-100 text-slate-400 flex items-center justify-center ${shopInfo.logo ? 'hidden' : 'flex'}`}>
+                      <StoreIcon className="w-6 h-6" />
                   </div>
-                  <span className="text-sm font-bold text-slate-800">{shopInfo.shopName || 'ร้านค้า'}</span>
               </div>
-              
-              <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
-                  {shopInfo.phone && (
-                      <a href={`tel:${shopInfo.phone}`} className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors">
-                          <Phone className="w-3.5 h-3.5" /> 
-                          {shopInfo.phone}
-                      </a>
-                  )}
-                  {shopInfo.email && (
-                      <a href={`mailto:${shopInfo.email}`} className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors">
-                          <Mail className="w-3.5 h-3.5" /> 
-                          {shopInfo.email}
-                      </a>
+
+              {/* [MODIFIED] Text Container: Name on top, Address below, aligned left */}
+              <div className="flex flex-col text-left">
+                  <span className="text-sm font-bold text-slate-800 leading-tight">{shopInfo.shopName || 'ร้านค้า'}</span>
+                  {shopInfo.address && (
+                      <p className="text-xs font-medium text-slate-500 leading-snug mt-1 max-w-[280px] md:max-w-[400px] whitespace-pre-wrap">
+                          {shopInfo.address}
+                      </p>
                   )}
               </div>
           </div>
           
-          {/* Right: Socials & Address */}
-          <div className="flex flex-col md:flex-col-reverse items-center md:items-end gap-1.5">
-              {shopInfo.address && (
-                  <p className="text-xs font-medium text-slate-500 text-center md:text-right leading-tight max-w-[300px] line-clamp-1">
-                      {shopInfo.address}
-                  </p>
-              )}
-
+          {/* Right: Socials & Contact Info (Phone/Email moved here) */}
+          {/* [MODIFIED] Mobile: flex-col-reverse (Contact Top, Socials Bottom) | Desktop: flex-col (Socials Top, Contact Bottom) */}
+          <div className="flex flex-col-reverse md:flex-col items-center md:items-end gap-3 md:gap-2 w-full md:w-auto">
+              
+              {/* Social Icons Row */}
               <div className="flex items-center gap-3">
                   {/* [MODIFIED] Use LineIcon instead of MessageCircle */}
                   {shopInfo.line && (
@@ -539,6 +492,23 @@ const ShopFooter = ({ shopInfo, maxWidthClass = "max-w-7xl" }) => {
                   {shopInfo.telegram && (
                       <a href={shopInfo.telegram} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-[#0088cc] transition-all hover:scale-110">
                           <TelegramIcon className="w-5 h-5" />
+                      </a>
+                  )}
+              </div>
+
+              {/* [MOVED] Contact Info (Phone/Email) moved to Right side below Socials */}
+              {/* [MODIFIED] Added flex-wrap for multiline handling and justify-center for mobile centering */}
+              <div className="flex flex-wrap items-center justify-center md:justify-end gap-x-4 gap-y-1 text-xs font-medium text-slate-500 w-full md:w-auto">
+                  {shopInfo.phone && (
+                      <a href={`tel:${shopInfo.phone}`} className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors whitespace-nowrap">
+                          <Phone className="w-3.5 h-3.5" /> 
+                          {formatPhoneNumber(shopInfo.phone)}
+                      </a>
+                  )}
+                  {shopInfo.email && (
+                      <a href={`mailto:${shopInfo.email}`} className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors break-all">
+                          <Mail className="w-3.5 h-3.5 shrink-0" /> 
+                          {shopInfo.email}
                       </a>
                   )}
               </div>
@@ -638,28 +608,26 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
      // Requirement 2: Format "Time ProjectName (ArtistName)"
      const displayText = `${timeStr ? timeStr + ' ' : ''}${ev.name} (${ev.artist || '-'})`;
 
-     // [MODIFIED] Use dynamic color for event item in month/week view
+     // [MODIFIED] Use dynamic color for event item in month/week view matches Settings
      const statusInfo = resolveStatus(ev.dealStatus, dealStatuses);
      
-     // Override small view colors based on status type for better visibility
-     let itemColor = 'bg-slate-50 border-slate-200 text-slate-600';
-     let dotColor = 'bg-slate-400';
-
-     // Map status info color classes to simpler logic for small calendar items
-     const sType = statusInfo.type || ev.dealStatus;
+     // Use color from settings directly
+     let itemColor = statusInfo.color || 'bg-slate-50 border-slate-200 text-slate-600';
      
-     if (sType === 'confirmed' || sType === 'active') {
-         itemColor = 'bg-blue-50 border-blue-100 text-blue-700';
-         dotColor = 'bg-blue-500';
-     } else if (sType === 'completed') {
-         itemColor = 'bg-emerald-50 border-emerald-100 text-emerald-700';
-         dotColor = 'bg-emerald-500';
-     } else if (sType === 'cancelled') {
-         itemColor = 'bg-rose-50 border-rose-100 text-rose-700';
-         dotColor = 'bg-rose-500';
-     } else if (sType === 'pending') {
-         itemColor = 'bg-amber-50 border-amber-100 text-amber-700';
-         dotColor = 'bg-amber-500';
+     // Determine dot color based on the itemColor string (consistent with App's logic)
+     let dotColor = 'bg-slate-400';
+     
+     // 1. Try to find exact match in presets
+     const preset = colorPresets.find(p => p.value === itemColor);
+     if (preset) {
+         dotColor = preset.dot;
+     } else {
+         // 2. Heuristic match for system defaults or manual colors
+         if (itemColor.includes('emerald') || itemColor.includes('green')) dotColor = 'bg-emerald-500';
+         else if (itemColor.includes('blue') || itemColor.includes('indigo') || itemColor.includes('sky')) dotColor = 'bg-blue-500';
+         else if (itemColor.includes('amber') || itemColor.includes('yellow') || itemColor.includes('orange')) dotColor = 'bg-amber-500';
+         else if (itemColor.includes('rose') || itemColor.includes('red') || itemColor.includes('pink')) dotColor = 'bg-rose-500';
+         else if (itemColor.includes('purple') || itemColor.includes('violet')) dotColor = 'bg-violet-500';
      }
 
      return (
@@ -1392,10 +1360,27 @@ const CustomerQuotationView = ({ data, shopInfo, dealStatuses = [] }) => {
                       </ul>
                   </div>
 
-                  {/* Net Total - Adjusted padding/size for PC */}
-                  <div className="pt-4 border-t-2 border-slate-200 flex flex-col items-end bg-slate-100/50 -mx-5 -mb-5 p-5 rounded-b-2xl md:p-6 md:-mx-8 md:-mb-8 md:rounded-b-[2rem]">
-                      <span className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">ยอดเรียกเก็บสุทธิ</span>
-                      <span className="text-3xl font-black text-indigo-600 leading-none tabular-nums">฿{netReceivable.toLocaleString()}</span>
+                  {/* [MODIFIED] Wrapper for Bottom Section (Note + Net Total) to ensure they are grouped together */}
+                  <div className="flex flex-col -mx-5 -mb-5 rounded-b-2xl overflow-hidden md:-mx-8 md:-mb-8 md:rounded-b-[2rem] mt-2">
+                      
+                      {/* [MOVED] Note Section - Now on Top of Net Total */}
+                      {data.note && (
+                          <div className="bg-amber-50/50 p-5 md:p-6 border-t-2 border-amber-100/50 flex flex-col gap-2">
+                              <div className="flex items-center gap-2 text-amber-600">
+                                  <StickyNote className="w-4 h-4" />
+                                  <span className="text-xs font-bold uppercase tracking-wider">หมายเหตุ</span>
+                              </div>
+                              <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap font-medium md:text-sm">
+                                  {data.note}
+                              </p>
+                          </div>
+                      )}
+
+                      {/* Net Total Section - Always at bottom */}
+                      <div className={`flex flex-col items-end bg-slate-100/50 p-5 md:p-6 ${data.note ? 'border-t border-slate-200' : 'border-t-2 border-slate-200'}`}>
+                          <span className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">ยอดเรียกเก็บสุทธิ</span>
+                          <span className="text-3xl font-black text-indigo-600 leading-none tabular-nums">฿{netReceivable.toLocaleString()}</span>
+                      </div>
                   </div>
               </div>
           </div>
@@ -1681,6 +1666,23 @@ const CustomerTrackingView = ({ data, shopInfo, dealStatuses = [], transportStat
                  </div>
               </div>
 
+              {/* [ADDED] Note Card - ส่วนแสดงหมายเหตุ */}
+              {data.note && (
+                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm md:p-8 md:rounded-[2rem] md:shadow-md">
+                      <div className="flex items-center gap-2 mb-2 md:mb-4">
+                          <StickyNote className="w-4 h-4 text-amber-500 md:w-5 md:h-5" />
+                          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide md:text-lg">หมายเหตุ</h3>
+                      </div>
+                      <div className="p-3 bg-amber-50/50 rounded-xl border border-amber-100 text-xs text-slate-600 leading-relaxed md:text-sm md:p-4 whitespace-pre-wrap">
+                          {data.note}
+                      </div>
+                  </div>
+              )}
+          </div>
+
+          {/* RIGHT COLUMN (Desktop): Financial Summary */}
+          <div className="md:col-span-5 space-y-3 md:space-y-6">
+              {/* Row 3: Financial Summary Card (Same as Modal) */}
               {/* Shop Contact Card Removed */}
           </div>
 
@@ -2711,13 +2713,13 @@ const LoginScreen = ({ onLogin, isLoading, loginError, shopInfo }) => {
     <div className="fixed inset-0 z-[200] bg-slate-50 flex items-center justify-center p-4">
       <div className="bg-white w-full max-w-md p-8 rounded-[2.5rem] shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-500">
         <div className="flex flex-col items-center mb-8">
-          {/* [MODIFIED] Logo Display Logic */}
+          {/* [MODIFIED] Logo Display Logic: ใช้ object-contain เพื่อให้เห็นพื้นหลังใส */}
           <div className={`w-20 h-20 rounded-3xl flex items-center justify-center shadow-lg shadow-indigo-200 mb-4 rotate-3 hover:rotate-6 transition-transform overflow-hidden relative ${shopInfo?.logo ? 'bg-transparent' : 'bg-indigo-600'}`}>
              {shopInfo?.logo ? (
                 <img 
                     src={processImageUrl(shopInfo.logo)} 
                     alt="App Logo" 
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-contain" 
                     referrerPolicy="no-referrer"
                     onError={(e) => { 
                         e.target.style.display = 'none'; 
@@ -3738,57 +3740,94 @@ const SortableHeader = ({ label, sortKey, sortConfig, handleSort, alignRight = f
 );
 
 const App = () => {
+  // --- 1. STATE DECLARATIONS (Moved to top to fix ReferenceError) ---
+  
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('nexus_sidebar_collapsed');
     return saved === 'true';
   });
   
-  // [ADDED] State for Mobile Profile Menu
+  // Mobile Profile Menu
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
 
-  // [ADDED] State to track if settings are loaded (to prevent color flash on public pages)
-  const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
+  // Settings Loaded State
+  const [isSettingsLoaded, setIsSettingsLoaded] = useState(() => {
+      return !!localStorage.getItem('nexus_shop_info');
+  });
 
-  // [ADDED] State to track if main images are preloaded (for tracking/quotation pages)
-  // เริ่มต้นเป็น false ถ้ามี tracking/quotation ID เพื่อบังคับให้รอโหลดรูปก่อน
+  // Shop Info State
+  const [shopInfo, setShopInfo] = useState(() => {
+      try {
+          const saved = localStorage.getItem('nexus_shop_info');
+          return saved ? JSON.parse(saved) : {
+              shopName: '',
+              phone: '',
+              email: '',
+              address: '',
+              line: '',
+              facebook: '',
+              instagram: '',
+              tiktok: '',
+              twitter: '', 
+              wechat: '',  
+              telegram: '',
+              logo: '',
+              themeColor: 'indigo',
+              themeMode: 'gradient',
+              customColorValue: '#000000'
+          };
+      } catch (e) {
+          return {
+              shopName: '',
+              phone: '',
+              email: '',
+              address: '',
+              line: '',
+              facebook: '',
+              instagram: '',
+              tiktok: '',
+              twitter: '', 
+              wechat: '',  
+              telegram: '',
+              logo: '',
+              themeColor: 'indigo',
+              themeMode: 'gradient',
+              customColorValue: '#000000'
+          };
+      }
+  });
+
+  // Tracking & Quotation IDs
+  const [trackingId, setTrackingId] = useState(() => {
+      if (typeof window !== 'undefined') {
+          return new URLSearchParams(window.location.search).get('tracking');
+      }
+      return null;
+  });
+  
+  const [quotationId, setQuotationId] = useState(() => {
+      if (typeof window !== 'undefined') {
+          return new URLSearchParams(window.location.search).get('quotation');
+      }
+      return null;
+  });
+
+  // Image Loading State
   const [areImagesLoaded, setAreImagesLoaded] = useState(() => {
       const params = new URLSearchParams(window.location.search);
       return !(params.has('tracking') || params.has('quotation'));
   });
 
-  useEffect(() => {
-    localStorage.setItem('nexus_sidebar_collapsed', String(isSidebarCollapsed));
-  }, [isSidebarCollapsed]);
-
   const [activeTab, setActiveTab] = useState('Overview');
-
-  useEffect(() => {
-    const currentTab = navItems.find(item => item.name === activeTab);
-    if (currentTab) {
-      document.title = `${currentTab.label} - NexusPlan`;
-    } else {
-      document.title = "NexusPlan Dashboard";
-    }
-  }, [activeTab]);
-
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [isSaving, setIsSaving] = useState(false); 
-
   const [visibleCount, setVisibleCount] = useState(20);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-
   const [animateCharts, setAnimateCharts] = useState(false);
-
-  useEffect(() => {
-     setAnimateCharts(false);
-     const timer = setTimeout(() => setAnimateCharts(true), 300);
-     return () => clearTimeout(timer);
-  }, [activeTab]);
-
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   
-  // [MODIFIED] Initialize authorizedUsers from localStorage immediately for instant login check
+  // Auth Users
   const [authorizedUsers, setAuthorizedUsers] = useState(() => {
     const defaultUsers = [
         {
@@ -3819,62 +3858,161 @@ const App = () => {
 
   const [loginError, setLoginError] = useState('');
   const [userProfile, setUserProfile] = useState(null);
-
   const [newUser, setNewUser] = useState({ username: '', password: '', name: '', role: '', email: '', phone: '' });
   const [isAddingUser, setIsAddingUser] = useState(false);
 
+  // Drive Settings
   const [driveFolderId, setDriveFolderId] = useState('');
   const [assetsDriveFolderId, setAssetsDriveFolderId] = useState(''); 
   
-  // [ADDED] State for Chatbot Tokens
+  // Chatbot Tokens
   const [lineBotToken, setLineBotToken] = useState('');
   const [telegramBotToken, setTelegramBotToken] = useState('');
   const [telegramChatId, setTelegramChatId] = useState('');
   const [webAppUrl, setWebAppUrl] = useState(''); 
-  
-  // [ADDED] State for Google Script Deploy URL (Initialized with constant)
   const [deployUrl, setDeployUrl] = useState(GOOGLE_SCRIPT_URL);
 
-  const [shopInfo, setShopInfo] = useState(() => {
+  // Helper for Cache Loading
+  const loadFromCache = (key, defaultValue) => {
       try {
-          const saved = localStorage.getItem('nexus_shop_info');
-          return saved ? JSON.parse(saved) : {
-              shopName: '',
-              phone: '',
-              email: '',
-              address: '',
-              line: '',
-              facebook: '',
-              instagram: '',
-              tiktok: '',
-              twitter: '', 
-              wechat: '',  
-              telegram: '', // [ADDED]
-              logo: '',
-              themeColor: 'indigo',
-              themeMode: 'gradient',
-              customColorValue: '#000000'
-          };
-      } catch (e) {
-          return {
-              shopName: '',
-              phone: '',
-              email: '',
-              address: '',
-              line: '',
-              facebook: '',
-              instagram: '',
-              tiktok: '',
-              twitter: '', 
-              wechat: '',  
-              telegram: '', // [ADDED]
-              logo: '',
-              themeColor: 'indigo',
-              themeMode: 'gradient',
-              customColorValue: '#000000'
-          };
+          const saved = localStorage.getItem(`nexus_${key}`);
+          return saved ? JSON.parse(saved) : defaultValue;
+      } catch(e) {
+          return defaultValue;
       }
-  });
+  };
+
+  const [projectCategories, setProjectCategories] = useState(() => loadFromCache('project_categories', []));
+  const [expenseCategories, setExpenseCategories] = useState(() => loadFromCache('expense_categories', []));
+  const [dealStatuses, setDealStatuses] = useState(() => loadFromCache('deal_statuses', []));
+  const [transportStatuses, setTransportStatuses] = useState(() => loadFromCache('transport_statuses', []));
+
+  // Upload States
+  const [isUploadingProfile, setIsUploadingProfile] = useState(false);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+
+  // UI States
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isModalClosing, setIsModalClosing] = useState(false);
+  const [viewOnlyMode, setViewOnlyMode] = useState(false);
+  const [isMobileFilterExpanded, setIsMobileFilterExpanded] = useState(false);
+  
+  // Share Data
+  const [shareData, setShareData] = useState(null);
+
+  // Editing States
+  const [editingId, setEditingId] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState({ show: false, id: null, fromModal: false });
+  const [isDeleteClosing, setIsDeleteClosing] = useState(false);
+
+  // Delete Confirmations
+  const [deleteLogoConfirm, setDeleteLogoConfirm] = useState(false);
+  const [isDeleteLogoClosing, setIsDeleteLogoClosing] = useState(false);
+  const [deleteProfileConfirm, setDeleteProfileConfirm] = useState(false);
+  const [isDeleteProfileClosing, setIsDeleteProfileClosing] = useState(false);
+
+  const [previewImage, setPreviewImage] = useState(null);
+
+  // Filters & Sort
+  const [sortConfig, setSortConfig] = useState({ key: 'id', direction: 'desc' });
+  const [searchTerm, setSearchTerm] = useState('');
+  const [dateFilterMode, setDateFilterMode] = useState('all'); 
+  const [filterDate, setFilterDate] = useState(''); 
+  const [filterDateRange, setFilterDateRange] = useState({ start: '', end: '' });
+  const [filterCategory, setFilterCategory] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterTransport, setFilterTransport] = useState('all');
+
+  // Autocomplete Data
+  const [savedArtists, setSavedArtists] = useState([]);
+  const [savedCustomers, setSavedCustomers] = useState([]);
+  const [savedRecipients, setSavedRecipients] = useState([]);
+
+  // Form States
+  const [currentId, setCurrentId] = useState('');
+  const [projectName, setProjectName] = useState('');
+  const [projectDateTime, setProjectDateTime] = useState('');
+  const [artistName, setArtistName] = useState('');
+  const [customerName, setCustomerName] = useState('');
+  const [customerSocial, setCustomerSocial] = useState('');
+  const [customerLine, setCustomerLine] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerEmail, setCustomerEmail] = useState('');
+  const [customerTaxId, setCustomerTaxId] = useState('');
+  const [customerAddress, setCustomerAddress] = useState(''); 
+  const [projectCategory, setProjectCategory] = useState('');
+  const [deliveryStart, setDeliveryStart] = useState('');
+  const [deliveryEnd, setDeliveryEnd] = useState('');
+  const [recipientName, setRecipientName] = useState('');
+  const [recipientPhone, setRecipientPhone] = useState('');
+  const [locationName, setLocationName] = useState('');
+  const [mapLink, setMapLink] = useState('');
+  const [uploadedImage, setUploadedImage] = useState(null);
+  const [note, setNote] = useState('');
+  const [wage, setWage] = useState(0);
+  const [deliveryFee, setDeliveryFee] = useState(0);
+  const [transportStatus, setTransportStatus] = useState('');
+  const [dealStatus, setDealStatus] = useState('');
+  const [expenses, setExpenses] = useState([{ category: '', detail: '', price: 0 }]);
+  const [quotationItems, setQuotationItems] = useState([{ category: '', detail: '', price: 0 }]);
+  const [customerSupportItems, setCustomerSupportItems] = useState([{ denomination: 20, quantity: 0, price: 0 }]);
+  
+  const [allActivities, setAllActivities] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Refs
+  const mainRef = useRef(null);
+  const tabScrollPositions = useRef({});
+  const part3Ref = useRef(null);
+
+  // --- 2. EFFECTS ---
+
+  useEffect(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', String(isSidebarCollapsed));
+  }, [isSidebarCollapsed]);
+
+  // Title Effect
+  useEffect(() => {
+    // ถ้าอยู่ในโหมดติดตามหรือเสนอราคา ให้ข้ามการตั้งชื่อตาม Tab หลักไปเลย
+    if (trackingId) {
+        document.title = "กำลังตรวจสอบสถานะ..."; 
+        return;
+    }
+    if (quotationId) {
+        document.title = "กำลังโหลดใบเสนอราคา...";
+        return;
+    }
+
+    const appTitle = shopInfo?.shopName || 'NexusPlan';
+    const currentTab = navItems.find(item => item.name === activeTab);
+    
+    if (currentTab) {
+      document.title = `${currentTab.label} - ${appTitle}`;
+    } else {
+      document.title = `${appTitle} Dashboard`;
+    }
+  }, [activeTab, trackingId, quotationId, shopInfo]);
+
+  useEffect(() => {
+     setAnimateCharts(false);
+     const timer = setTimeout(() => setAnimateCharts(true), 300);
+     return () => clearTimeout(timer);
+  }, [activeTab]);
+
+  useEffect(() => {
+    setVisibleCount(20);
+    setIsLoadingMore(false);
+  }, [activeTab, searchTerm, dateFilterMode, filterDate, filterDateRange, filterCategory, filterStatus, filterTransport, sortConfig]);
+
+  useEffect(() => {
+    const auth = localStorage.getItem('nexus_auth');
+    const savedProfile = localStorage.getItem('nexus_profile');
+    if (auth && savedProfile) {
+        setIsLoggedIn(true);
+        setUserProfile(JSON.parse(savedProfile));
+    }
+  }, []);
 
   useLayoutEffect(() => {
       let theme;
@@ -3949,152 +4087,28 @@ const App = () => {
 
   }, [shopInfo.themeColor, shopInfo.themeMode, shopInfo.customColorValue]);
 
-  const [projectCategories, setProjectCategories] = useState([]);
-  const [expenseCategories, setExpenseCategories] = useState([]);
-  const [dealStatuses, setDealStatuses] = useState([]);
-  const [transportStatuses, setTransportStatuses] = useState([]);
-
-  // [ADDED] State for Profile Upload
-  const [isUploadingProfile, setIsUploadingProfile] = useState(false);
-  // [ADDED] State for Logo Upload
-  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
-
-  const [isScrolled, setIsScrolled] = useState(false);
-  const mainRef = useRef(null);
-  const tabScrollPositions = useRef({});
-
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isModalClosing, setIsModalClosing] = useState(false);
-  const [viewOnlyMode, setViewOnlyMode] = useState(false);
-  const [isMobileFilterExpanded, setIsMobileFilterExpanded] = useState(false);
-  
-  // Share Data State
-  const [shareData, setShareData] = useState(null);
-
-  const [editingId, setEditingId] = useState(null);
-  const part3Ref = useRef(null);
-
-  const [deleteConfirm, setDeleteConfirm] = useState({ show: false, id: null, fromModal: false });
-  const [isDeleteClosing, setIsDeleteClosing] = useState(false);
-
-  // [ADDED] State for Logo Delete Confirmation Modal
-  const [deleteLogoConfirm, setDeleteLogoConfirm] = useState(false);
-  const [isDeleteLogoClosing, setIsDeleteLogoClosing] = useState(false);
-
-  // [ADDED] State for Profile Delete Confirmation Modal
-  const [deleteProfileConfirm, setDeleteProfileConfirm] = useState(false);
-  const [isDeleteProfileClosing, setIsDeleteProfileClosing] = useState(false);
-
-  const [previewImage, setPreviewImage] = useState(null);
-
-  const [sortConfig, setSortConfig] = useState({ key: 'id', direction: 'desc' });
-  const [searchTerm, setSearchTerm] = useState('');
-  
-  const [dateFilterMode, setDateFilterMode] = useState('all'); 
-  const [filterDate, setFilterDate] = useState(''); 
-  const [filterDateRange, setFilterDateRange] = useState({ start: '', end: '' });
-
-  const [filterCategory, setFilterCategory] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [filterTransport, setFilterTransport] = useState('all');
-
-  // Tracking State
-  // [MODIFIED] Initialize from URL params immediately to handle title correctly on load
-  const [trackingId, setTrackingId] = useState(() => {
-      if (typeof window !== 'undefined') {
-          return new URLSearchParams(window.location.search).get('tracking');
+  // Scroll Restore
+  useLayoutEffect(() => {
+    if (mainRef.current) {
+      const savedPosition = tabScrollPositions.current[activeTab] || 0;
+      mainRef.current.scrollTop = savedPosition;
+      
+      const shouldBeScrolled = savedPosition > 0;
+      if (isScrolled !== shouldBeScrolled) {
+         setIsScrolled(shouldBeScrolled);
       }
-      return null;
-  });
-  
-  const [quotationId, setQuotationId] = useState(() => {
-      if (typeof window !== 'undefined') {
-          return new URLSearchParams(window.location.search).get('quotation');
-      }
-      return null;
-  });
+    }
+  }, [activeTab]);
 
   useEffect(() => {
-    setVisibleCount(20);
-    setIsLoadingMore(false);
-  }, [activeTab, searchTerm, dateFilterMode, filterDate, filterDateRange, filterCategory, filterStatus, filterTransport, sortConfig]);
-
-  // Autocomplete Data
-  const [savedArtists, setSavedArtists] = useState([]);
-  const [savedCustomers, setSavedCustomers] = useState([]);
-  const [savedRecipients, setSavedRecipients] = useState([]);
-
-  const [currentId, setCurrentId] = useState('');
-  const [projectName, setProjectName] = useState('');
-  const [projectDateTime, setProjectDateTime] = useState('');
-
-  const [artistName, setArtistName] = useState('');
-  const [customerName, setCustomerName] = useState('');
-  const [customerSocial, setCustomerSocial] = useState('');
-  const [customerLine, setCustomerLine] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [customerEmail, setCustomerEmail] = useState('');
-  const [customerTaxId, setCustomerTaxId] = useState(''); // [ADDED] State for Customer Tax ID
-  // [ADDED] State for Customer Address
-  const [customerAddress, setCustomerAddress] = useState(''); 
-  const [projectCategory, setProjectCategory] = useState('');
-
-  const [deliveryStart, setDeliveryStart] = useState('');
-  const [deliveryEnd, setDeliveryEnd] = useState('');
-
-  const [recipientName, setRecipientName] = useState('');
-  const [recipientPhone, setRecipientPhone] = useState('');
-  const [locationName, setLocationName] = useState('');
-  const [mapLink, setMapLink] = useState('');
-  const [uploadedImage, setUploadedImage] = useState(null);
-
-  const [note, setNote] = useState('');
-
-  const [wage, setWage] = useState(0);
-  const [deliveryFee, setDeliveryFee] = useState(0); // [NEW] State for Delivery Fee
-  const [transportStatus, setTransportStatus] = useState('');
-  const [dealStatus, setDealStatus] = useState('');
-  
-  const [expenses, setExpenses] = useState([{ category: '', detail: '', price: 0 }]);
-  // [MODIFIED] New State for Quotation List
-  const [quotationItems, setQuotationItems] = useState([{ category: '', detail: '', price: 0 }]);
-  // [MODIFIED] Updated State structure for Support Items
-  const [customerSupportItems, setCustomerSupportItems] = useState([{ denomination: 20, quantity: 0, price: 0 }]);
-  
-  const [allActivities, setAllActivities] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    const auth = localStorage.getItem('nexus_auth');
-    const savedProfile = localStorage.getItem('nexus_profile');
-    if (auth && savedProfile) {
-        setIsLoggedIn(true);
-        setUserProfile(JSON.parse(savedProfile));
+    if (isAddModalOpen && viewOnlyMode && part3Ref.current) {
+      setTimeout(() => {
+        part3Ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 300);
     }
-  }, []);
+  }, [isAddModalOpen, viewOnlyMode]);
 
-  // [MODIFIED] Updated Title Logic to respect Tracking/Quotation modes and Shop Name
-  useEffect(() => {
-    // ถ้าอยู่ในโหมดติดตามหรือเสนอราคา ให้ข้ามการตั้งชื่อตาม Tab หลักไปเลย
-    // ปล่อยให้ Component ลูก (CustomerTrackingView/CustomerQuotationView) จัดการชื่อเองเมื่อข้อมูลพร้อม
-    if (trackingId) {
-        document.title = "กำลังตรวจสอบสถานะ..."; 
-        return;
-    }
-    if (quotationId) {
-        document.title = "กำลังโหลดใบเสนอราคา...";
-        return;
-    }
-
-    const appTitle = shopInfo?.shopName || 'NexusPlan';
-    const currentTab = navItems.find(item => item.name === activeTab);
-    
-    if (currentTab) {
-      document.title = `${currentTab.label} - ${appTitle}`;
-    } else {
-      document.title = `${appTitle} Dashboard`;
-    }
-  }, [activeTab, trackingId, quotationId, shopInfo]);
+  // --- 3. FUNCTION DEFINITIONS ---
 
   const fetchSettings = async () => {
     if (!GOOGLE_SCRIPT_URL) {
@@ -4103,12 +4117,12 @@ const App = () => {
     }
     
     // [MODIFIED] Add Timeout race to prevent indefinite loading if backend is slow
-    // ให้เวลาโหลด Settings สูงสุด 5 วินาที ถ้าเกินให้แสดงผลเลย (ใช้ Default Theme)
     const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('timeout'), 5000));
     
     try {
         const fetchPromise = fetch(GOOGLE_SCRIPT_URL, {
             method: 'POST',
+            headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
             body: JSON.stringify({ action: 'getSettings' })
         });
 
@@ -4116,15 +4130,29 @@ const App = () => {
         
         if (response === 'timeout') {
             console.warn('Settings fetch timed out, using defaults.');
-            // ไม่ต้องทำอะไร ปล่อยให้ finally ทำงานเพื่อเปิดหน้าเว็บ
         } else {
             const result = await response.json();
             if (result.status === 'success' && result.data) {
                 const data = result.data;
-                if (data.project_categories) setProjectCategories(data.project_categories);
-                if (data.expense_categories) setExpenseCategories(data.expense_categories);
-                if (data.deal_statuses) setDealStatuses(data.deal_statuses);
-                if (data.transport_statuses) setTransportStatuses(data.transport_statuses);
+                
+                // [FIX] Update states AND Cache to localStorage immediately
+                if (data.project_categories) {
+                    setProjectCategories(data.project_categories);
+                    localStorage.setItem('nexus_project_categories', JSON.stringify(data.project_categories));
+                }
+                if (data.expense_categories) {
+                    setExpenseCategories(data.expense_categories);
+                    localStorage.setItem('nexus_expense_categories', JSON.stringify(data.expense_categories));
+                }
+                if (data.deal_statuses) {
+                    setDealStatuses(data.deal_statuses);
+                    localStorage.setItem('nexus_deal_statuses', JSON.stringify(data.deal_statuses));
+                }
+                if (data.transport_statuses) {
+                    setTransportStatuses(data.transport_statuses);
+                    localStorage.setItem('nexus_transport_statuses', JSON.stringify(data.transport_statuses));
+                }
+
                 if (data.drive_folder_id) setDriveFolderId(data.drive_folder_id);
                 if (data.assets_drive_folder_id) setAssetsDriveFolderId(data.assets_drive_folder_id);
                 
@@ -4156,14 +4184,12 @@ const App = () => {
                     localStorage.setItem('nexus_authorized_users', JSON.stringify(creds));
 
                     // [NEW FIX] Sync current logged-in user profile with latest data from server
-                    // แก้ปัญหารูปโปรไฟล์ไม่เปลี่ยนเมื่อ Login เครื่องอื่น หรือ Refresh
                     const currentLocalProfile = localStorage.getItem('nexus_profile');
                     if (currentLocalProfile) {
                         const currentObj = JSON.parse(currentLocalProfile);
                         const updatedUser = creds.find(u => u.username.toLowerCase() === currentObj.username.toLowerCase());
                         
                         if (updatedUser) {
-                            // เช็คว่ารูปภาพหรือข้อมูลสำคัญเปลี่ยนไปไหม
                             if (updatedUser.image !== currentObj.image || updatedUser.name !== currentObj.name || updatedUser.role !== currentObj.role) {
                                 const newProfile = {
                                     ...currentObj,
@@ -4173,7 +4199,6 @@ const App = () => {
                                     phone: updatedUser.phone,
                                     image: updatedUser.image
                                 };
-                                // อัปเดตทั้งใน State และ LocalStorage ทันที
                                 setUserProfile(newProfile);
                                 localStorage.setItem('nexus_profile', JSON.stringify(newProfile));
                             }
@@ -4185,7 +4210,7 @@ const App = () => {
     } catch (error) {
         console.error("Error fetching settings:", error);
     } finally {
-        setIsSettingsLoaded(true); // Mark settings as loaded regardless of success/fail/timeout
+        setIsSettingsLoaded(true); 
     }
   };
 
@@ -4197,17 +4222,15 @@ const App = () => {
     if (!GOOGLE_SCRIPT_URL) return;
     setIsLoading(true);
     
-    // [MODIFIED] Add timeout logic (15s) to prevent infinite loading if server is slow
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000));
 
     try {
-      // Create the fetch promise
       const fetchPromise = fetch(GOOGLE_SCRIPT_URL, {
           method: 'POST',
+          headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
           body: JSON.stringify({ action: 'read' })
       });
 
-      // Race between fetch and timeout
       const response = await Promise.race([fetchPromise, timeoutPromise]);
       const result = await response.json();
       
@@ -4226,7 +4249,6 @@ const App = () => {
 
         const customersMap = new Map();
         uniqueItems.forEach(item => {
-            // [MODIFIED] Improved logic to merge customer info (keep latest available data including Address)
             if (item.customer) {
                 const existing = customersMap.get(item.customer) || {};
                 const info = item.customerInfo || {};
@@ -4238,7 +4260,7 @@ const App = () => {
                     phone: info.phone || existing.phone || '',
                     email: info.email || existing.email || '',
                     taxId: info.taxId || existing.taxId || '', 
-                    address: info.address || existing.address || '' // [ADDED] Map Address for Auto-complete
+                    address: info.address || existing.address || ''
                 });
             }
         });
@@ -4255,7 +4277,6 @@ const App = () => {
         });
         setSavedRecipients(Array.from(recipientsMap.values()));
       }
-      // [REMOVED] await fetchSettings(); // ตัดออกเพราะเรียกแยกใน useEffect แล้ว เพื่อความรวดเร็ว
     } catch (error) {
       console.error("Error fetching data:", error);
       showToast("การเชื่อมต่อล่าช้า ระบบกำลังทำงานในโหมด Offline", "error");
@@ -4265,12 +4286,11 @@ const App = () => {
   };
 
   useEffect(() => {
-    if (isLoggedIn || trackingId || quotationId) { // [FIX] Add quotationId condition
+    if (isLoggedIn || trackingId || quotationId) {
         fetchProjects();
     }
   }, [isLoggedIn, trackingId, quotationId]);
 
-  // [ADDED] Effect to Preload Images for Tracking/Quotation views
   useEffect(() => {
       if ((trackingId || quotationId) && allActivities.length > 0) {
           const targetToken = trackingId || quotationId;
@@ -4278,8 +4298,6 @@ const App = () => {
               generateTrackingToken(item.id, item.rawDateTime) === targetToken
           );
 
-          // [MODIFIED] Add Timeout to ensure page shows even if image is slow
-          // ให้เวลารูปโหลดสูงสุด 3 วินาที ถ้าเกินให้แสดงหน้าเว็บเลย (รูปค่อยตามมา)
           const timer = setTimeout(() => {
               setAreImagesLoaded(true);
           }, 3000);
@@ -4287,25 +4305,23 @@ const App = () => {
           if (foundItem && foundItem.image) {
               const img = new Image();
               img.src = processImageUrl(foundItem.image);
-              // [FIX] Ensure state updates only if component mounted
               img.onload = () => {
                   clearTimeout(timer);
                   setAreImagesLoaded(true);
               };
               img.onerror = () => {
                   clearTimeout(timer);
-                  setAreImagesLoaded(true); // แสดงผลแม้รูปเสีย
+                  setAreImagesLoaded(true);
               };
           } else {
               clearTimeout(timer);
-              setAreImagesLoaded(true); // ไม่มีรูป หรือไม่พบข้อมูล ให้แสดงผลเลย
+              setAreImagesLoaded(true); 
           }
           
           return () => clearTimeout(timer);
       } else if (!trackingId && !quotationId) {
-          setAreImagesLoaded(true); // หน้า Dashboard ปกติไม่ต้องรอ
+          setAreImagesLoaded(true); 
       } else if ((trackingId || quotationId) && !isLoading && allActivities.length === 0) {
-          // กรณีโหลดเสร็จแล้วแต่ไม่เจอข้อมูล ก็ให้ปลดล็อกเลย
           setAreImagesLoaded(true);
       }
   }, [allActivities, trackingId, quotationId, isLoading]);
@@ -4314,11 +4330,14 @@ const App = () => {
       if (!GOOGLE_SCRIPT_URL) return;
       setIsSaving(true);
       
-      // [MODIFIED] Support saving object (multiple keys) or single key
       const partialData = (typeof key === 'object') ? key : { [key]: value };
 
-      // [FIXED] Construct FULL data from current state to prevent overwriting/data loss on backend
-      // รวมค่าปัจจุบันทั้งหมดใน State เข้าไปด้วย เพื่อให้ Backend บันทึกทับได้ครบถ้วนไม่สูญหาย
+      if (shopInfo.logo && shopInfo.logo.startsWith('data:image')) {
+          showToast("กำลังประมวลผลรูปภาพ กรุณารอสักครู่...", "error");
+          setIsSaving(false);
+          return;
+      }
+
       const fullPayload = {
           project_categories: projectCategories,
           expense_categories: expenseCategories,
@@ -4331,25 +4350,29 @@ const App = () => {
           telegram_chat_id: telegramChatId,
           web_app_url: webAppUrl,
           shop_info: shopInfo,
-          // ใช้ข้อมูลใหม่จาก partialData ถ้ามี ถ้าไม่มีให้ใช้จาก State ปัจจุบัน
           app_credentials: partialData.app_credentials || authorizedUsers,
-          ...partialData // Override with new values
+          ...partialData 
       };
 
       try {
           await fetch(GOOGLE_SCRIPT_URL, {
               method: 'POST',
+              headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
               body: JSON.stringify({
                   action: 'saveSettings',
-                  data: fullPayload // Send Full Data instead of partial
+                  data: fullPayload 
               })
           });
           
-          // Update Local States based on payload keys (partialData)
           if (partialData.app_credentials) {
               setAuthorizedUsers(partialData.app_credentials);
               localStorage.setItem('nexus_authorized_users', JSON.stringify(partialData.app_credentials));
           }
+          if (partialData.project_categories) localStorage.setItem('nexus_project_categories', JSON.stringify(partialData.project_categories));
+          if (partialData.expense_categories) localStorage.setItem('nexus_expense_categories', JSON.stringify(partialData.expense_categories));
+          if (partialData.deal_statuses) localStorage.setItem('nexus_deal_statuses', JSON.stringify(partialData.deal_statuses));
+          if (partialData.transport_statuses) localStorage.setItem('nexus_transport_statuses', JSON.stringify(partialData.transport_statuses));
+
           if (partialData.drive_folder_id) {
               setDriveFolderId(partialData.drive_folder_id);
           }
@@ -4368,7 +4391,6 @@ const App = () => {
           if (partialData.web_app_url !== undefined) { 
               setWebAppUrl(partialData.web_app_url);
           }
-          // if (partialData.gemini_api_key !== undefined) { ... }
           if (partialData.shop_info) {
               setShopInfo(partialData.shop_info);
               localStorage.setItem('nexus_shop_info', JSON.stringify(partialData.shop_info));
@@ -4382,13 +4404,13 @@ const App = () => {
       }
   };
 
-  // [ADDED] Function to fetch latest Telegram Chat ID from backend
   const handleFetchTelegramId = async () => {
     if (!GOOGLE_SCRIPT_URL) return;
     showToast("กำลังดึง Chat ID ล่าสุด...", "info");
     try {
       const response = await fetch(GOOGLE_SCRIPT_URL, {
         method: 'POST',
+        headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
         body: JSON.stringify({ action: 'getLatestChatId' })
       });
       const result = await response.json();
@@ -4433,48 +4455,69 @@ const App = () => {
       showToast("ลบผู้ใช้งานเรียบร้อยแล้ว");
   };
 
-  const handleLogin = (user, pass, remember) => {
+  const handleLogin = async (user, pass, remember) => {
       setIsLoading(true);
       setLoginError('');
       
-      // [MODIFIED] Reduced delay from 1000ms to 100ms for instant feel
-      // Previously, we waited for server sync, but now we use cached 'authorizedUsers' so check is instant.
-      setTimeout(() => {
-          const foundUser = authorizedUsers.find(u => 
-              u.username.toLowerCase() === user.toLowerCase() && u.password === pass
-          );
+      let foundUser = authorizedUsers.find(u => 
+          u.username.toLowerCase() === user.toLowerCase() && u.password === pass
+      );
 
-          if (foundUser) {
-              setIsLoggedIn(true);
-              setUserProfile({
+      if (!foundUser && GOOGLE_SCRIPT_URL) {
+          try {
+              const response = await fetch(GOOGLE_SCRIPT_URL, {
+                  method: 'POST',
+                  headers: { "Content-Type": "text/plain;charset=utf-8" },
+                  body: JSON.stringify({ action: 'getSettings' })
+              });
+              
+              const result = await response.json();
+              if (result.status === 'success' && result.data && result.data.app_credentials) {
+                  let latestUsers = result.data.app_credentials;
+                  if (!Array.isArray(latestUsers)) latestUsers = [latestUsers];
+                  
+                  setAuthorizedUsers(latestUsers);
+                  localStorage.setItem('nexus_authorized_users', JSON.stringify(latestUsers));
+                  
+                  foundUser = latestUsers.find(u => 
+                      u.username.toLowerCase() === user.toLowerCase() && u.password === pass
+                  );
+              }
+          } catch (e) {
+              console.error("Login verification error:", e);
+          }
+      }
+
+      if (foundUser) {
+          setIsLoggedIn(true);
+          setUserProfile({
+              name: foundUser.name,
+              role: foundUser.role,
+              email: foundUser.email,
+              phone: foundUser.phone,
+              username: foundUser.username,
+              image: foundUser.image 
+          });
+
+          setActiveTab('Overview'); 
+
+          if (remember) {
+              localStorage.setItem('nexus_auth', 'true');
+              localStorage.setItem('nexus_profile', JSON.stringify({
                   name: foundUser.name,
                   role: foundUser.role,
                   email: foundUser.email,
                   phone: foundUser.phone,
                   username: foundUser.username,
-                  image: foundUser.image 
-              });
-
-              setActiveTab('Overview'); 
-
-              if (remember) {
-                  localStorage.setItem('nexus_auth', 'true');
-                  localStorage.setItem('nexus_profile', JSON.stringify({
-                      name: foundUser.name,
-                      role: foundUser.role,
-                      email: foundUser.email,
-                      phone: foundUser.phone,
-                      username: foundUser.username,
-                      image: foundUser.image
-                  }));
-              }
-              showToast(`ยินดีต้อนรับคุณ ${foundUser.name}`, "success");
-          } else {
-              setLoginError("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง");
-              showToast("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง", "error");
+                  image: foundUser.image
+              }));
           }
-          setIsLoading(false);
-      }, 100); // Reduced delay
+          showToast(`ยินดีต้อนรับคุณ ${foundUser.name}`, "success");
+      } else {
+          setLoginError("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง");
+          showToast("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง", "error");
+      }
+      setIsLoading(false);
   };
 
   const handleLogout = () => {
@@ -4571,6 +4614,18 @@ const App = () => {
     });
   };
 
+  // [ADDED] Helper for Phone Formatting
+  const formatPhoneNumber = (value) => {
+    if (!value) return '';
+    const phoneNumber = value.replace(/[^\d]/g, '');
+    const phoneNumberLength = phoneNumber.length;
+    if (phoneNumberLength < 4) return phoneNumber;
+    if (phoneNumberLength < 7) {
+        return `${phoneNumber.slice(0, 3)}-${phoneNumber.slice(3)}`;
+    }
+    return `${phoneNumber.slice(0, 3)}-${phoneNumber.slice(3, 6)}-${phoneNumber.slice(6, 10)}`;
+  };
+
   const toBase64 = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -4582,7 +4637,6 @@ const App = () => {
   const handleProfileImageUpload = async (file) => {
       if (!file) return;
       
-      // [MODIFIED] Stricter check for Assets Folder ID
       if (!assetsDriveFolderId || typeof assetsDriveFolderId !== 'string' || assetsDriveFolderId.trim() === '') {
           if (GOOGLE_SCRIPT_URL) {
              showToast("กรุณาระบุ Assets Folder ID ในตั้งค่าก่อนอัปโหลดรูปโปรไฟล์", "error");
@@ -4596,33 +4650,30 @@ const App = () => {
               throw new Error('กรุณาอัพโหลดไฟล์รูปภาพเท่านั้น');
           }
 
-          // 1. Compress Image & Get Base64
           let processedFile = file;
           let base64Data = "";
           
-          if (file.size > 2 * 1024 * 1024) { // ถ้าไฟล์ใหญ่กว่า 2MB ให้ย่อ
+          if (file.size > 2 * 1024 * 1024) { 
                base64Data = await compressImage(file);
           } else {
                base64Data = await toBase64(file);
           }
 
-          // 2. Optimistic Update: แสดงรูปทันทีโดยใช้ Base64 (เพื่อให้ผู้ใช้เห็นว่ารูปเปลี่ยนทันที)
           const tempProfile = { ...userProfile, image: base64Data };
           setUserProfile(tempProfile);
 
           if (GOOGLE_SCRIPT_URL) {
-              // [FIX] Send FULL base64 string (Data URI) so backend can parse mimeType correctly
-              // ไม่ต้องตัด cleanBase64 เอง ให้ส่งไปทั้งเส้นเลย เพื่อให้ฟังก์ชัน uploadImageToDrive ทำงานได้
               const mimeType = base64Data.split(',')[0].match(/:(.*?);/)[1];
               const extension = mimeType.includes('png') ? 'png' : 'jpg';
               const fileName = `profile_${userProfile.username}_${Date.now()}.${extension}`;
 
               const response = await fetch(GOOGLE_SCRIPT_URL, {
                   method: 'POST',
+                  headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
                   body: JSON.stringify({
                       action: 'uploadAsset', 
                       data: {
-                          fileData: base64Data, // [FIX] Send full Data URI
+                          fileData: base64Data, 
                           mimeType: mimeType,
                           fileName: fileName,
                           folderId: assetsDriveFolderId.trim()
@@ -4632,19 +4683,15 @@ const App = () => {
 
               const result = await response.json();
               if (result.status === 'success' && result.url) {
-                  // [MODIFIED] สร้างลิงก์แบบ uc?export=view สำหรับบันทึก (ตามที่ระบบใช้อยู่)
-                  // แต่เมื่อแสดงผล processImageUrl จะแปลงเป็น thumbnail ให้เอง
                   let newImageUrl = result.url;
                   if (result.fileId) {
                       newImageUrl = `https://drive.google.com/uc?export=view&id=${result.fileId}`;
                   }
                   
-                  // 3. Final Update: บันทึก URL จริงลง State
                   const finalProfile = { ...userProfile, image: newImageUrl };
                   setUserProfile(finalProfile);
                   localStorage.setItem('nexus_profile', JSON.stringify(finalProfile));
 
-                  // 4. Update Authorized Users List
                   const updatedUsers = authorizedUsers.map(u => 
                       u.username.toLowerCase() === userProfile.username.toLowerCase() 
                       ? { ...u, image: newImageUrl } 
@@ -4652,7 +4699,6 @@ const App = () => {
                   );
                   setAuthorizedUsers(updatedUsers);
 
-                  // 5. Sync to Backend Settings
                   await saveSystemSettings('app_credentials', updatedUsers);
                   
                   showToast("อัปเดตรูปโปรไฟล์สำเร็จ", "success");
@@ -4660,7 +4706,6 @@ const App = () => {
                   throw new Error(result.message || "Upload failed");
               }
           } else {
-              // Offline Mode
               const updatedProfile = { ...userProfile, image: base64Data };
               setUserProfile(updatedProfile);
               localStorage.setItem('nexus_profile', JSON.stringify(updatedProfile));
@@ -4682,14 +4727,12 @@ const App = () => {
       }
   };
 
-  // [ADDED] Handle Profile Image Delete Request (Open Modal)
   const requestDeleteProfile = () => {
       if (userProfile?.image) {
           setDeleteProfileConfirm(true);
       }
   };
 
-  // [ADDED] Close Delete Profile Modal
   const closeDeleteProfileModal = () => {
       setIsDeleteProfileClosing(true);
       setTimeout(() => {
@@ -4698,17 +4741,13 @@ const App = () => {
       }, 300);
   };
 
-  // [ADDED] Execute Profile Image Delete
   const executeDeleteProfile = async () => {
-      // 0. Get File ID before removing from state
       const fileId = getFileId(userProfile?.image);
 
-      // 1. Update Local State
       const updatedProfile = { ...userProfile, image: '' };
       setUserProfile(updatedProfile);
       localStorage.setItem('nexus_profile', JSON.stringify(updatedProfile));
 
-      // 2. Update Authorized Users List
       const updatedUsers = authorizedUsers.map(u => 
           u.username.toLowerCase() === userProfile.username.toLowerCase() 
           ? { ...u, image: '' } 
@@ -4716,16 +4755,14 @@ const App = () => {
       );
       setAuthorizedUsers(updatedUsers);
 
-      // 3. Save to Backend & Delete File
       if (GOOGLE_SCRIPT_URL) {
           try {
-              // Update Settings
               await saveSystemSettings('app_credentials', updatedUsers);
               
-              // Delete actual file from Drive
               if (fileId) {
                   fetch(GOOGLE_SCRIPT_URL, {
                       method: 'POST',
+                      headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
                       body: JSON.stringify({ action: 'deleteFile', id: fileId })
                   }).catch(err => console.error("Failed to delete profile image from Drive:", err));
               }
@@ -4741,11 +4778,9 @@ const App = () => {
       closeDeleteProfileModal();
   };
 
-  // [ADDED] Handle Shop Logo Upload
   const handleLogoUpload = async (file) => {
       if (!file) return;
       
-      // [MODIFIED] Stricter check for Assets Folder ID
       if (!assetsDriveFolderId || typeof assetsDriveFolderId !== 'string' || assetsDriveFolderId.trim() === '') {
           if (GOOGLE_SCRIPT_URL) {
              showToast("กรุณาระบุ Assets Folder ID ในตั้งค่าก่อนอัปโหลดโลโก้", "error");
@@ -4759,7 +4794,6 @@ const App = () => {
               throw new Error('กรุณาอัพโหลดไฟล์รูปภาพเท่านั้น');
           }
 
-          // 1. Compress Image & Get Base64
           let processedFile = file;
           let base64Data = "";
           
@@ -4769,26 +4803,24 @@ const App = () => {
                base64Data = await toBase64(file);
           }
 
-          // 2. Optimistic Update
           const tempShopInfo = { ...shopInfo, logo: base64Data };
           setShopInfo(tempShopInfo);
 
           if (GOOGLE_SCRIPT_URL) {
-              // [FIX] Send FULL base64 string (Data URI)
               const mimeType = base64Data.split(',')[0].match(/:(.*?);/)[1];
-              // [FIX] Determine extension dynamically from mimeType instead of hardcoding .jpg
               const extension = mimeType.includes('png') ? 'png' : 'jpg';
               const fileName = `shop_logo_${Date.now()}.${extension}`;
 
               const response = await fetch(GOOGLE_SCRIPT_URL, {
                   method: 'POST',
+                  headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
                   body: JSON.stringify({
                       action: 'uploadAsset', 
                       data: {
-                          fileData: base64Data, // [FIX] Send full Data URI
+                          fileData: base64Data, 
                           mimeType: mimeType,
                           fileName: fileName,
-                          folderId: assetsDriveFolderId.trim() // [FIX] Ensure trimmed ID
+                          folderId: assetsDriveFolderId.trim() 
                       }
                   })
               });
@@ -4796,7 +4828,6 @@ const App = () => {
               const result = await response.json();
               if (result.status === 'success' && result.url) {
                   let newLogoUrl = result.url;
-                  // Force uc?export=view
                   if (result.fileId) {
                       newLogoUrl = `https://drive.google.com/uc?export=view&id=${result.fileId}`;
                   } else if (newLogoUrl.includes('id=')) {
@@ -4806,7 +4837,6 @@ const App = () => {
                       }
                   }
                   
-                  // 3. Final Update & Save
                   const finalShopInfo = { ...shopInfo, logo: newLogoUrl };
                   setShopInfo(finalShopInfo);
                   await saveSystemSettings('shop_info', finalShopInfo);
@@ -4816,7 +4846,6 @@ const App = () => {
                   throw new Error(result.message || "Upload failed");
               }
           } else {
-              // Offline Mode
               const updatedShopInfo = { ...shopInfo, logo: base64Data };
               setShopInfo(updatedShopInfo);
               showToast("เปลี่ยนโลโก้ร้านค้า (Offline)", "success");
@@ -4825,19 +4854,18 @@ const App = () => {
       } catch (error) {
           console.error(error);
           showToast("เกิดข้อผิดพลาด: " + error.message, "error");
+          setShopInfo(prev => ({ ...prev, logo: '' })); 
       } finally {
           setIsUploadingLogo(false);
       }
   };
 
-  // [ADDED] Handle Shop Logo Delete Request (Open Modal)
   const requestDeleteLogo = () => {
       if (shopInfo.logo) {
           setDeleteLogoConfirm(true);
       }
   };
 
-  // [ADDED] Close Delete Logo Modal
   const closeDeleteLogoModal = () => {
       setIsDeleteLogoClosing(true);
       setTimeout(() => {
@@ -4846,23 +4874,20 @@ const App = () => {
       }, 300);
   };
 
-  // [ADDED] Execute Shop Logo Delete
   const executeDeleteLogo = async () => {
       const fileId = getFileId(shopInfo.logo);
 
-      // Optimistic Update
       const tempShopInfo = { ...shopInfo, logo: '' };
       setShopInfo(tempShopInfo);
 
       if (GOOGLE_SCRIPT_URL) {
           try {
-              // Update Settings
               await saveSystemSettings('shop_info', tempShopInfo);
               
-              // Delete actual file from Drive
               if (fileId) {
                   fetch(GOOGLE_SCRIPT_URL, {
                       method: 'POST',
+                      headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
                       body: JSON.stringify({ action: 'deleteFile', id: fileId })
                   }).catch(err => console.error("Failed to delete logo from Drive:", err));
               }
@@ -4886,7 +4911,6 @@ const App = () => {
           }
           
           let processedFile = file;
-          // Check size > 5MB (5 * 1024 * 1024)
           if (file.size > 5 * 1024 * 1024) {
                showToast("กำลังลดขนาดไฟล์รูปภาพ...", "success");
                processedFile = await compressImage(file);
@@ -4913,28 +4937,6 @@ const App = () => {
   const onDragOverImg = (e) => {
       e.preventDefault();
   };
-
-
-  useEffect(() => {
-    if (isAddModalOpen && viewOnlyMode && part3Ref.current) {
-      setTimeout(() => {
-        part3Ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 300);
-    }
-  }, [isAddModalOpen, viewOnlyMode]);
-
-  useLayoutEffect(() => {
-    if (mainRef.current) {
-      const savedPosition = tabScrollPositions.current[activeTab] || 0;
-      mainRef.current.scrollTop = savedPosition;
-      
-      // [FIX] ป้องกันการ Render ซ้ำซ้อนโดยเช็คค่าก่อน Set State
-      const shouldBeScrolled = savedPosition > 0;
-      if (isScrolled !== shouldBeScrolled) {
-         setIsScrolled(shouldBeScrolled);
-      }
-    }
-  }, [activeTab]); // ลบ isScrolled ออกจาก dependency เพื่อป้องกัน loop
 
   const filteredAndSortedActivities = useMemo(() => {
     let items = allActivities.filter(item => {
@@ -4972,7 +4974,6 @@ const App = () => {
       const matchesCategory = filterCategory === 'all' || item.category === filterCategory;
       const matchesStatus = filterStatus === 'all' || item.dealStatus === filterStatus;
       
-      // [FIX] Added logic for 'active_only' transport filter to exclude completed/cancelled items
       let matchesTransport = true;
       if (filterTransport === 'active_only') {
           matchesTransport = 
@@ -5013,25 +5014,35 @@ const App = () => {
     return items;
   }, [allActivities, sortConfig, searchTerm, filterDate, filterDateRange, dateFilterMode, filterCategory, filterStatus, filterTransport]);
 
-  // [OPTIMIZATION] Memoize Analytics Calculations - แก้ปัญหา Lag โดยย้ายการคำนวณหนักๆ มาไว้ที่นี่
   const analyticsData = useMemo(() => {
-    const currentRevenue = filteredAndSortedActivities.reduce((sum, item) => {
-        const isCancelledOrIssue = item.dealStatus === 'cancelled' || item.transportStatus === 'issue';
-        return sum + (isCancelledOrIssue ? 0 : (item.wage || 0));
-    }, 0);
+    // [MODIFIED] Calculate financials ONLY for projects with dealStatus === 'completed'
+    // This now checks both the direct value 'completed' AND custom statuses with type 'completed'
+    const financialItems = filteredAndSortedActivities.filter(item => {
+        // 1. Check if it matches the system default 'completed' value
+        if (item.dealStatus === 'completed') return true;
+        
+        // 2. Check if it matches a custom status that has the type 'completed'
+        const statusDef = dealStatuses.find(s => s.value === item.dealStatus);
+        if (statusDef && statusDef.type === 'completed') return true;
+        
+        return false;
+    });
+
+    const currentRevenue = financialItems.reduce((sum, item) => sum + (item.wage || 0), 0);
     
-    const currentSupport = filteredAndSortedActivities.reduce((sum, item) => {
+    const currentSupport = financialItems.reduce((sum, item) => {
         const itemSupport = item.customerSupport ? item.customerSupport.reduce((s, e) => s + (parseFloat(e.price) || 0), 0) : 0;
         return sum + itemSupport;
     }, 0);
 
-    const currentCost = filteredAndSortedActivities.reduce((sum, item) => {
+    const currentCost = financialItems.reduce((sum, item) => {
         const itemCost = item.expenses ? item.expenses.reduce((s, e) => s + (parseFloat(e.price) || 0), 0) : 0;
         return sum + itemCost;
     }, 0);
     
     const currentProfit = currentRevenue - currentCost; 
 
+    // Counts remain based on ALL filtered items (as requested)
     const totalProjects = filteredAndSortedActivities.length;
     const completedProjects = filteredAndSortedActivities.filter(a => a.dealStatus === 'confirmed' && a.transportStatus === 'delivered').length;
     const activeProjects = filteredAndSortedActivities.filter(a => a.dealStatus === 'confirmed' && a.transportStatus !== 'delivered' && a.transportStatus !== 'issue').length;
@@ -5039,8 +5050,9 @@ const App = () => {
     const issueProjects = filteredAndSortedActivities.filter(a => a.dealStatus === 'cancelled' || a.transportStatus === 'issue').length;
     const declinedProjects = filteredAndSortedActivities.filter(a => a.dealStatus === 'declined').length;
     
+    // Expense Breakdown (Financial -> Use financialItems)
     const expenseBreakdown = {};
-    filteredAndSortedActivities.forEach(item => {
+    financialItems.forEach(item => {
         if (item.expenses) {
         item.expenses.forEach(ex => {
             if (ex.category) {
@@ -5054,30 +5066,29 @@ const App = () => {
         .sort((a, b) => b.amount - a.amount);
     const maxExpense = Math.max(...allExpensesList.map(e => e.amount), 1);
     
+    // Artist Revenue (Financial -> Use financialItems)
     const artistRevenue = {};
-    filteredAndSortedActivities.forEach(item => {
-        if (item.dealStatus !== 'cancelled' && item.transportStatus !== 'issue') {
-            const name = item.artist || 'Unknown';
-            artistRevenue[name] = (artistRevenue[name] || 0) + (item.wage || 0);
-        }
+    financialItems.forEach(item => {
+        const name = item.artist || 'Unknown';
+        artistRevenue[name] = (artistRevenue[name] || 0) + (item.wage || 0);
     });
     const topPerformers = Object.entries(artistRevenue)
         .map(([name, amount]) => ({ name, amount }))
         .sort((a, b) => b.amount - a.amount);
     const maxPerformerRevenue = Math.max(...topPerformers.map(p => p.amount), 1);
     
+    // Customer Revenue (Financial -> Use financialItems)
     const customerRevenue = {};
-    filteredAndSortedActivities.forEach(item => {
-        if (item.dealStatus !== 'cancelled' && item.transportStatus !== 'issue') {
-            const name = item.customer || 'Unknown';
-            customerRevenue[name] = (customerRevenue[name] || 0) + (item.wage || 0);
-        }
+    financialItems.forEach(item => {
+        const name = item.customer || 'Unknown';
+        customerRevenue[name] = (customerRevenue[name] || 0) + (item.wage || 0);
     });
     const topCustomers = Object.entries(customerRevenue)
         .map(([name, amount]) => ({ name, amount }))
         .sort((a, b) => b.amount - a.amount);
     const maxCustomerRevenue = Math.max(...topCustomers.map(p => p.amount), 1);
     
+    // Customer Project Counts (Count -> Use filteredAndSortedActivities)
     const customerProjectCounts = {};
     filteredAndSortedActivities.forEach(item => {
         if (item.dealStatus !== 'cancelled' && item.transportStatus !== 'issue') {
@@ -5090,6 +5101,7 @@ const App = () => {
         .sort((a, b) => b.count - a.count);
     const maxCustomerProjectCount = Math.max(...topCustomerByProjects.map(p => p.count), 1);
 
+    // Category Stats (Count -> Use filteredAndSortedActivities)
     const categoryStats = {};
     filteredAndSortedActivities.forEach(item => {
         categoryStats[item.category] = (categoryStats[item.category] || 0) + 1;
@@ -5105,7 +5117,7 @@ const App = () => {
         topCustomerByProjects, maxCustomerProjectCount,
         categoryData
     };
-  }, [filteredAndSortedActivities]); // คำนวณใหม่เฉพาะเมื่อข้อมูลเปลี่ยน
+  }, [filteredAndSortedActivities, dealStatuses]); // [FIXED] Added dealStatuses to dependency array
 
   const sortedActivitiesForOverview = useMemo(() => {
     let items = [...allActivities];
@@ -5128,7 +5140,6 @@ const App = () => {
     return items;
   }, [allActivities, sortConfig]);
 
-  // ... (getDealType, getTransportType, stats, resetFilters, closeModal, closeDeleteModal, handlers remain same) ...
   const getDealType = (val) => dealStatuses.find(s => s.value === val)?.type || 'pending';
   const getTransportType = (val) => transportStatuses.find(s => s.value === val)?.type || 'pending';
 
@@ -5181,7 +5192,7 @@ const App = () => {
     setTimeout(() => {
       setIsAddModalOpen(false);
       setIsModalClosing(false);
-    }, 300); // 300ms matches animation duration
+    }, 300); 
   };
 
   const closeDeleteModal = () => {
@@ -5199,10 +5210,9 @@ const App = () => {
     if (existingCustomer) {
       setCustomerSocial(existingCustomer.social || '');
       setCustomerLine(existingCustomer.line || '');
-      setCustomerPhone(existingCustomer.phone || '');
+      setCustomerPhone(formatPhoneNumber(existingCustomer.phone || '')); // [MODIFIED] Format phone
       setCustomerEmail(existingCustomer.email || '');
       setCustomerTaxId(existingCustomer.taxId || '');
-      // [ADDED] Load address from saved customer
       setCustomerAddress(existingCustomer.address || ''); 
     }
   };
@@ -5212,7 +5222,7 @@ const App = () => {
     setRecipientName(value);
     const existingRecipient = savedRecipients.find(r => r.name === value);
     if (existingRecipient) {
-      setRecipientPhone(existingRecipient.phone || '');
+      setRecipientPhone(formatPhoneNumber(existingRecipient.phone || '')); // [MODIFIED] Format phone
     }
   };
 
@@ -5230,10 +5240,9 @@ const App = () => {
       if (activity.customerInfo) {
         setCustomerSocial(activity.customerInfo.social || '');
         setCustomerLine(activity.customerInfo.line || '');
-        setCustomerPhone(activity.customerInfo.phone || '');
+        setCustomerPhone(formatPhoneNumber(activity.customerInfo.phone || '')); // [MODIFIED] Format phone
         setCustomerEmail(activity.customerInfo.email || '');
         setCustomerTaxId(activity.customerInfo.taxId || '');
-        // [ADDED] Load address
         setCustomerAddress(activity.customerInfo.address || ''); 
       } else {
         setCustomerSocial('');
@@ -5241,41 +5250,41 @@ const App = () => {
         setCustomerPhone('');
         setCustomerEmail('');
         setCustomerTaxId('');
-        // [ADDED] Reset address
         setCustomerAddress(''); 
       }
       setDeliveryStart(activity.rawDeliveryStart || '');
       setDeliveryEnd(activity.rawDeliveryEnd || activity.rawDeliveryDateTime || '');
 
       setRecipientName(activity.recipient || '');
-      setRecipientPhone(activity.recipientPhone || '');
+      setRecipientPhone(formatPhoneNumber(activity.recipientPhone || '')); // [MODIFIED] Format phone
       setLocationName(activity.location || '');
       setMapLink(activity.mapLink || '');
-      setUploadedImage(activity.image || null); // Load existing image
+      setUploadedImage(activity.image || null); 
       
-      // [MODIFIED] Load Quotation Items or migrate from legacy wage/deliveryFee
       if (activity.quotationItems && activity.quotationItems.length > 0) {
-          setQuotationItems(activity.quotationItems);
-          // Calculate total wage for display consistency if needed, but we rely on items now
+          // [MODIFIED] Map existing items to include quantity and unitPrice
+          const loadedItems = activity.quotationItems.map(item => ({
+              ...item,
+              quantity: item.quantity !== undefined ? item.quantity : 1,
+              unitPrice: item.unitPrice !== undefined ? item.unitPrice : (item.price || 0)
+          }));
+          setQuotationItems(loadedItems);
           const totalWage = activity.quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0);
           setWage(totalWage);
       } else {
-          // Backward compatibility: Convert legacy wage/delivery to list items
+          // [MODIFIED] Initialize with quantity and unitPrice
           const initialItems = [];
-          if (activity.wage > 0) initialItems.push({ category: 'ค่าบริการ/อุปกรณ์', detail: 'ค่าจ้างเดิม', price: activity.wage });
-          if (activity.deliveryFee > 0) initialItems.push({ category: 'ค่าจัดส่ง', detail: 'ค่าส่งเดิม', price: activity.deliveryFee });
+          if (activity.wage > 0) initialItems.push({ category: 'ค่าบริการ/อุปกรณ์', detail: 'ค่าจ้างเดิม', quantity: 1, unitPrice: activity.wage, price: activity.wage });
+          if (activity.deliveryFee > 0) initialItems.push({ category: 'ค่าจัดส่ง', detail: 'ค่าส่งเดิม', quantity: 1, unitPrice: activity.deliveryFee, price: activity.deliveryFee });
           
-          if (initialItems.length === 0) initialItems.push({ category: '', detail: '', price: 0 });
+          if (initialItems.length === 0) initialItems.push({ category: '', detail: '', quantity: 1, unitPrice: 0, price: 0 });
           setQuotationItems(initialItems);
           setWage(activity.wage || 0);
       }
 
-      // [MODIFIED] Load Customer Support Items with fallback
       if (activity.customerSupport && activity.customerSupport.length > 0) {
-          // Check if it's new format (has denomination) or old format
           const mappedSupport = activity.customerSupport.map(item => {
               if (item.denomination !== undefined) return item;
-              // Migrate old format: detail -> price (assume custom amount)
               return { denomination: 1, quantity: item.price, price: item.price }; 
           });
           setCustomerSupportItems(mappedSupport);
@@ -5283,13 +5292,24 @@ const App = () => {
           setCustomerSupportItems([{ denomination: 20, quantity: 0, price: 0 }]);
       }
 
-      setExpenses(activity.expenses && activity.expenses.length > 0 ? activity.expenses : [{ category: '', detail: '', price: 0 }]);
+      // [MODIFIED] Load Expenses with quantity check
+      if (activity.expenses && activity.expenses.length > 0) {
+          const loadedExpenses = activity.expenses.map(item => ({
+              ...item,
+              quantity: item.quantity !== undefined ? item.quantity : 1,
+              unitPrice: item.unitPrice !== undefined ? item.unitPrice : (item.price || 0)
+          }));
+          setExpenses(loadedExpenses);
+      } else {
+          setExpenses([{ category: '', detail: '', quantity: 1, unitPrice: 0, price: 0 }]);
+      }
+
       setNote(activity.note || '');
       setDealStatus(activity.dealStatus);
       setTransportStatus(activity.transportStatus);
     } else {
       setEditingId(null);
-      let nextIdNumber = 1; // เริ่มต้นที่ 1
+      let nextIdNumber = 1; 
       if (allActivities.length > 0) {
         const ids = allActivities.map(item => {
           const match = item.id.match(/\d+/); 
@@ -5313,7 +5333,6 @@ const App = () => {
       setCustomerPhone('');
       setCustomerEmail('');
       setCustomerTaxId('');
-      // [ADDED] Reset address
       setCustomerAddress(''); 
       setRecipientName('');
       setRecipientPhone('');
@@ -5322,10 +5341,10 @@ const App = () => {
       setUploadedImage(null);
       setNote('');
       setWage(0);
-      setDeliveryFee(0); // [NEW] Reset Delivery Fee
-      setExpenses([{ category: '', detail: '', price: 0 }]);
-      setQuotationItems([{ category: '', detail: '', price: 0 }]); // Reset Quotation
-      setCustomerSupportItems([{ denomination: 20, quantity: 0, price: 0 }]); // Reset Support
+      setDeliveryFee(0); 
+      setExpenses([{ category: '', detail: '', quantity: 1, unitPrice: 0, price: 0 }]); // [MODIFIED] Init
+      setQuotationItems([{ category: '', detail: '', quantity: 1, unitPrice: 0, price: 0 }]); // [MODIFIED] Init
+      setCustomerSupportItems([{ denomination: 20, quantity: 0, price: 0 }]); 
       setDealStatus(dealStatuses.length > 0 ? dealStatuses[0].value : ''); 
       setTransportStatus(transportStatuses.length > 0 ? transportStatuses[0].value : '');
     }
@@ -5343,7 +5362,6 @@ const App = () => {
         phone: customerPhone,
         email: customerEmail,
         taxId: customerTaxId,
-        // [ADDED] Save address to customer list
         address: customerAddress 
       };
       const existingCustomerIndex = savedCustomers.findIndex(c => c.name === customerName);
@@ -5357,7 +5375,6 @@ const App = () => {
         ? `${formatDate(deliveryStart)} - ${formatDate(deliveryEnd)}`
         : deliveryEnd ? formatDate(deliveryEnd) : '-';
 
-    // Calculate totals for summary fields
     const totalQuotation = quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0);
 
     const activityData = {
@@ -5372,7 +5389,6 @@ const App = () => {
         phone: customerPhone,
         email: customerEmail,
         taxId: customerTaxId,
-        // [ADDED] Save address to activity data
         address: customerAddress 
       },
       date: displayDate,
@@ -5381,9 +5397,9 @@ const App = () => {
       rawDeliveryStart: deliveryStart,
       rawDeliveryEnd: deliveryEnd,
       rawDeliveryDateTime: deliveryEnd, 
-      wage: totalQuotation, // Save total as wage for table sorting/display
-      deliveryFee: 0, // Deprecated in favor of quotationItems, set 0 or keep for legacy
-      quotationItems: quotationItems, // [NEW] Save detailed quotation
+      wage: totalQuotation, 
+      deliveryFee: 0, 
+      quotationItems: quotationItems, 
       dealStatus: dealStatus,
       transportStatus: transportStatus,
       expenses: expenses,
@@ -5393,13 +5409,14 @@ const App = () => {
       recipientPhone: recipientPhone,
       location: locationName,
       mapLink: mapLink,
-      image: uploadedImage // Add image data
+      image: uploadedImage 
     };
 
     if (GOOGLE_SCRIPT_URL) {
       try {
         const response = await fetch(GOOGLE_SCRIPT_URL, {
           method: 'POST',
+          headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
           body: JSON.stringify({ action: 'save', data: activityData })
         });
         const result = await response.json();
@@ -5419,12 +5436,10 @@ const App = () => {
           fetchProjects(); 
           return;
         } else {
-          // --- ส่วนที่ปรับปรุง: ตรวจสอบและแปล Error เรื่องสิทธิ์ Google Script ---
           let displayMsg = result.message;
           if (displayMsg && (displayMsg.includes("DriveApp") || displayMsg.includes("permission") || displayMsg.includes("อนุญาต"))) {
              displayMsg = "สิทธิ์ Google Drive ไม่ถูกต้อง: กรุณาเปิด Apps Script > กด Run ฟังก์ชันเพื่อขอสิทธิ์ (Authorize) > และ Deploy ใหม่อีกครั้ง";
           }
-          // -----------------------------------------------------------------
           showToast("ไม่สามารถบันทึกข้อมูลได้: " + displayMsg, 'error');
         }
       } catch (error) {
@@ -5457,7 +5472,6 @@ const App = () => {
     if (deleteConfirm.id) {
       setIsSaving(true);
 
-      // ค้นหารายการที่จะลบ เพื่อเอาข้อมูลรูปภาพส่งไปให้ Backend ลบไฟล์
       const itemToDelete = allActivities.find(item => item.id === deleteConfirm.id);
       const imageInfo = itemToDelete ? itemToDelete.image : null;
 
@@ -5465,10 +5479,11 @@ const App = () => {
          try {
            const response = await fetch(GOOGLE_SCRIPT_URL, {
              method: 'POST',
+             headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
              body: JSON.stringify({ 
                 action: 'delete', 
                 id: deleteConfirm.id,
-                image: imageInfo // ส่งข้อมูลรูปภาพไปด้วยเพื่อให้ Backend ลบไฟล์บน Drive
+                image: imageInfo 
              })
            });
            const result = await response.json();
@@ -5500,7 +5515,7 @@ const App = () => {
   };
 
   const handleAddExpense = () => {
-    setExpenses([...expenses, { category: '', detail: '', price: 0 }]);
+    setExpenses([...expenses, { category: '', detail: '', quantity: 1, unitPrice: 0, price: 0 }]); // [MODIFIED] Add with qty
   };
 
   const handleRemoveExpense = (index) => {
@@ -5510,13 +5525,32 @@ const App = () => {
 
   const handleExpenseChange = (index, field, value) => {
     const newExpenses = [...expenses];
-    newExpenses[index][field] = value;
+    const item = { ...newExpenses[index] };
+
+    // [MODIFIED] Handle Quantity and Unit Price changes
+    if (field === 'category') item.category = value;
+    if (field === 'detail') item.detail = value;
+    
+    if (field === 'quantity') {
+        const qty = parseFloat(value) || 0;
+        item.quantity = qty;
+        // Recalculate total price
+        item.price = qty * (parseFloat(item.unitPrice) || 0);
+    }
+    
+    if (field === 'unitPrice') {
+        const uPrice = parseFloat(value) || 0;
+        item.unitPrice = uPrice;
+        // Recalculate total price
+        item.price = (parseFloat(item.quantity) || 1) * uPrice;
+    }
+
+    newExpenses[index] = item;
     setExpenses(newExpenses);
   };
 
-  // [NEW] Quotation Handlers
   const handleAddQuotationItem = () => {
-    setQuotationItems([...quotationItems, { category: '', detail: '', price: 0 }]);
+    setQuotationItems([...quotationItems, { category: '', detail: '', quantity: 1, unitPrice: 0, price: 0 }]); // [MODIFIED] Add with qty
   };
 
   const handleRemoveQuotationItem = (index) => {
@@ -5526,29 +5560,42 @@ const App = () => {
 
   const handleQuotationItemChange = (index, field, value) => {
     const newItems = [...quotationItems];
-    newItems[index][field] = value;
+    const item = { ...newItems[index] };
+
+    // [MODIFIED] Handle Quantity and Unit Price changes
+    if (field === 'category') item.category = value;
+    if (field === 'detail') item.detail = value;
+
+    if (field === 'quantity') {
+        const qty = parseFloat(value) || 0;
+        item.quantity = qty;
+        item.price = qty * (parseFloat(item.unitPrice) || 0);
+    }
+    
+    if (field === 'unitPrice') {
+        const uPrice = parseFloat(value) || 0;
+        item.unitPrice = uPrice;
+        item.price = (parseFloat(item.quantity) || 1) * uPrice;
+    }
+
+    newItems[index] = item;
     setQuotationItems(newItems);
   };
 
-  // [FIX] Added missing handler for Support Items (Money Order Calculator)
   const handleSupportItemChange = (index, field, value) => {
     const newItems = [...customerSupportItems];
     const item = { ...newItems[index] };
 
     if (field === 'denomination') {
         item.denomination = parseFloat(value) || 0;
-        // Recalculate price based on new denomination
         item.price = item.denomination * (parseFloat(item.quantity) || 0);
     } else if (field === 'quantity') {
         item.quantity = parseFloat(value) || 0;
-        // Recalculate price based on new quantity
         item.price = (parseFloat(item.denomination) || 0) * item.quantity;
     } else if (field === 'price') {
         item.price = parseFloat(value) || 0;
-        // Optional: Reverse calculate quantity if denomination is set
         if (item.denomination > 0) {
              const qty = item.price / item.denomination;
-             // Keep decimal if not exact division, but money usually integers
              item.quantity = Number.isInteger(qty) ? qty : parseFloat(qty.toFixed(2));
         }
     }
@@ -5557,7 +5604,6 @@ const App = () => {
     setCustomerSupportItems(newItems);
   };
 
-  // [NEW] Support Item Handlers with Calculator Logic
   const handleAddSupportItem = () => {
     setCustomerSupportItems([...customerSupportItems, { denomination: 20, quantity: 0, price: 0 }]);
   };
@@ -7305,9 +7351,11 @@ const App = () => {
                       <div className="flex justify-end">
                           <button
                               onClick={() => saveSystemSettings('shop_info', shopInfo)}
-                              className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition flex items-center justify-center gap-2"
+                              disabled={isSaving || isUploadingLogo} // [FIX] Prevent saving while uploading
+                              className={`px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-sm transition flex items-center justify-center gap-2 ${isSaving || isUploadingLogo ? 'opacity-50 cursor-not-allowed' : 'hover:bg-indigo-700'}`}
                           >
-                              <Save className="w-4 h-4" /> บันทึกข้อมูล
+                              {isUploadingLogo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                              {isUploadingLogo ? 'กำลังอัปโหลด...' : 'บันทึกข้อมูล'}
                           </button>
                       </div>
                   </div>
@@ -8067,10 +8115,11 @@ const App = () => {
                                  ) : (
                                       <input
                                         type="tel"
-                                        placeholder="เบอร์โทร"
+                                        placeholder="0xx-xxx-xxxx"
                                         value={customerPhone}
-                                        onChange={(e) => setCustomerPhone(e.target.value)}
+                                        onChange={(e) => setCustomerPhone(formatPhoneNumber(e.target.value))} // [MODIFIED] Apply formatter
                                         className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                                        maxLength={12} // 10 digits + 2 hyphens
                                       />
                                  )}
                                  {viewOnlyMode ? (
@@ -8245,8 +8294,10 @@ const App = () => {
                                     <input
                                       type="tel"
                                       value={recipientPhone}
-                                      onChange={(e) => setRecipientPhone(e.target.value)}
+                                      onChange={(e) => setRecipientPhone(formatPhoneNumber(e.target.value))} // [MODIFIED] Apply formatter
                                       className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium"
+                                      placeholder="0xx-xxx-xxxx"
+                                      maxLength={12}
                                     />
                                 )}
                               </div>
@@ -8460,8 +8511,9 @@ const App = () => {
                                 {/* Header Row */}
                                 <div className="hidden sm:grid grid-cols-12 gap-3 px-2 text-xs font-bold text-emerald-800/60 uppercase tracking-wide">
                                    <div className="col-span-3">หมวดหมู่</div>
-                                   <div className="col-span-6">รายละเอียดรายการ</div>
-                                   <div className="col-span-2">ราคา (บาท)</div>
+                                   <div className="col-span-4">รายละเอียดรายการ</div>
+                                   <div className="col-span-2 text-center">จำนวน</div> {/* [ADDED] Quantity Header */}
+                                   <div className="col-span-2 text-right">ราคา/หน่วย</div> {/* [MODIFIED] Unit Price Header */}
                                    <div className="col-span-1"></div>
                                 </div>
 
@@ -8479,7 +8531,7 @@ const App = () => {
                                             className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                                           />
                                        </div>
-                                       <div className="sm:col-span-6">
+                                       <div className="sm:col-span-4">
                                           <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">รายละเอียด</span>
                                           <input
                                             type="text"
@@ -8489,13 +8541,25 @@ const App = () => {
                                             className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                                           />
                                        </div>
+                                       {/* [ADDED] Quantity Input */}
                                        <div className="sm:col-span-2">
-                                          <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">ราคา</span>
+                                          <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">จำนวน</span>
+                                          <input
+                                            type="number"
+                                            placeholder="1"
+                                            value={item.quantity}
+                                            onChange={(e) => handleQuotationItemChange(idx, 'quantity', e.target.value)}
+                                            className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm font-bold text-center text-slate-700 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                                          />
+                                       </div>
+                                       {/* [MODIFIED] Price Input to be Unit Price */}
+                                       <div className="sm:col-span-2">
+                                          <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">ราคา/หน่วย</span>
                                           <input
                                             type="number"
                                             placeholder="0.00"
-                                            value={item.price}
-                                            onChange={(e) => handleQuotationItemChange(idx, 'price', e.target.value)}
+                                            value={item.unitPrice !== undefined ? item.unitPrice : item.price} // Bind to unitPrice
+                                            onChange={(e) => handleQuotationItemChange(idx, 'unitPrice', e.target.value)}
                                             className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm font-black text-emerald-700 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-right"
                                           />
                                        </div>
@@ -8538,8 +8602,9 @@ const App = () => {
                                 {/* Header Row */}
                                 <div className="hidden sm:grid grid-cols-12 gap-3 px-2 text-xs font-bold text-rose-800/60 uppercase tracking-wide">
                                    <div className="col-span-3">หมวดหมู่</div>
-                                   <div className="col-span-6">รายละเอียด</div>
-                                   <div className="col-span-2">ราคา (บาท)</div>
+                                   <div className="col-span-4">รายละเอียด</div>
+                                   <div className="col-span-2 text-center">จำนวน</div> {/* [ADDED] Quantity Header */}
+                                   <div className="col-span-2 text-right">ราคา/หน่วย</div> {/* [MODIFIED] Unit Price Header */}
                                    <div className="col-span-1"></div>
                                 </div>
 
@@ -8556,7 +8621,7 @@ const App = () => {
                                             className="w-full px-3 py-2 bg-white border border-rose-200 rounded-lg text-sm focus:ring-2 focus:ring-rose-500/20"
                                           />
                                        </div>
-                                       <div className="sm:col-span-6">
+                                       <div className="sm:col-span-4">
                                           <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">รายละเอียด</span>
                                           <input
                                             type="text"
@@ -8566,13 +8631,25 @@ const App = () => {
                                             className="w-full px-3 py-2 bg-white border border-rose-200 rounded-lg text-sm focus:ring-2 focus:ring-rose-500/20"
                                           />
                                        </div>
+                                       {/* [ADDED] Quantity Input */}
                                        <div className="sm:col-span-2">
-                                          <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">ราคา</span>
+                                          <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">จำนวน</span>
+                                          <input
+                                            type="number"
+                                            placeholder="1"
+                                            value={item.quantity}
+                                            onChange={(e) => handleExpenseChange(idx, 'quantity', e.target.value)}
+                                            className="w-full px-3 py-2 bg-white border border-rose-200 rounded-lg text-sm font-bold text-center text-slate-700 focus:ring-2 focus:ring-rose-500/20"
+                                          />
+                                       </div>
+                                       {/* [MODIFIED] Price Input to be Unit Price */}
+                                       <div className="sm:col-span-2">
+                                          <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">ราคา/หน่วย</span>
                                           <input
                                             type="number"
                                             placeholder="0.00"
-                                            value={item.price}
-                                            onChange={(e) => handleExpenseChange(idx, 'price', e.target.value)}
+                                            value={item.unitPrice !== undefined ? item.unitPrice : item.price}
+                                            onChange={(e) => handleExpenseChange(idx, 'unitPrice', e.target.value)}
                                             className="w-full px-3 py-2 bg-white border border-rose-200 rounded-lg text-sm font-semibold text-rose-800 focus:ring-2 focus:ring-rose-500/20 text-right"
                                           />
                                        </div>
