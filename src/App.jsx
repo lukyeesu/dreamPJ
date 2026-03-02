@@ -389,8 +389,58 @@ const ImageViewer = ({ src, onClose }) => {
   }, [scale]);
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col animate-in fade-in duration-300">
-       {/* ... existing code ... */}
+    <div className="fixed inset-0 z-[9999] bg-black/95 flex flex-col animate-in fade-in duration-300">
+       <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-50 bg-gradient-to-b from-black/50 to-transparent">
+          <div className="text-white/80 text-sm font-bold flex items-center gap-2">
+             <ImageIcon className="w-4 h-4" />
+             Preview
+          </div>
+          <div className="flex items-center gap-4">
+             <div className="flex gap-2 bg-white/10 rounded-full p-1 backdrop-blur-md">
+                <button 
+                    onClick={() => setScale(Math.max(1, scale - 0.5))}
+                    className="p-2 text-white hover:bg-white/20 rounded-full transition"
+                >
+                    <ZoomOut className="w-5 h-5" />
+                </button>
+                <button 
+                    onClick={() => setScale(Math.min(5, scale + 0.5))}
+                    className="p-2 text-white hover:bg-white/20 rounded-full transition"
+                >
+                    <ZoomIn className="w-5 h-5" />
+                </button>
+             </div>
+             <button onClick={onClose} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition">
+                <X className="w-6 h-6" />
+             </button>
+          </div>
+       </div>
+
+       <div 
+          ref={containerRef}
+          className="flex-1 flex items-center justify-center overflow-hidden cursor-move touch-none"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+       >
+          <img 
+              src={src} 
+              alt="Full Preview"
+              referrerPolicy="no-referrer"
+              style={{ 
+                  transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
+                  transition: isDragging ? 'none' : 'transform 0.2s ease-out',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  objectFit: 'contain'
+              }}
+              draggable={false}
+          />
+       </div>
        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white/50 text-xs font-medium pointer-events-none bg-black/30 px-3 py-1 rounded-full backdrop-blur-sm">
           {scale === 1 ? 'Pinch or Scroll to Zoom' : `${Math.round(scale * 100)}%`}
        </div>
@@ -421,7 +471,7 @@ const ShopFooter = ({ shopInfo, maxWidthClass = "max-w-7xl" }) => {
           
           {/* Left: Brand (Logo + Name) & Address */}
           <div className="flex items-start gap-3 w-full md:w-auto justify-center md:justify-start">
-              {/* ... existing code ... */}
+              {/* [MODIFIED] Display Logo: Increased size to w-12 h-12 (48px) to cover 2 text rows */}
               <div className="shrink-0 w-12 h-12 rounded-lg overflow-hidden flex items-center justify-center relative self-start mt-0.5">
                   {shopInfo.logo ? (
                       <img 
@@ -450,13 +500,27 @@ const ShopFooter = ({ shopInfo, maxWidthClass = "max-w-7xl" }) => {
               </div>
           </div>
           
-          {/* Right: Socials & Contact Info (Phone/Email moved here) */}
-          {/* [MODIFIED] Mobile: flex-col-reverse (Contact Top, Socials Bottom) | Desktop: flex-col (Socials Top, Contact Bottom) */}
-          <div className="flex flex-col-reverse md:flex-col items-center md:items-end gap-3 md:gap-2 w-full md:w-auto">
+          {/* Right: Contact Info (Top on Mobile) & Socials (Bottom on Mobile) */}
+          <div className="flex flex-col items-center md:items-end gap-3 md:gap-2 w-full md:w-auto">
               
-              {/* Social Icons Row */}
+              {/* [MOVED] Contact Info (Phone/Email) moved above Socials on Mobile */}
+              <div className="flex flex-wrap items-center justify-center md:justify-end gap-x-4 gap-y-1 text-xs font-medium text-slate-500 w-full md:w-auto">
+                  {shopInfo.phone && (
+                      <a href={`tel:${shopInfo.phone}`} className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors whitespace-nowrap">
+                          <Phone className="w-3.5 h-3.5" /> 
+                          {formatPhoneNumber(shopInfo.phone)}
+                      </a>
+                  )}
+                  {shopInfo.email && (
+                      <a href={`mailto:${shopInfo.email}`} className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors break-all">
+                          <Mail className="w-3.5 h-3.5 shrink-0" /> 
+                          {shopInfo.email}
+                      </a>
+                  )}
+              </div>
+
+              {/* [MOVED] Social Icons Row moved below Contact Info on Mobile */}
               <div className="flex items-center gap-3">
-                  {/* [MODIFIED] Use LineIcon instead of MessageCircle */}
                   {shopInfo.line && (
                       <a href={shopInfo.line} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-[#06C755] transition-all hover:scale-110">
                           <LineIcon className="w-5 h-5" />
@@ -477,7 +541,6 @@ const ShopFooter = ({ shopInfo, maxWidthClass = "max-w-7xl" }) => {
                           <Music2 className="w-5 h-5" />
                       </a>
                   )}
-                  {/* [ADDED] Twitter (X) & WeChat Icons in Footer */}
                   {shopInfo.twitter && (
                       <a href={shopInfo.twitter} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-black transition-all hover:scale-110">
                           <XIcon className="w-4 h-4" />
@@ -488,27 +551,9 @@ const ShopFooter = ({ shopInfo, maxWidthClass = "max-w-7xl" }) => {
                           <WeChatIcon className="w-5 h-5" />
                       </a>
                   )}
-                  {/* [ADDED] Telegram Icon in Footer */}
                   {shopInfo.telegram && (
                       <a href={shopInfo.telegram} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-[#0088cc] transition-all hover:scale-110">
                           <TelegramIcon className="w-5 h-5" />
-                      </a>
-                  )}
-              </div>
-
-              {/* [MOVED] Contact Info (Phone/Email) moved to Right side below Socials */}
-              {/* [MODIFIED] Added flex-wrap for multiline handling and justify-center for mobile centering */}
-              <div className="flex flex-wrap items-center justify-center md:justify-end gap-x-4 gap-y-1 text-xs font-medium text-slate-500 w-full md:w-auto">
-                  {shopInfo.phone && (
-                      <a href={`tel:${shopInfo.phone}`} className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors whitespace-nowrap">
-                          <Phone className="w-3.5 h-3.5" /> 
-                          {formatPhoneNumber(shopInfo.phone)}
-                      </a>
-                  )}
-                  {shopInfo.email && (
-                      <a href={`mailto:${shopInfo.email}`} className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors break-all">
-                          <Mail className="w-3.5 h-3.5 shrink-0" /> 
-                          {shopInfo.email}
                       </a>
                   )}
               </div>
