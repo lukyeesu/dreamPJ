@@ -2325,38 +2325,44 @@ ${moneyOrderDetails}${quotationDetails}
             @media print {
                 /* [MODIFIED] Target both html and body to force text color white on browser UI */
                 html, body { 
-                    width: 100%;
-                    height: auto; /* [MODIFIED] Changed from 100% to auto to avoid forcing height issues */
-                    background: white; 
-                    margin: 0;
-                    padding: 0;
-                    /* color: white !important;  REMOVED to prevent interfering with content colors */
+                    width: 210mm !important; /* [FIX] กำหนดขนาดตายตัวให้ Safari บังคับย่อ (Scale to fit) ได้พอดีกับ A4 */
+                    height: 297mm !important;
+                    background: white !important; 
+                    margin: 0 !important;
+                    padding: 0 !important;
                 }
                 .receipt-a4-container {
-                    width: 100%;
-                    height: 297mm; /* Force A4 height in print */
-                    box-shadow: none;
-                    margin: 0;
-                    padding: 40px !important; /* Keep padding */
-                    page-break-after: always;
-                    color: initial; /* [MODIFIED] Allow colors to show */
-                    visibility: visible;
-                    overflow: hidden;
+                    width: 210mm !important; 
+                    height: 296.5mm !important; /* [FIX] ลดจาก 297mm นิดหน่อย ป้องกัน Safari ดันเนื้อหาไปหน้าเปล่า */
+                    max-height: 296.5mm !important;
+                    box-shadow: none !important;
+                    margin: 0 !important;
+                    padding: 40px !important; 
+                    page-break-after: always !important;
+                    break-after: page !important; /* [FIX] เพิ่ม break-after สำหรับ Safari */
+                    page-break-inside: avoid !important;
+                    break-inside: avoid !important;
+                    color: initial; 
+                    visibility: visible !important;
+                    overflow: hidden !important;
+                    box-sizing: border-box !important;
                 }
                 .receipt-a4-container:last-child {
-                    page-break-after: auto;
+                    page-break-after: auto !important;
+                    break-after: auto !important;
                 }
                 
                 .page-break-after {
-                    page-break-after: always;
+                    page-break-after: always !important;
+                    break-after: page !important;
                 }
                 .force-print-bg {
-                    -webkit-print-color-adjust: exact;
-                    print-color-adjust: exact;
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
                 }
                 @page { 
-                    size: A4; 
-                    margin: 0; /* [MODIFIED] Reset margins to 0 to prevent overflow causing extra blank pages */
+                    size: A4 portrait; /* [FIX] ระบุ portrait เพื่อให้ชัดเจน */
+                    margin: 0mm; 
                 }
                 .no-print { display: none !important; }
             }
