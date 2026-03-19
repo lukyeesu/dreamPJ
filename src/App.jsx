@@ -5741,6 +5741,9 @@ const App = () => {
              const qty = item.price / item.denomination;
              item.quantity = Number.isInteger(qty) ? qty : parseFloat(qty.toFixed(2));
         }
+    } else if (field === 'detail') {
+        // [ADDED] รองรับการแก้ไขค่าในฟิลด์รายละเอียด
+        item.detail = value;
     }
 
     newItems[index] = item;
