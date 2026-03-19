@@ -3875,7 +3875,18 @@ const App = () => {
   const [isSaving, setIsSaving] = useState(false); 
   const [visibleCount, setVisibleCount] = useState(20);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [animateCharts, setAnimateCharts] = useState(false);
+
+  // [MODIFIED] เปลี่ยนจากการใช้ State เดียว เป็น State แยกแต่ละการ์ด
+  const [animState, setAnimState] = useState({
+      expense: false, category: false, artist: false, fan: false, customer: false
+  });
+  // Refs สำหรับจับการมองเห็นของการ์ดแต่ละใบ
+  const expenseRef = useRef(null);
+  const categoryRef = useRef(null);
+  const artistRef = useRef(null);
+  const fanRef = useRef(null);
+  const customerRef = useRef(null);
+
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   
   // Auth Users
@@ -4046,10 +4057,47 @@ const App = () => {
     }
   }, [activeTab, trackingId, quotationId, shopInfo]);
 
+  // [MODIFIED] ปรับปรุง Intersection Observer ให้แม่นยำขึ้น โดยเพิ่มดีเลย์เล็กน้อย
+  // เพื่อให้ DOM คำนวณ Layout เสร็จก่อนเริ่มจับตาดู ป้องกันปัญหา Observer ค้างหรือไม่ทำงาน
   useEffect(() => {
-     setAnimateCharts(false);
-     const timer = setTimeout(() => setAnimateCharts(true), 300);
-     return () => clearTimeout(timer);
+     let observer = null;
+     let initTimer = null;
+
+     if (activeTab === 'Analytics') {
+         initTimer = setTimeout(() => {
+             observer = new IntersectionObserver(
+                 (entries) => {
+                     entries.forEach(entry => {
+                         // ตรวจสอบว่าเลื่อนมาเห็นแล้วใช่หรือไม่
+                         if (entry.isIntersecting) {
+                             const key = entry.target.getAttribute('data-anim-key');
+                             if (key) {
+                                 // ทริกเกอร์อนิเมชั่น
+                                 setAnimState(prev => ({ ...prev, [key]: true }));
+                                 // เลิกติดตามการ์ดนี้เมื่อเล่นอนิเมชั่นแล้ว
+                                 if (observer) observer.unobserve(entry.target);
+                             }
+                         }
+                     });
+                 },
+                 { threshold: 0.1 } // เริ่มเล่นเมื่อเห็นการ์ดโผล่มาแค่ 10%
+             );
+
+             const refs = [expenseRef, categoryRef, artistRef, fanRef, customerRef];
+             refs.forEach(ref => {
+                 if (ref.current) observer.observe(ref.current);
+             });
+         }, 150); // รอให้ CSS เปลี่ยนจาก hidden เป็น block จนเสร็จสมบูรณ์ก่อน
+     } else {
+         // รีเซ็ตค่าเมื่อเปลี่ยนหน้า เพื่อให้พร้อมเล่นใหม่เวลาเข้าหน้านี้อีกครั้ง
+         setAnimState({ expense: false, category: false, artist: false, fan: false, customer: false });
+     }
+
+     // Cleanup function
+     return () => {
+         if (initTimer) clearTimeout(initTimer);
+         if (observer) observer.disconnect();
+     };
   }, [activeTab]);
 
   useEffect(() => {
@@ -5711,18 +5759,14 @@ const App = () => {
   // [REMOVED] handleSendToChatbot function as requested
 
   // ... (DonutChart, renderTable, renderFilterCard remain same) ...
-  const DonutChart = ({ data }) => {
+  const DonutChart = ({ data, isAnimated }) => { // [MODIFIED] รับ prop isAnimated
     const total = data.reduce((sum, item) => sum + item.count, 0);
     const radius = 35;
     const circumference = 2 * Math.PI * radius;
     let cumulativePercent = 0;
     
-    const [isLoaded, setIsLoaded] = useState(false);
-    
-    useEffect(() => {
-        const timer = setTimeout(() => setIsLoaded(true), 100);
-        return () => clearTimeout(timer);
-    }, []);
+    // [MODIFIED] ใช้อนิเมชั่นจาก prop ที่ส่งเข้ามา
+    const isLoaded = isAnimated;
 
     const colors = [
         '#6366f1', '#10b981', '#f59e0b', '#f43f5e', '#8b5cf6', '#3b82f6', '#ec4899', '#64748b'
@@ -6629,8 +6673,9 @@ const App = () => {
                 </div>
              </div>
 
+             {/* [MODIFIED] ใส่ Ref และ data-anim-key ให้แต่ละการ์ด */}
              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 px-4 sm:px-8 lg:px-10">
-                <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col max-h-[400px]">
+                <div ref={expenseRef} data-anim-key="expense" className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col h-full min-h-[400px]">
                   <div className="flex items-center justify-between mb-6 flex-shrink-0">
                       <h3 className="text-xl font-bold text-slate-900">สัดส่วนค่าใช้จ่ายสูงสุด</h3>
                   </div>
@@ -6644,7 +6689,7 @@ const App = () => {
                         <div className="w-full h-3 bg-slate-50 rounded-full overflow-hidden">
                           <div 
                               className="h-full bg-indigo-500 rounded-full transition-all duration-1000 ease-out" 
-                              style={{ width: animateCharts ? `${(item.amount / maxExpense) * 100}%` : '0%' }}
+                              style={{ width: animState.expense ? `${(item.amount / maxExpense) * 100}%` : '0%' }}
                           ></div>
                         </div>
                       </div>
@@ -6653,14 +6698,16 @@ const App = () => {
                     )}
                   </div>
                 </div>
-                <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col items-center justify-center">
-                  <h3 className="text-xl font-bold text-slate-900 mb-2 self-start w-full">สัดส่วนหมวดหมู่โครงการ</h3>
-                  <DonutChart data={categoryData} />
+                <div ref={categoryRef} data-anim-key="category" className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col h-full min-h-[400px]">
+                  <h3 className="text-xl font-bold text-slate-900 mb-6 flex-shrink-0 self-start w-full">สัดส่วนหมวดหมู่โครงการ</h3>
+                  <div className="flex-1 w-full flex items-center justify-center">
+                      <DonutChart data={categoryData} isAnimated={animState.category} />
+                  </div>
                 </div>
              </div>
              <div className="px-4 sm:px-8 lg:px-10 w-full">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full">
-                   <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col max-h-[400px]">
+                   <div ref={artistRef} data-anim-key="artist" className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col max-h-[400px]">
                       <div className="flex items-center justify-between mb-6 flex-shrink-0">
                          <h3 className="text-xl font-bold text-slate-900">อันดับศิลปินทำเงินสูงสุด (Top Artists Performers)</h3>
                       </div>
@@ -6683,7 +6730,7 @@ const App = () => {
                                 <div className="w-full h-2.5 bg-slate-50 rounded-full overflow-hidden">
                                     <div 
                                         className="h-full bg-emerald-500 rounded-full transition-all duration-1000 ease-out" 
-                                        style={{ width: animateCharts ? `${(item.amount / maxPerformerRevenue) * 100}%` : '0%' }}
+                                        style={{ width: animState.artist ? `${(item.amount / maxPerformerRevenue) * 100}%` : '0%' }}
                                     ></div>
                                 </div>
                             </div>
@@ -6693,7 +6740,7 @@ const App = () => {
                         )}
                       </div>
                    </div>
-                   <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col max-h-[400px]">
+                   <div ref={fanRef} data-anim-key="fan" className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col max-h-[400px]">
                       <div className="flex items-center justify-between mb-6 flex-shrink-0">
                          <h3 className="text-xl font-bold text-slate-900">อันดับลูกค้าทำเงินสูงสุด (Top Fan Performers)</h3>
                       </div>
@@ -6716,7 +6763,7 @@ const App = () => {
                                 <div className="w-full h-2.5 bg-slate-50 rounded-full overflow-hidden">
                                     <div 
                                         className="h-full bg-indigo-500 rounded-full transition-all duration-1000 ease-out" 
-                                        style={{ width: animateCharts ? `${(item.amount / maxCustomerRevenue) * 100}%` : '0%' }}
+                                        style={{ width: animState.fan ? `${(item.amount / maxCustomerRevenue) * 100}%` : '0%' }}
                                     ></div>
                                 </div>
                             </div>
@@ -6727,7 +6774,7 @@ const App = () => {
                       </div>
                    </div>
 
-                   <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col max-h-[400px]">
+                   <div ref={customerRef} data-anim-key="customer" className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col max-h-[400px]">
                       <div className="flex items-center justify-between mb-6 flex-shrink-0">
                          <h3 className="text-xl font-bold text-slate-900">อันดับลูกค้าจ้างงานสูงสุด (Top Customer Performers)</h3>
                       </div>
@@ -6750,7 +6797,7 @@ const App = () => {
                                 <div className="w-full h-2.5 bg-slate-50 rounded-full overflow-hidden">
                                     <div 
                                         className="h-full bg-purple-500 rounded-full transition-all duration-1000 ease-out" 
-                                        style={{ width: animateCharts ? `${(item.count / maxCustomerProjectCount) * 100}%` : '0%' }}
+                                        style={{ width: animState.customer ? `${(item.count / maxCustomerProjectCount) * 100}%` : '0%' }}
                                     ></div>
                                 </div>
                             </div>
@@ -8533,22 +8580,26 @@ const App = () => {
                          <div className="bg-indigo-50/50 rounded-2xl border border-indigo-100 p-4">
                               <div className="space-y-3">
                                   {/* Header Row */}
+                                  {/* [MODIFIED] ปรับลำดับ: แบงค์, จำนวน, รวมเงิน, รายละเอียด */}
                                   <div className="hidden sm:grid grid-cols-12 gap-3 px-2 text-xs font-bold text-indigo-800/60 uppercase tracking-wide">
-                                      <div className="col-span-4">ประเภทแบงค์ (บาท)</div>
-                                      <div className="col-span-3">จำนวน (ใบ/เหรียญ)</div>
-                                      <div className="col-span-4">รวมเป็นเงิน (บาท)</div>
+                                      <div className="col-span-3">ประเภทแบงค์</div>
+                                      <div className="col-span-2 text-center">จำนวน</div>
+                                      <div className="col-span-3 text-right">รวมเป็นเงิน</div>
+                                      <div className="col-span-3 pl-1">รายละเอียด</div>
                                       <div className="col-span-1"></div>
                                   </div>
 
                                   {/* Dynamic Rows */}
                                   {customerSupportItems.map((item, idx) => (
-                                      <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center animate-in fade-in slide-in-from-left-2 duration-300 bg-white p-2 sm:p-0 rounded-xl sm:bg-transparent border sm:border-none border-indigo-100 shadow-sm sm:shadow-none">
-                                          <div className="sm:col-span-4 relative">
+                                      <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center animate-in fade-in slide-in-from-left-2 duration-300 bg-white p-3 sm:p-0 rounded-xl sm:bg-transparent border sm:border-none border-indigo-100 shadow-sm sm:shadow-none">
+                                          {/* 1. ประเภทแบงค์ */}
+                                          <div className="sm:col-span-3 relative">
                                               <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">ประเภทแบงค์</span>
                                               <select
                                                   value={item.denomination}
+                                                  disabled={viewOnlyMode}
                                                   onChange={(e) => handleSupportItemChange(idx, 'denomination', e.target.value)}
-                                                  className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none font-bold text-slate-700 text-center sm:text-left"
+                                                  className={`w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 appearance-none font-bold text-slate-700 text-center sm:text-left ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
                                               >
                                                   {[1000, 500, 100, 50, 20, 10, 5, 2, 1].map(val => (
                                                       <option key={val} value={val}>{val >= 20 ? `แบงค์ ${val}` : `เหรียญ ${val}`}</option>
@@ -8556,33 +8607,56 @@ const App = () => {
                                               </select>
                                               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none hidden sm:block" />
                                           </div>
-                                          <div className="sm:col-span-3">
+                                          
+                                          {/* 2. จำนวน */}
+                                          <div className="sm:col-span-2">
                                               <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">จำนวน</span>
                                               <input
                                                   type="number"
                                                   placeholder="จำนวน"
-                                                  value={item.quantity === 0 ? '' : item.quantity} // [MODIFIED] Show empty if 0
+                                                  value={item.quantity === 0 ? '' : item.quantity} 
+                                                  disabled={viewOnlyMode}
                                                   onChange={(e) => handleSupportItemChange(idx, 'quantity', e.target.value)}
-                                                  className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-center"
+                                                  className={`w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-center font-bold text-slate-700 ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
                                               />
                                           </div>
-                                          <div className="sm:col-span-4">
-                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">รวมเงิน</span>
+
+                                          {/* 3. รวมเป็นเงิน */}
+                                          <div className="sm:col-span-3">
+                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">รวมเป็นเงิน (บาท)</span>
                                               <input
                                                   type="number"
                                                   placeholder="0.00"
-                                                  value={item.price === 0 ? '' : item.price} // [MODIFIED] Show empty if 0
+                                                  value={item.price === 0 ? '' : item.price} 
+                                                  disabled={viewOnlyMode}
                                                   onChange={(e) => handleSupportItemChange(idx, 'price', e.target.value)}
-                                                  className="w-full px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-sm font-black text-indigo-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-center sm:text-right"
+                                                  className={`w-full px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-sm font-black text-indigo-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-center sm:text-right ${viewOnlyMode ? 'opacity-80 cursor-not-allowed' : ''}`}
                                               />
                                           </div>
+
+                                          {/* 4. รายละเอียด */}
+                                          <div className="sm:col-span-3">
+                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">รายละเอียด</span>
+                                              <input
+                                                  type="text"
+                                                  placeholder="รายละเอียด (ถ้ามี)"
+                                                  value={item.detail || ''}
+                                                  disabled={viewOnlyMode}
+                                                  onChange={(e) => handleSupportItemChange(idx, 'detail', e.target.value)}
+                                                  className={`w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-left ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
+                                              />
+                                          </div>
+
+                                          {/* 5. ปุ่มลบ */}
                                           <div className="sm:col-span-1 flex justify-center sm:justify-end">
-                                              <button
-                                                  onClick={() => handleRemoveSupportItem(idx)}
-                                                  className="p-2 text-indigo-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition"
-                                              >
-                                                  <Trash2 className="w-4 h-4" />
-                                              </button>
+                                              {!viewOnlyMode && (
+                                                  <button
+                                                      onClick={() => handleRemoveSupportItem(idx)}
+                                                      className="p-2 text-indigo-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition"
+                                                  >
+                                                      <Trash2 className="w-4 h-4" />
+                                                  </button>
+                                              )}
                                           </div>
                                       </div>
                                   ))}
