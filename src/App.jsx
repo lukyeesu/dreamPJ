@@ -186,9 +186,11 @@ const getTabFromUrl = () => {
   // 1. Pathname segment (e.g. /PlansView or /dreamPJ/PlansView)
   const pathname = window.location.pathname || '';
   const segments = pathname.split('/').filter(Boolean);
-  const lastSegment = segments.length > 0 ? segments[segments.length - 1].toLowerCase() : '';
-  if (lastSegment && ROUTE_TO_TAB[lastSegment]) {
-    return ROUTE_TO_TAB[lastSegment];
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i].toLowerCase();
+    if (ROUTE_TO_TAB[seg]) {
+      return ROUTE_TO_TAB[seg];
+    }
   }
 
   // 2. Query param (e.g. ?tab=PlansView or ?page=PlansView)
@@ -212,12 +214,13 @@ const updateUrlForTab = (tabName) => {
   const routeName = TAB_ROUTES[tabName] || tabName;
   const basePath = getBasePath();
   const search = window.location.search || '';
-  const targetPath = `${basePath}/${routeName}${search}`;
+  const cleanSearch = search.includes('~and~') ? '' : search;
+  const targetPath = `${basePath}/${routeName}${cleanSearch}`;
 
   const currentPath = window.location.pathname;
   const expectedPath = `${basePath}/${routeName}`;
-  if (currentPath.toLowerCase() !== expectedPath.toLowerCase()) {
-    window.history.pushState({ tab: tabName }, '', targetPath);
+  if (currentPath.toLowerCase() !== expectedPath.toLowerCase() || window.location.href.includes('~and~')) {
+    window.history.replaceState({ tab: tabName }, '', targetPath);
   }
 };
 
