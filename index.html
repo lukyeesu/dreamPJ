@@ -5,9 +5,15 @@
     <link rel="icon" type="image/svg+xml" href="/dreamPJ/LOGO-Flower2you.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Flower2you</title>
-    <!-- Single Page Apps for GitHub Pages redirect decode -->
+    <!-- Single Page Apps redirect decode -->
     <script>
       (function(l) {
+        // Clean up any corrupted ~and~ or nested /?/ in URL
+        if (l.search.indexOf('~and~') !== -1 || l.pathname.indexOf('~and~') !== -1) {
+          var cleanPath = l.pathname.split('~and~')[0].split('/?/')[0].replace(/\/+$/, '') || '/';
+          window.history.replaceState(null, null, cleanPath + l.hash);
+          return;
+        }
         if (l.search[1] === '/' ) {
           var decoded = l.search.slice(1).split('&').map(function(s) { 
             return s.replace(/~and~/g, '&')
@@ -18,7 +24,7 @@
         }
       }(window.location))
     </script>
-    <script type="module" crossorigin src="/dreamPJ/assets/js/index-C91aCPse.js"></script>
+    <script type="module" crossorigin src="/dreamPJ/assets/js/index-DakKd9aT.js"></script>
     <link rel="modulepreload" crossorigin href="/dreamPJ/assets/js/vendor-7OC5HNn7.js">
     <link rel="modulepreload" crossorigin href="/dreamPJ/assets/js/vendor-react-DmI7wK4h.js">
     <link rel="modulepreload" crossorigin href="/dreamPJ/assets/js/icons-v_ewGCZl.js">
