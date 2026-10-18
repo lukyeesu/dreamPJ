@@ -12,8 +12,17 @@
   background-color: #f8fafc; /* พื้นหลังสีสว่างสบายตา */
 }
 
-body {
+html, body {
   margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+  overscroll-behavior-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background-color: #f8fafc;
+}
+
+#root {
+  width: 100%;
+  min-height: 100%;
 }

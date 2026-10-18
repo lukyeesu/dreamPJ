@@ -38,7 +38,6 @@ import {
   ExternalLink,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown,
   Filter,
   RotateCcw,
   ChevronDown,
@@ -146,14 +145,14 @@ const navItems = [
   { name: 'Settings', icon: Settings, label: 'ตั้งค่า', shortLabel: 'ตั้งค่า' },
 ];
 
-// --- URL Routing Helpers for Direct Page Links (e.g. /PlansView, /FinanceView) ---
+// --- URL Routing Helpers for Direct Page Links (e.g. /plans, /finance, /calendar) ---
 const TAB_ROUTES = {
-  Overview: 'OverviewView',
-  Calendar: 'CalendarView',
-  Analytics: 'AnalyticsView',
-  Plans: 'PlansView',
-  Finance: 'FinanceView',
-  Settings: 'SettingsView',
+  Overview: 'overview',
+  Calendar: 'calendar',
+  Analytics: 'analytics',
+  Plans: 'plans',
+  Finance: 'finance',
+  Settings: 'settings',
 };
 
 const ROUTE_TO_TAB = {
@@ -728,6 +727,7 @@ const App = () => {
   const mainRef = useRef(null);
   const tabScrollPositions = useRef({});
   const part3Ref = useRef(null);
+
 
   // --- 2. EFFECTS ---
 
@@ -1925,6 +1925,36 @@ const App = () => {
     }
     return items;
   }, [allActivities, sortConfig]);
+
+  // Sync scroll on mobile window scroll
+  useEffect(() => {
+    const handleWindowScroll = () => {
+      const scrollTop = window.scrollY || document.documentElement.scrollTop;
+      tabScrollPositions.current[activeTab] = scrollTop;
+      const shouldBeScrolled = scrollTop > 10;
+      if (isScrolledRef.current !== shouldBeScrolled) {
+        isScrolledRef.current = shouldBeScrolled;
+        setIsScrolled(shouldBeScrolled);
+      }
+
+      if (activeTab === 'Plans' || activeTab === 'Analytics') {
+        const scrollHeight = document.documentElement.scrollHeight;
+        const clientHeight = window.innerHeight;
+        if (scrollTop + clientHeight >= scrollHeight - 150) {
+          if (visibleCount < filteredAndSortedActivities.length && !isLoadingMore) {
+            setIsLoadingMore(true);
+            setTimeout(() => {
+              setVisibleCount(prev => prev + 5);
+              setIsLoadingMore(false);
+            }, 1000);
+          }
+        }
+      }
+    };
+
+    window.addEventListener('scroll', handleWindowScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleWindowScroll);
+  }, [activeTab, visibleCount, filteredAndSortedActivities.length, isLoadingMore]);
 
   const getDealType = (val) => dealStatuses.find(s => s.value === val)?.type || 'pending';
   const getTransportType = (val) => transportStatuses.find(s => s.value === val)?.type || 'pending';
@@ -3277,7 +3307,7 @@ const App = () => {
   };
 
   return (
-    <div className="flex h-screen bg-[#F8FAFC] font-sans text-slate-800 overflow-hidden selection:bg-indigo-100 selection:text-indigo-900">
+    <div className="min-h-screen w-full flex flex-col md:flex-row bg-[#F8FAFC] font-sans text-slate-800 selection:bg-indigo-100 selection:text-indigo-900 md:h-screen md:overflow-hidden">
       
       <style>{`
         @keyframes modalEnter {
@@ -3438,12 +3468,18 @@ const App = () => {
         </aside>
       )}
 
-      <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+      <div className="flex-1 flex flex-col min-h-screen md:min-h-0 md:h-full md:overflow-hidden relative">
         {/* Only show header if logged in AND NOT in tracking mode */}
         {isLoggedIn && !trackingId && !quotationId && (
-            <header className="h-20 bg-white/80 backdrop-blur-xl border-b border-slate-100 flex items-center justify-between px-6 sm:px-8 z-50 sticky top-0">
-            <div className="flex items-center gap-4">
-                <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+            <header 
+              className="bg-white/95 backdrop-blur-xl border-b border-slate-100 flex items-center justify-between px-4 sm:px-8 z-50 shrink-0 sticky top-0 left-0 right-0"
+              style={{
+                paddingTop: 'env(safe-area-inset-top, 0px)',
+                height: 'calc(56px + env(safe-area-inset-top, 0px))'
+              }}
+            >
+            <div className="flex items-center gap-3 sm:gap-4">
+                <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
                 {getPageTitle(activeTab)}
                 </h1>
             </div>
@@ -3518,7 +3554,7 @@ const App = () => {
 
         <main
           ref={mainRef}
-          className="flex-1 overflow-y-auto bg-[#F8FAFC]"
+          className="flex-1 md:overflow-y-auto bg-[#F8FAFC]"
           onScroll={handleScroll}
         >
           <div className="max-w-[3840px] mx-auto min-h-full flex flex-col">
