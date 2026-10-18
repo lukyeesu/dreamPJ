@@ -3213,6 +3213,12 @@ const App = () => {
                 shopInfo={shopInfo}
                 onOpenProjectModal={openModal}
                 themeColor={shopInfo?.themeColor || 'indigo'}
+                dateFilterMode={dateFilterMode}
+                setDateFilterMode={setDateFilterMode}
+                filterDate={filterDate}
+                setFilterDate={setFilterDate}
+                filterDateRange={filterDateRange}
+                setFilterDateRange={setFilterDateRange}
             />
         </div>
 

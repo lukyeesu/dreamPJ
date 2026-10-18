@@ -29,33 +29,7 @@ import {
   ArrowUpDown,
   LayoutList
 } from 'lucide-react';
-
-// --- Thai Date Formats and Helpers ---
-const THAI_MONTHS_SHORT = [
-  'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
-  'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
-];
-
-const THAI_MONTHS_FULL = [
-  'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
-  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
-];
-
-const getStartOfWeek = (d) => {
-  const date = new Date(d);
-  const day = date.getDay(); // 0 is Sunday
-  const diff = date.getDate() - day + (day === 0 ? -6 : 1); // Monday as start of week
-  const start = new Date(date.setDate(diff));
-  start.setHours(0, 0, 0, 0);
-  return start;
-};
-
-const getEndOfWeek = (start) => {
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6);
-  end.setHours(23, 59, 59, 999);
-  return end;
-};
+import DateFilterControl from './components/common/DateFilterControl';
 
 // --- Helper Functions for Formatting ---
 const formatCurrency = (amount) => {
@@ -102,7 +76,13 @@ export default function FinanceView({
   transportStatuses = [],
   shopInfo = {},
   onOpenProjectModal,
-  themeColor = 'indigo'
+  themeColor = 'indigo',
+  dateFilterMode: propDateFilterMode,
+  setDateFilterMode: propSetDateFilterMode,
+  filterDate: propFilterDate,
+  setFilterDate: propSetFilterDate,
+  filterDateRange: propFilterDateRange,
+  setFilterDateRange: propSetFilterDateRange
 }) {
   // --- View Mode State ---
   // 'sheet' = ตารางกำไรขาดทุนแบบสมุดบัญชีตามรูป (Accounting Sheet View)
@@ -113,11 +93,18 @@ export default function FinanceView({
   const [mobileSheetLayout, setMobileSheetLayout] = useState('card');
 
   // --- Filter States ---
-  // dateFilter modes: 'all', 'today', 'week', 'month', 'year', 'custom'
-  const [dateFilter, setDateFilter] = useState('all');
-  const [anchorDate, setAnchorDate] = useState(() => new Date());
-  const [customStartDate, setCustomStartDate] = useState('');
-  const [customEndDate, setCustomEndDate] = useState('');
+  // DateFilterControl modes: 'all', 'date', 'week', 'month', 'year', 'range'
+  const [internalDateFilterMode, setInternalDateFilterMode] = useState('all');
+  const [internalFilterDate, setInternalFilterDate] = useState('');
+  const [internalFilterDateRange, setInternalFilterDateRange] = useState({ start: '', end: '' });
+
+  const dateFilterMode = propDateFilterMode !== undefined ? propDateFilterMode : internalDateFilterMode;
+  const setDateFilterMode = propSetDateFilterMode || setInternalDateFilterMode;
+  const filterDate = propFilterDate !== undefined ? propFilterDate : internalFilterDate;
+  const setFilterDate = propSetFilterDate || setInternalFilterDate;
+  const filterDateRange = propFilterDateRange !== undefined ? propFilterDateRange : internalFilterDateRange;
+  const setFilterDateRange = propSetFilterDateRange || setInternalFilterDateRange;
+
   const [paymentStatusFilter, setPaymentStatusFilter] = useState('all'); // all, paid, deposit, unpaid, refunded
   const [searchQuery, setSearchQuery] = useState('');
   const [sortOrder, setSortOrder] = useState('desc'); // desc = newest first
@@ -128,83 +115,6 @@ export default function FinanceView({
   const toggleRowExpand = (id) => {
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
   };
-
-  // --- Date Navigation Handlers (Prev / Next Stepper) ---
-  const handlePrevDate = () => {
-    setAnchorDate(prev => {
-      const d = new Date(prev);
-      if (dateFilter === 'today') {
-        d.setDate(d.getDate() - 1);
-      } else if (dateFilter === 'week') {
-        d.setDate(d.getDate() - 7);
-      } else if (dateFilter === 'month') {
-        d.setMonth(d.getMonth() - 1);
-      } else if (dateFilter === 'year') {
-        d.setFullYear(d.getFullYear() - 1);
-      }
-      return d;
-    });
-  };
-
-  const handleNextDate = () => {
-    setAnchorDate(prev => {
-      const d = new Date(prev);
-      if (dateFilter === 'today') {
-        d.setDate(d.getDate() + 1);
-      } else if (dateFilter === 'week') {
-        d.setDate(d.getDate() + 7);
-      } else if (dateFilter === 'month') {
-        d.setMonth(d.getMonth() + 1);
-      } else if (dateFilter === 'year') {
-        d.setFullYear(d.getFullYear() + 1);
-      }
-      return d;
-    });
-  };
-
-  const handleSelectDateMode = (mode) => {
-    setDateFilter(mode);
-    if (mode === 'today') {
-      setAnchorDate(new Date());
-    }
-  };
-
-  // Stepper text indicator label (Thai CE + 543 BE)
-  const dateStepperLabel = useMemo(() => {
-    const yearBE = anchorDate.getFullYear() + 543;
-    const now = new Date();
-
-    if (dateFilter === 'today') {
-      const isToday = anchorDate.toDateString() === now.toDateString();
-      const yesterday = new Date(now);
-      yesterday.setDate(now.getDate() - 1);
-      const isYesterday = anchorDate.toDateString() === yesterday.toDateString();
-      const dateStr = `${anchorDate.getDate()} ${THAI_MONTHS_SHORT[anchorDate.getMonth()]} ${yearBE}`;
-      if (isToday) return `วันนี้ (${dateStr})`;
-      if (isYesterday) return `เมื่อวาน (${dateStr})`;
-      return dateStr;
-    }
-
-    if (dateFilter === 'week') {
-      const start = getStartOfWeek(anchorDate);
-      const end = getEndOfWeek(start);
-      const endYearBE = end.getFullYear() + 543;
-      if (start.getMonth() === end.getMonth()) {
-        return `${start.getDate()} - ${end.getDate()} ${THAI_MONTHS_SHORT[end.getMonth()]} ${endYearBE}`;
-      }
-      return `${start.getDate()} ${THAI_MONTHS_SHORT[start.getMonth()]} - ${end.getDate()} ${THAI_MONTHS_SHORT[end.getMonth()]} ${endYearBE}`;
-    }
-
-    if (dateFilter === 'month') {
-      return `${THAI_MONTHS_FULL[anchorDate.getMonth()]} ${yearBE}`;
-    }
-
-    if (dateFilter === 'year') {
-      return `ปี ${yearBE}`;
-    }
-
-    return '';
-  }, [dateFilter, anchorDate]);
 
   // --- Filter and Process Activities ---
   const processedData = useMemo(() => {
@@ -225,46 +135,49 @@ export default function FinanceView({
         if (itemPaymentStatus !== paymentStatusFilter) return false;
       }
 
-      // 3. Date Filter (Check project date or payment date)
-      const targetDateStr = item.paymentDate || item.rawDateTime || item.date;
-      if (!targetDateStr && dateFilter !== 'all') return false;
+      // 3. Date Filter (matches Analytics / App.jsx logic)
+      if (dateFilterMode !== 'all') {
+        const effectiveDate = item.paymentDate || item.rawDateTime || item.date;
+        if (!effectiveDate) return false;
 
-      const itemDate = new Date(targetDateStr);
-      if (isNaN(itemDate.getTime()) && dateFilter !== 'all') return false;
+        let itemDateStr = '';
+        if (typeof effectiveDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(effectiveDate)) {
+          itemDateStr = effectiveDate.substring(0, 10);
+        } else if (typeof effectiveDate === 'string' && /^\d{2}\/\d{2}\/\d{4}/.test(effectiveDate)) {
+          const parts = effectiveDate.split(' ')[0].split('/');
+          itemDateStr = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        } else {
+          const d = new Date(effectiveDate);
+          if (!isNaN(d.getTime())) {
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            itemDateStr = `${yyyy}-${mm}-${dd}`;
+          }
+        }
 
-      if (dateFilter === 'today') {
-        return (
-          itemDate.getFullYear() === anchorDate.getFullYear() &&
-          itemDate.getMonth() === anchorDate.getMonth() &&
-          itemDate.getDate() === anchorDate.getDate()
-        );
-      }
+        if (!itemDateStr) return false;
 
-      if (dateFilter === 'week') {
-        const startOfWeek = getStartOfWeek(anchorDate);
-        const endOfWeek = getEndOfWeek(startOfWeek);
-        return itemDate >= startOfWeek && itemDate <= endOfWeek;
-      }
-
-      if (dateFilter === 'month') {
-        return (
-          itemDate.getFullYear() === anchorDate.getFullYear() &&
-          itemDate.getMonth() === anchorDate.getMonth()
-        );
-      }
-
-      if (dateFilter === 'year') {
-        return itemDate.getFullYear() === anchorDate.getFullYear();
-      }
-
-      if (dateFilter === 'custom') {
-        if (!customStartDate && !customEndDate) return true;
-        const time = itemDate.getTime();
-        if (customStartDate && time < new Date(customStartDate).getTime()) return false;
-        if (customEndDate) {
-          const end = new Date(customEndDate);
-          end.setHours(23, 59, 59, 999);
-          if (time > end.getTime()) return false;
+        if (dateFilterMode === 'date') {
+          if (filterDate && itemDateStr !== filterDate) return false;
+        } else if (dateFilterMode === 'month') {
+          if (filterDate && !itemDateStr.startsWith(filterDate)) return false;
+        } else if (dateFilterMode === 'year') {
+          if (filterDate && !itemDateStr.startsWith(filterDate)) return false;
+        } else if (dateFilterMode === 'range') {
+          if (filterDateRange?.start && itemDateStr < filterDateRange.start) return false;
+          if (filterDateRange?.end && itemDateStr > filterDateRange.end) return false;
+        } else if (dateFilterMode === 'week') {
+          if (filterDate) {
+            const itemDate = new Date(itemDateStr);
+            const weekStart = new Date(filterDate);
+            const weekEnd = new Date(weekStart);
+            weekEnd.setDate(weekStart.getDate() + 6);
+            weekStart.setHours(0, 0, 0, 0);
+            weekEnd.setHours(23, 59, 59, 999);
+            itemDate.setHours(12, 0, 0, 0);
+            if (itemDate < weekStart || itemDate > weekEnd) return false;
+          }
         }
       }
 
@@ -274,7 +187,7 @@ export default function FinanceView({
       const dateB = new Date(b.paymentDate || b.rawDateTime || 0).getTime();
       return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
     });
-  }, [activities, searchQuery, paymentStatusFilter, dateFilter, anchorDate, customStartDate, customEndDate, sortOrder]);
+  }, [activities, searchQuery, paymentStatusFilter, dateFilterMode, filterDate, filterDateRange, sortOrder]);
 
   // --- Financial Calculations ---
   const financialSummary = useMemo(() => {
@@ -1094,17 +1007,17 @@ export default function FinanceView({
           FILTER TOOLBAR (Search on Left, Multi-level Date Selector on Right)
          ========================================================================= */}
       <div className="no-print bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
-        {/* Row 1: Search on Left + Date Mode & Stepper on Right */}
-        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+        {/* Row 1: Search on Left + DateFilterControl on Right */}
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
           {/* Left: Compact Search Input */}
-          <div className="relative w-full lg:w-72 xl:w-80 shrink-0">
+          <div className="relative flex-1 md:max-w-md">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
               placeholder="ค้นหารหัส, ชื่องาน, ลูกค้า, ศิลปิน..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-8 py-1.5 sm:py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition"
+              className="w-full h-11 pl-9 pr-8 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition"
             />
             {searchQuery && (
               <button
@@ -1117,66 +1030,28 @@ export default function FinanceView({
             )}
           </div>
 
-          {/* Right: Date Mode Filter Pills + Prev/Next Steppers */}
-          <div className="flex flex-wrap items-center gap-1.5 justify-start lg:justify-end flex-1">
-            {/* Date Mode Pills (Strictly NO emojis) */}
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
-              {[
-                { id: 'all', label: 'ทั้งหมด' },
-                { id: 'today', label: 'วันนี้' },
-                { id: 'week', label: 'สัปดาห์' },
-                { id: 'month', label: 'เดือน' },
-                { id: 'year', label: 'ปี' },
-                { id: 'custom', label: 'กำหนดเอง' }
-              ].map(f => (
-                <button
-                  key={f.id}
-                  onClick={() => handleSelectDateMode(f.id)}
-                  className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 active:scale-95 ${
-                    dateFilter === f.id
-                      ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-200'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Prev / Next Stepper Controls for today, week, month, year */}
-            {['today', 'week', 'month', 'year'].includes(dateFilter) && (
-              <div className="flex items-center bg-slate-100 rounded-xl p-0.5 border border-slate-200 shrink-0 animate-in fade-in duration-150">
-                <button
-                  onClick={handlePrevDate}
-                  className="p-1 sm:p-1.5 hover:bg-white text-slate-600 hover:text-slate-900 rounded-lg transition active:scale-95 shadow-none hover:shadow-xs"
-                  title="ช่วงก่อนหน้า"
-                >
-                  <ChevronLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                </button>
-                <span className="px-2 sm:px-2.5 py-0.5 text-xs font-bold text-slate-800 whitespace-nowrap text-center min-w-[90px] sm:min-w-[120px]">
-                  {dateStepperLabel}
-                </span>
-                <button
-                  onClick={handleNextDate}
-                  className="p-1 sm:p-1.5 hover:bg-white text-slate-600 hover:text-slate-900 rounded-lg transition active:scale-95 shadow-none hover:shadow-xs"
-                  title="ช่วงถัดไป"
-                >
-                  <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                </button>
-              </div>
-            )}
+          {/* Right: Date Filter Control (Same as Analytics page) */}
+          <div className="w-full md:w-auto min-w-[280px] sm:min-w-[340px] h-11">
+            <DateFilterControl
+              mode={dateFilterMode}
+              setMode={setDateFilterMode}
+              date={filterDate}
+              setDate={setFilterDate}
+              range={filterDateRange}
+              setRange={setFilterDateRange}
+            />
           </div>
         </div>
 
-        {/* Row 2: Payment Status Filter + Sort Toggle + Custom Date Range if active */}
+        {/* Row 2: Payment Status Filter + Reset Filter + Sort Toggle */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
           <div className="flex flex-wrap items-center gap-2">
             {/* Payment Status Dropdown */}
-            <div className="flex-1 sm:w-52 min-w-[140px]">
+            <div className="w-48 min-w-[140px]">
               <select
                 value={paymentStatusFilter}
                 onChange={(e) => setPaymentStatusFilter(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
               >
                 <option value="all">สถานะ: ทั้งหมด</option>
                 <option value="paid">ชำระครบแล้ว</option>
@@ -1186,39 +1061,29 @@ export default function FinanceView({
               </select>
             </div>
 
-            {/* Custom Date Range Picker when 'custom' is active */}
-            {dateFilter === 'custom' && (
-              <div className="flex flex-wrap items-center gap-1.5 text-xs animate-in fade-in duration-200">
-                <span className="text-slate-500 font-bold">จาก:</span>
-                <input
-                  type="date"
-                  value={customStartDate}
-                  onChange={(e) => setCustomStartDate(e.target.value)}
-                  className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700"
-                />
-                <span className="text-slate-500 font-bold">ถึง:</span>
-                <input
-                  type="date"
-                  value={customEndDate}
-                  onChange={(e) => setCustomEndDate(e.target.value)}
-                  className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700"
-                />
-                {(customStartDate || customEndDate) && (
-                  <button
-                    onClick={() => { setCustomStartDate(''); setCustomEndDate(''); }}
-                    className="text-xs text-rose-500 hover:text-rose-700 font-bold px-1.5 py-1"
-                  >
-                    ล้างวันที่
-                  </button>
-                )}
-              </div>
+            {/* Reset Filter Button if active */}
+            {(searchQuery || paymentStatusFilter !== 'all' || dateFilterMode !== 'all') && (
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                  setPaymentStatusFilter('all');
+                  setDateFilterMode('all');
+                  setFilterDate('');
+                  setFilterDateRange({ start: '', end: '' });
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 text-rose-600 border border-rose-100 rounded-xl text-xs font-bold hover:bg-rose-100 transition active:scale-95"
+                title="ล้างตัวกรองทั้งหมด"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>ล้างตัวกรอง</span>
+              </button>
             )}
           </div>
 
           {/* Sort Order Toggle */}
           <button
             onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition active:scale-95"
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition active:scale-95"
             title={sortOrder === 'desc' ? 'เรียงล่าสุดก่อน' : 'เรียงเก่าสุดก่อน'}
           >
             <ArrowUpDown className="w-3.5 h-3.5 text-slate-500" />
