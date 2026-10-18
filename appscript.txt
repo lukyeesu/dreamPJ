@@ -1,0 +1,658 @@
+const SCRIPT_PROP = PropertiesService.getScriptProperties();
+const SHEET_NAME = 'Projects';
+const SETTINGS_SHEET_NAME = 'Settings';
+
+// --- MAIN ENTRY POINTS ---
+
+function doGet(e) {
+  return handleRequest(e);
+}
+
+function doPost(e) {
+  // กรณีไม่มีข้อมูลส่งมา (เช่น กด Run เล่น)
+  if (!e || !e.postData) return handleRequest(e);
+
+  try {
+    const contents = e.postData.contents;
+    const jsonBody = JSON.parse(contents);
+
+    // 1. ตรวจสอบว่าเป็น LINE Webhook หรือไม่
+    if (jsonBody.events && Array.isArray(jsonBody.events)) {
+      // [FIX] ดักจับการ Verify จาก LINE (replyToken จะเป็น 000... หรือ fff...)
+      // ให้ตอบกลับทันทีโดยไม่ต้องโหลด Spreadsheet เพื่อแก้ปัญหา Timeout
+      if (jsonBody.events.length > 0) {
+        const ev = jsonBody.events[0];
+        if (ev.replyToken === '00000000000000000000000000000000' || ev.replyToken === 'ffffffffffffffffffffffffffffffff') {
+           return createJSONOutput({ status: 'success', message: 'Webhook Verified' });
+        }
+      }
+      return handleLineWebhook(jsonBody);
+    }
+
+    // 2. ตรวจสอบว่าเป็น Telegram Webhook หรือไม่
+    if (jsonBody.update_id) {
+      return handleTelegramWebhook(jsonBody);
+    }
+
+  } catch (err) {
+    // ถ้าแกะ JSON ไม่ได้ ให้ถือเป็น Request ปกติ
+  }
+
+  // 3. ถ้าไม่ใช่ Chatbot ให้ทำงานเป็น API ของ App ปกติ
+  return handleRequest(e);
+}
+
+// --- CHATBOT HANDLERS ---
+
+function handleLineWebhook(body) {
+  try {
+    const settings = getSettingsFromSheet(); 
+    
+    // [MODIFIED] ดึง Token จากแถว line_bot_token โดยตรง (แยกจาก shop_info)
+    let LINE_TOKEN = settings.line_bot_token || ''; 
+    
+    // Clean Token (ลบเครื่องหมายคำพูดออก ถ้ามี)
+    if (typeof LINE_TOKEN === 'string') {
+        LINE_TOKEN = LINE_TOKEN.replace(/^"|"$/g, '').trim();
+    }
+
+    if (!LINE_TOKEN) return createJSONOutput({ status: 'error', message: 'No Line Token Found' });
+
+    body.events.forEach(event => {
+      if (event.type === 'message' && event.message.type === 'text') {
+        const userMessage = event.message.text.trim();
+        const replyToken = event.replyToken;
+        
+        // ค้นหาข้อมูลโปรเจค
+        const results = searchProjects(userMessage);
+        
+        if (results.length > 0) {
+          // เจอข้อมูล: ส่ง Flex Message (สูงสุด 5 รายการ)
+          const flexMessages = results.slice(0, 5).map(item => createLineFlexBubble(item));
+          
+          replyToLine(LINE_TOKEN, replyToken, {
+            type: 'flex',
+            altText: 'พบข้อมูลโปรเจค: ' + results[0].name,
+            contents: {
+              type: 'carousel',
+              contents: flexMessages
+            }
+          });
+        } else {
+          // ไม่เจอ: ตอบกลับข้อความธรรมดา
+          replyToLine(LINE_TOKEN, replyToken, {
+            type: 'text',
+            text: `ไม่พบข้อมูลโปรเจคที่ค้นหา: "${userMessage}"\nลองค้นหาด้วย รหัสโปรเจค, ชื่อลูกค้า หรือเบอร์โทร`
+          });
+        }
+      }
+    });
+
+    return createJSONOutput({ status: 'success' });
+  } catch (e) {
+    return createJSONOutput({ status: 'error', message: e.toString() });
+  }
+}
+
+function handleTelegramWebhook(body) {
+  try {
+    const settings = getSettingsFromSheet();
+    
+    // [MODIFIED] ดึง Token จากแถว telegram_bot_token โดยตรง
+    let TELEGRAM_TOKEN = settings.telegram_bot_token || '';
+
+    // Clean Token
+    if (typeof TELEGRAM_TOKEN === 'string') {
+        TELEGRAM_TOKEN = TELEGRAM_TOKEN.replace(/^"|"$/g, '').trim();
+    }
+
+    if (!TELEGRAM_TOKEN) return createJSONOutput({ status: 'error', message: 'No Telegram Token Found' });
+
+    if (body.message && body.message.text) {
+      const chatId = body.message.chat.id;
+      const userMessage = body.message.text.trim();
+
+      // ค้นหาข้อมูลโปรเจค
+      const results = searchProjects(userMessage);
+
+      if (results.length > 0) {
+        const item = results[0];
+        const caption = createTelegramCaption(item);
+        
+        if (item.image && item.image.includes('http')) {
+           let imgUrl = item.image;
+           if(imgUrl.includes('drive.google.com')) {
+               const idMatch = imgUrl.match(/id=([a-zA-Z0-9_-]+)/) || imgUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+               if(idMatch) imgUrl = `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w1024`;
+           }
+           replyPhotoToTelegram(TELEGRAM_TOKEN, chatId, imgUrl, caption);
+        } else {
+           replyTextToTelegram(TELEGRAM_TOKEN, chatId, caption);
+        }
+        
+        if (results.length > 1) {
+           replyTextToTelegram(TELEGRAM_TOKEN, chatId, `...และมีอีก ${results.length - 1} รายการที่ตรงกัน`);
+        }
+
+      } else {
+        replyTextToTelegram(TELEGRAM_TOKEN, chatId, `ไม่พบข้อมูล: "${userMessage}"`);
+      }
+    }
+
+    return createJSONOutput({ status: 'success' });
+  } catch (e) {
+    return createJSONOutput({ status: 'error', message: e.toString() });
+  }
+}
+
+// --- SEARCH LOGIC ---
+
+function searchProjects(keyword) {
+  const doc = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = doc.getSheetByName(SHEET_NAME);
+  if (!sheet) return [];
+
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const jsonIndex = headers.indexOf('json_data');
+  const rows = sheet.getDataRange().getValues();
+  
+  const results = [];
+  const lowerKeyword = keyword.toLowerCase();
+
+  // วนลูปค้นหา (เริ่มแถวที่ 2)
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][jsonIndex]) {
+      try {
+        const item = JSON.parse(rows[i][jsonIndex]);
+        
+        // เงื่อนไขการค้นหา: รหัส, ชื่อ, ลูกค้า, เบอร์โทร, หมายเหตุ
+        const isMatch = 
+          (item.id && item.id.toLowerCase().includes(lowerKeyword)) ||
+          (item.name && item.name.toLowerCase().includes(lowerKeyword)) ||
+          (item.customer && item.customer.toLowerCase().includes(lowerKeyword)) ||
+          (item.customerInfo?.phone && item.customerInfo.phone.includes(lowerKeyword)) ||
+          (item.recipientPhone && item.recipientPhone.includes(lowerKeyword));
+
+        if (isMatch) {
+          results.push(item);
+        }
+      } catch (e) {}
+    }
+  }
+  return results;
+}
+
+// --- MESSAGE BUILDERS ---
+
+function createLineFlexBubble(item) {
+  let statusColor = '#94a3b8'; // gray
+  let statusText = item.dealStatus;
+  if (item.dealStatus === 'confirmed' || item.dealStatus === 'completed') {
+     statusColor = '#10b981'; // green
+     statusText = 'งานเสร็จสิ้น';
+  } else if (item.dealStatus === 'active') {
+     statusColor = '#3b82f6'; // blue
+     statusText = 'กำลังดำเนินการ';
+  } else if (item.dealStatus === 'pending') {
+     statusColor = '#f59e0b'; // amber
+     statusText = 'รอดำเนินการ';
+  }
+
+  let imageUrl = 'https://placehold.co/600x400?text=No+Image';
+  if (item.image && item.image.includes('drive.google.com')) {
+      const idMatch = item.image.match(/id=([a-zA-Z0-9_-]+)/) || item.image.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      if (idMatch) imageUrl = `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w600`;
+  } else if (item.image) {
+      imageUrl = item.image;
+  }
+
+  // สร้าง Token สำหรับ Link Tracking
+  const trackingUrl = ScriptApp.getService().getUrl() + "?tracking=" + generateToken(item.id, item.rawDateTime);
+
+  return {
+    "type": "bubble",
+    "size": "mega",
+    "hero": {
+      "type": "image",
+      "url": imageUrl,
+      "size": "full",
+      "aspectRatio": "20:13",
+      "aspectMode": "cover"
+    },
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "contents": [
+        {
+          "type": "text",
+          "text": item.name || "ไม่ระบุชื่อ",
+          "weight": "bold",
+          "size": "xl",
+          "wrap": true
+        },
+        {
+          "type": "box",
+          "layout": "baseline",
+          "margin": "md",
+          "contents": [
+            { "type": "text", "text": item.id || "-", "size": "sm", "color": "#999999", "flex": 0 },
+            { "type": "text", "text": statusText, "size": "sm", "color": statusColor, "align": "end", "weight": "bold" }
+          ]
+        },
+        { "type": "separator", "margin": "lg" },
+        {
+          "type": "box",
+          "layout": "vertical",
+          "margin": "lg",
+          "spacing": "sm",
+          "contents": [
+            {
+              "type": "box", "layout": "baseline", "spacing": "sm",
+              "contents": [
+                { "type": "text", "text": "ลูกค้า", "color": "#aaaaaa", "size": "sm", "flex": 2 },
+                { "type": "text", "text": item.customer || "-", "wrap": true, "color": "#666666", "size": "sm", "flex": 5 }
+              ]
+            },
+            {
+              "type": "box", "layout": "baseline", "spacing": "sm",
+              "contents": [
+                { "type": "text", "text": "ส่ง", "color": "#aaaaaa", "size": "sm", "flex": 2 },
+                { "type": "text", "text": item.deliveryDate || "-", "wrap": true, "color": "#666666", "size": "sm", "flex": 5 }
+              ]
+            },
+            {
+              "type": "box", "layout": "baseline", "spacing": "sm",
+              "contents": [
+                { "type": "text", "text": "ยอดเงิน", "color": "#aaaaaa", "size": "sm", "flex": 2 },
+                { "type": "text", "text": `฿${(parseFloat(item.wage)||0).toLocaleString()}`, "wrap": true, "color": "#666666", "size": "sm", "flex": 5, "weight": "bold" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "footer": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "sm",
+      "contents": [
+        {
+          "type": "button",
+          "style": "link",
+          "height": "sm",
+          "action": {
+            "type": "uri",
+            "label": "ดูสถานะงาน (Tracking)",
+            "uri": trackingUrl
+          }
+        }
+      ],
+      "flex": 0
+    }
+  };
+}
+
+function createTelegramCaption(item) {
+  return `<b>${item.name}</b>\n` +
+         `🆔 <code>${item.id}</code>\n` +
+         `👤 ลูกค้า: ${item.customer}\n` +
+         `📅 ส่ง: ${item.deliveryDate || '-'}\n` +
+         `💰 ยอด: ฿${(parseFloat(item.wage)||0).toLocaleString()}\n` +
+         `สถานะ: ${item.dealStatus}`;
+}
+
+// --- API REPLY FUNCTIONS ---
+
+function replyToLine(token, replyToken, messages) {
+  const url = 'https://api.line.me/v2/bot/message/reply';
+  try {
+    UrlFetchApp.fetch(url, {
+      'headers': {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token,
+      },
+      'method': 'post',
+      'payload': JSON.stringify({
+        'replyToken': replyToken,
+        'messages': [messages],
+      }),
+    });
+  } catch(e) {
+    console.error("Line Reply Error: " + e.toString());
+  }
+}
+
+function replyTextToTelegram(token, chatId, text) {
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+  try {
+    UrlFetchApp.fetch(url, {
+      'method': 'post',
+      'payload': {
+        'chat_id': String(chatId),
+        'text': text,
+        'parse_mode': 'HTML'
+      }
+    });
+  } catch(e) {
+    console.error("Telegram Reply Error: " + e.toString());
+  }
+}
+
+function replyPhotoToTelegram(token, chatId, photoUrl, caption) {
+  const url = `https://api.telegram.org/bot${token}/sendPhoto`;
+  try {
+    UrlFetchApp.fetch(url, {
+      'method': 'post',
+      'payload': {
+        'chat_id': String(chatId),
+        'photo': photoUrl,
+        'caption': caption,
+        'parse_mode': 'HTML'
+      }
+    });
+  } catch(e) {
+    replyTextToTelegram(token, chatId, caption + "\n(รูปภาพโหลดไม่สำเร็จ)");
+  }
+}
+
+// --- HELPER FUNCTIONS ---
+
+function getSettingsFromSheet() {
+  const doc = SpreadsheetApp.getActiveSpreadsheet();
+  const settingsSheet = doc.getSheetByName(SETTINGS_SHEET_NAME);
+  if (!settingsSheet) return {};
+  
+  const rows = settingsSheet.getDataRange().getValues();
+  const settings = {};
+  for (let i = 1; i < rows.length; i++) {
+    const key = rows[i][0];
+    const val = rows[i][1];
+    if (key) {
+      try { settings[key] = JSON.parse(val); } catch (e) { settings[key] = val; }
+    }
+  }
+  return settings;
+}
+
+function generateToken(id, dateStr) {
+  if (!id || !dateStr) return id;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return id;
+  
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear() + 543;
+  const HH = String(d.getHours()).padStart(2, '0');
+  const mn = String(d.getMinutes()).padStart(2, '0');
+  
+  return `${id}${dd}${mm}${yyyy}${HH}${mn}`;
+}
+
+// --- APP REQUEST HANDLER ---
+
+function handleRequest(e) {
+  const lock = LockService.getScriptLock();
+  lock.tryLock(30000);
+
+  try {
+    const doc = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = doc.getSheetByName(SHEET_NAME);
+
+    // --- Auto-Setup Projects Sheet ---
+    if (!sheet) {
+      sheet = doc.insertSheet(SHEET_NAME);
+      const defaultSheet = doc.getSheetByName('Sheet1');
+      if (defaultSheet && doc.getSheets().length > 1) doc.deleteSheet(defaultSheet);
+      sheet.appendRow(['id', 'json_data', 'updated_at']);
+    } else if (sheet.getLastRow() === 0) {
+      sheet.appendRow(['id', 'json_data', 'updated_at']);
+    }
+
+    // --- Auto-Setup Settings Sheet ---
+    let settingsSheet = doc.getSheetByName(SETTINGS_SHEET_NAME);
+    if (!settingsSheet) {
+      settingsSheet = doc.insertSheet(SETTINGS_SHEET_NAME);
+      settingsSheet.appendRow(['key', 'value']);
+      
+      const defaultUsers = [
+        { "username": "admin", "password": "password1234", "name": "Admin User", "role": "System Administrator", "email": "admin@nexusplan.com", "phone": "-" },
+        { "username": "john", "password": "password1234", "name": "John Smith", "role": "Project Manager", "email": "john.smith@nexusplan.com", "phone": "081-234-5678" }
+      ];
+      
+      const defaultSettings = [
+        ['project_categories', '["คอนเสิร์ต","อีเวนต์","ถ่ายทำ","อื่นๆ"]'],
+        ['project_expenses', '["ค่าจ้าง","ค่าอุปกรณ์","ค่าเดินทาง","ค่าที่พัก","อื่นๆ"]'],
+        ['deal_statuses', '[{"value":"pending","label":"รอตัดสินใจ","type":"pending","color":"bg-amber-50 text-amber-700 border-amber-100"},{"value":"confirmed","label":"ยืนยันแล้ว","type":"active","color":"bg-emerald-50 text-emerald-700 border-emerald-100"},{"value":"declined","label":"ลูกค้าไม่อนุมัติ","type":"declined","color":"bg-gray-50 text-gray-600 border-gray-200"},{"value":"cancelled","label":"ยกเลิก","type":"cancelled","color":"bg-rose-50 text-rose-700 border-rose-100"}]'],
+        ['transport_statuses', '[{"value":"pending","label":"รอดำเนินการจัดส่ง","type":"pending","color":"bg-slate-50 text-slate-500 border-slate-200"},{"value":"shipping","label":"กำลังจัดส่ง","type":"active","color":"bg-blue-50 text-blue-700 border-blue-100"},{"value":"delivered","label":"จัดส่งเรียบร้อย","type":"completed","color":"bg-emerald-50 text-emerald-700 border-emerald-100"},{"value":"issue","label":"มีปัญหา","type":"cancelled","color":"bg-rose-50 text-rose-700 border-rose-100"}]'],
+        ['app_credentials', JSON.stringify(defaultUsers)],
+        ['drive_folder_id', '""'],
+        ['line_bot_token', '""'], // [ADDED]
+        ['telegram_bot_token', '""'] // [ADDED]
+      ];
+      
+      defaultSettings.forEach(row => settingsSheet.appendRow(row));
+    }
+
+    // Prepare Response
+    let output = {};
+    let action = 'read';
+    let payload = {};
+
+    if (e.postData && e.postData.contents) {
+      try {
+        payload = JSON.parse(e.postData.contents);
+        action = payload.action || 'read';
+      } catch (err) {}
+    } else if (e.parameter && e.parameter.action) {
+      action = e.parameter.action;
+    }
+
+    // --- Action: GET SETTINGS ---
+    if (action === 'getSettings') {
+      const rows = settingsSheet.getDataRange().getValues();
+      const settings = {};
+      for (let i = 1; i < rows.length; i++) {
+        const key = rows[i][0];
+        const val = rows[i][1];
+        if (key) {
+          try { settings[key] = JSON.parse(val); } catch (e) { settings[key] = val; }
+        }
+      }
+      output = { status: 'success', data: settings };
+    }
+
+    // --- Action: SAVE SETTINGS ---
+    else if (action === 'saveSettings') {
+      const settingsData = payload.data;
+      if (!settingsData) return errorResponse("Missing settings data");
+      const rows = settingsSheet.getDataRange().getValues();
+      for (const [key, value] of Object.entries(settingsData)) {
+        const jsonValue = JSON.stringify(value);
+        let found = false;
+        for (let i = 1; i < rows.length; i++) {
+          if (rows[i][0] === key) {
+            settingsSheet.getRange(i + 1, 2).setValue(jsonValue);
+            found = true;
+            break;
+          }
+        }
+        if (!found) settingsSheet.appendRow([key, jsonValue]);
+      }
+      output = { status: 'success', message: 'Settings saved' };
+    }
+
+    // --- Action: UPLOAD ASSET ---
+    else if (action === 'uploadAsset') {
+      const data = payload.data;
+      if (!data || !data.folderId || !data.fileData) return errorResponse("Missing upload data");
+
+      const folderId = data.folderId;
+      const fileData = data.fileData;
+      const fileName = data.fileName || 'asset_' + Date.now();
+      const mimeType = data.mimeType || 'image/jpeg';
+
+      try {
+        const folder = DriveApp.getFolderById(folderId);
+        const blob = Utilities.newBlob(Utilities.base64Decode(fileData), mimeType, fileName);
+        const file = folder.createFile(blob);
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        
+        const fileUrl = "https://drive.google.com/thumbnail?id=" + file.getId() + "&sz=w1000"; 
+
+        output = { status: 'success', url: fileUrl, fileId: file.getId() };
+      } catch (err) {
+        return errorResponse("Upload Asset Failed: " + err.toString());
+      }
+    }
+
+    // --- Action: READ PROJECTS ---
+    else if (action === 'read') {
+      const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      const jsonIndex = headers.indexOf('json_data');
+      if (jsonIndex === -1) return errorResponse("Invalid Sheet Structure");
+      const rows = sheet.getDataRange().getValues();
+      const data = [];
+      for (let i = 1; i < rows.length; i++) {
+        if (rows[i][jsonIndex]) {
+          try {
+            const item = JSON.parse(rows[i][jsonIndex]);
+            data.push(item);
+          } catch (err) {}
+        }
+      }
+      output = { status: 'success', data: data };
+    }
+
+    // --- Action: SAVE PROJECT ---
+    else if (action === 'save') {
+      const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      const idIndex = headers.indexOf('id');
+      const jsonIndex = headers.indexOf('json_data');
+      const dateIndex = headers.indexOf('updated_at');
+
+      const itemData = payload.data;
+      if (!itemData || !itemData.id) return errorResponse("Missing data or id");
+
+      // --- START: Image Upload Handling ---
+      if (itemData.image && itemData.image.toString().startsWith('data:image')) {
+        const settingsRows = settingsSheet.getDataRange().getValues();
+        let folderId = '';
+        for (let i = 1; i < settingsRows.length; i++) {
+          if (settingsRows[i][0] === 'drive_folder_id') {
+            let val = settingsRows[i][1];
+            folderId = (typeof val === 'string') ? val.replace(/^"|"$/g, '').trim() : String(val);
+            break;
+          }
+        }
+
+        if (!folderId || folderId === '""') return errorResponse("ตั้งค่าผิดพลาด: ไม่พบ Google Drive Folder ID");
+
+        const uploadResult = uploadImageToDrive(itemData.image, itemData.id, folderId);
+        if (!uploadResult.success) return errorResponse("อัปโหลดรูปภาพไม่สำเร็จ: " + uploadResult.error);
+        itemData.image = uploadResult.url;
+      }
+      // --- END: Image Upload Handling ---
+
+      const itemId = itemData.id;
+      const jsonString = JSON.stringify(itemData);
+      const timestamp = new Date();
+      
+      const rows = sheet.getDataRange().getValues();
+      let rowIndex = -1;
+
+      for (let i = 1; i < rows.length; i++) {
+        if (rows[i][idIndex] == itemId) {
+          rowIndex = i + 1;
+          const oldJson = rows[i][jsonIndex];
+          if (oldJson) {
+             try {
+                const oldData = JSON.parse(oldJson);
+                if (oldData.image && oldData.image !== itemData.image) deleteImageFromDrive(oldData.image);
+             } catch(e) {}
+          }
+          break;
+        }
+      }
+
+      if (rowIndex > 0) {
+        sheet.getRange(rowIndex, jsonIndex + 1).setValue(jsonString);
+        sheet.getRange(rowIndex, dateIndex + 1).setValue(timestamp);
+      } else {
+        sheet.appendRow([itemId, jsonString, timestamp]);
+      }
+      output = { status: 'success', message: 'Saved successfully' };
+    }
+
+    // --- Action: DELETE PROJECT ---
+    else if (action === 'delete') {
+      const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      const idIndex = headers.indexOf('id');
+      const itemId = payload.id;
+      const imageUrl = payload.image; 
+      
+      const rows = sheet.getDataRange().getValues();
+      let rowIndex = -1;
+      for (let i = 1; i < rows.length; i++) {
+        if (rows[i][idIndex] == itemId) {
+          rowIndex = i + 1;
+          break;
+        }
+      }
+      if (rowIndex > 0) {
+        if (imageUrl) {
+           deleteImageFromDrive(imageUrl);
+        } else {
+           try {
+             const jsonIndex = headers.indexOf('json_data');
+             const oldJson = sheet.getRange(rowIndex, jsonIndex + 1).getValue();
+             const oldData = JSON.parse(oldJson);
+             if (oldData.image) deleteImageFromDrive(oldData.image);
+           } catch(e) {}
+        }
+        sheet.deleteRow(rowIndex);
+        output = { status: 'success', message: 'Deleted successfully' };
+      } else {
+        output = { status: 'error', message: 'ID not found' };
+      }
+    }
+
+    return createJSONOutput(output);
+
+  } catch (e) {
+    return createJSONOutput({ status: 'error', error: e.toString() });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function createJSONOutput(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function errorResponse(msg) {
+  return createJSONOutput({ status: 'error', message: msg });
+}
+
+function uploadImageToDrive(base64String, fileNamePrefix, folderId) {
+  try {
+    let folder = DriveApp.getFolderById(folderId);
+    const contentType = base64String.substring(5, base64String.indexOf(';'));
+    const base64Data = base64String.substring(base64String.indexOf(',') + 1);
+    const bytes = Utilities.base64Decode(base64Data);
+    const blob = Utilities.newBlob(bytes, contentType, `${fileNamePrefix}_${Date.now()}.png`);
+    const file = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return { success: true, url: `https://drive.google.com/uc?export=view&id=${file.getId()}` };
+  } catch (e) {
+    return { success: false, error: "Upload Error: " + e.toString() }; 
+  }
+}
+
+function deleteImageFromDrive(imageUrl) {
+  if (imageUrl && typeof imageUrl === 'string' && imageUrl.includes('drive.google.com')) {
+      try {
+        const idMatch = imageUrl.match(/id=([a-zA-Z0-9_-]+)/);
+        if (idMatch && idMatch[1]) DriveApp.getFileById(idMatch[1]).setTrashed(true);
+      } catch (err) {}
+  }
+}

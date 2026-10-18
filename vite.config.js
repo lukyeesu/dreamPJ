@@ -10,6 +10,12 @@ export default defineConfig({
     ? '/' 
     : '/dreamPJ/',
 
+  server: {
+    host: '0.0.0.0',
+    port: 5174,
+    cors: true,
+  },
+
   build: {
     // ปรับเพดานการเตือนขนาดไฟล์เป็น 1000 kB (1MB) เพื่อความสบายตา
     chunkSizeWarningLimit: 1000,
