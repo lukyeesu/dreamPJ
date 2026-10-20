@@ -96,7 +96,7 @@ import {
 } from 'lucide-react';
 import FinanceView from './FinanceView';
 import CalendarView from './CalendarView';
-import OverviewView from './OverviewView';
+
 import AnalyticsView from './AnalyticsView';
 import PlansView from './PlansView';
 import SettingsView from './SettingsView';
@@ -137,7 +137,7 @@ import CustomerTrackingView from './components/customer/CustomerTrackingView';
 import SharePreviewModal from './components/modals/SharePreviewModal';
 
 const navItems = [
-  { name: 'Overview', icon: Home, label: 'ภาพรวมแผนงาน', shortLabel: 'ภาพรวม' },
+
   { name: 'Calendar', icon: Calendar, label: 'ปฏิทินงาน', shortLabel: 'ปฏิทิน' },
   { name: 'Analytics', icon: BarChart2, label: 'วิเคราะห์ประสิทธิภาพ', shortLabel: 'วิเคราะห์' },
   { name: 'Plans', icon: List, label: 'รายการแผนงาน', shortLabel: 'แผนงาน' },
@@ -147,7 +147,7 @@ const navItems = [
 
 // --- URL Routing Helpers for Direct Page Links (e.g. /plans, /finance, /calendar) ---
 const TAB_ROUTES = {
-  Overview: 'overview',
+
   Calendar: 'calendar',
   Analytics: 'analytics',
   Plans: 'plans',
@@ -156,8 +156,8 @@ const TAB_ROUTES = {
 };
 
 const ROUTE_TO_TAB = {
-  overviewview: 'Overview',
-  overview: 'Overview',
+
+
   calendarview: 'Calendar',
   calendar: 'Calendar',
   analyticsview: 'Analytics',
@@ -180,7 +180,7 @@ const getBasePath = () => {
 };
 
 const getTabFromUrl = () => {
-  if (typeof window === 'undefined') return 'Overview';
+  if (typeof window === 'undefined') return 'Calendar';
 
   // 1. Pathname segment (e.g. /PlansView or /dreamPJ/PlansView)
   const pathname = window.location.pathname || '';
@@ -205,7 +205,7 @@ const getTabFromUrl = () => {
     return ROUTE_TO_TAB[hash];
   }
 
-  return 'Overview';
+  return 'Calendar';
 };
 
 const updateUrlForTab = (tabName) => {
@@ -455,6 +455,8 @@ const App = () => {
   const handlePillRef = useRef(null);
   const rafIdRef = useRef(null);
   const isScrolledRef = useRef(false);
+  const headerRef = useRef(null);
+  const filterSentinelsRef = useRef({});
   const navDragStateRef = useRef({
     startY: 0,
     startTime: 0,
@@ -864,15 +866,25 @@ const App = () => {
 
   // Scroll Restore
   useLayoutEffect(() => {
-    if (mainRef.current) {
-      const savedPosition = tabScrollPositions.current[activeTab] || 0;
+    const isMobile = window.innerWidth < 768;
+    const savedPosition = tabScrollPositions.current[activeTab] || 0;
+    if (isMobile) {
+      window.scrollTo(0, savedPosition);
+    } else if (mainRef.current) {
       mainRef.current.scrollTop = savedPosition;
-      
-      const shouldBeScrolled = savedPosition > 0;
-      if (isScrolled !== shouldBeScrolled) {
-         setIsScrolled(shouldBeScrolled);
-      }
     }
+    
+    const sentinel = filterSentinelsRef.current[activeTab];
+    let shouldBeScrolled = false;
+    if (sentinel && sentinel.getClientRects().length > 0) {
+      const targetTop = isMobile
+        ? (headerRef.current ? headerRef.current.getBoundingClientRect().bottom : 56)
+        : (mainRef.current ? mainRef.current.getBoundingClientRect().top : 0);
+      const marginOffset = isMobile ? 8 : 12;
+      shouldBeScrolled = sentinel.getBoundingClientRect().top <= targetTop - marginOffset + 1;
+    }
+    isScrolledRef.current = shouldBeScrolled;
+    setIsScrolled(shouldBeScrolled);
   }, [activeTab]);
 
   useEffect(() => {
@@ -1277,7 +1289,7 @@ const App = () => {
               image: foundUser.image 
           });
 
-          const targetTab = getTabFromUrl() || activeTab || 'Overview';
+          const targetTab = getTabFromUrl() || activeTab || 'Calendar';
           setActiveTab(targetTab); 
 
           if (remember) {
@@ -1302,7 +1314,7 @@ const App = () => {
   const handleLogout = () => {
       setIsLoggedIn(false);
       setUserProfile(null);
-      setActiveTab('Overview');
+      setActiveTab('Calendar');
       if (typeof window !== 'undefined') {
         window.history.pushState(null, '', getBasePath() || '/');
       }
@@ -1347,7 +1359,14 @@ const App = () => {
   const handleScroll = (e) => {
     const { scrollTop, scrollHeight, clientHeight } = e.target;
     tabScrollPositions.current[activeTab] = scrollTop;
-    const shouldBeScrolled = scrollTop > 10;
+    const sentinel = filterSentinelsRef.current[activeTab];
+    let shouldBeScrolled = false;
+    if (sentinel && sentinel.getClientRects().length > 0 && mainRef.current) {
+      const sentinelRect = sentinel.getBoundingClientRect();
+      const mainRect = mainRef.current.getBoundingClientRect();
+      const marginOffset = window.innerWidth < 768 ? 8 : 12;
+      shouldBeScrolled = sentinelRect.top <= mainRect.top - marginOffset + 1;
+    }
     if (isScrolledRef.current !== shouldBeScrolled) {
       isScrolledRef.current = shouldBeScrolled;
       setIsScrolled(shouldBeScrolled);
@@ -1905,33 +1924,19 @@ const App = () => {
     };
   }, [filteredAndSortedActivities, dealStatuses]); // [FIXED] Added dealStatuses to dependency array
 
-  const sortedActivitiesForOverview = useMemo(() => {
-    let items = [...allActivities];
-    if (sortConfig.key !== null) {
-      items.sort((a, b) => {
-        let aValue = a[sortConfig.key];
-        let bValue = b[sortConfig.key];
-        if (!aValue) aValue = '';
-        if (!bValue) bValue = '';
-        if (typeof aValue === 'string' && typeof bValue === 'string') {
-              return sortConfig.direction === 'asc'
-                ? aValue.localeCompare(bValue, 'th', { numeric: true })
-                : bValue.localeCompare(aValue, 'th', { numeric: true });
-        }
-        if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-        if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-        return 0;
-      });
-    }
-    return items;
-  }, [allActivities, sortConfig]);
-
-  // Sync scroll on mobile window scroll
+    // Sync scroll on mobile window scroll
   useEffect(() => {
     const handleWindowScroll = () => {
       const scrollTop = window.scrollY || document.documentElement.scrollTop;
       tabScrollPositions.current[activeTab] = scrollTop;
-      const shouldBeScrolled = scrollTop > 10;
+      const sentinel = filterSentinelsRef.current[activeTab];
+      let shouldBeScrolled = false;
+      if (sentinel && sentinel.getClientRects().length > 0 && headerRef.current) {
+        const sentinelRect = sentinel.getBoundingClientRect();
+        const headerBottom = headerRef.current.getBoundingClientRect().bottom;
+        const marginOffset = window.innerWidth < 768 ? 8 : 12;
+        shouldBeScrolled = sentinelRect.top <= headerBottom - marginOffset + 1;
+      }
       if (isScrolledRef.current !== shouldBeScrolled) {
         isScrolledRef.current = shouldBeScrolled;
         setIsScrolled(shouldBeScrolled);
@@ -1953,11 +1958,27 @@ const App = () => {
     };
 
     window.addEventListener('scroll', handleWindowScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleWindowScroll);
+    window.addEventListener('resize', handleWindowScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleWindowScroll);
+      window.removeEventListener('resize', handleWindowScroll);
+    };
   }, [activeTab, visibleCount, filteredAndSortedActivities.length, isLoadingMore]);
 
   const getDealType = (val) => dealStatuses.find(s => s.value === val)?.type || 'pending';
   const getTransportType = (val) => transportStatuses.find(s => s.value === val)?.type || 'pending';
+
+
+
+  const resetFilters = () => {
+    setSearchTerm('');
+    setDateFilterMode('all');
+    setFilterDate('');
+    setFilterDateRange({ start: '', end: '' });
+    setFilterCategory('all');
+    setFilterStatus('all');
+    setFilterTransport('all');
+  };
 
   const stats = useMemo(() => {
     const total = allActivities.length;
@@ -1986,22 +2007,12 @@ const App = () => {
     }).length;
 
     return [
-      { title: 'งานทั้งหมด', value: total, change: 'รวมทั้งหมด', isPositive: true, icon: Folder, color: 'text-indigo-600', bg: 'bg-indigo-50' },
-      { title: 'งานเสร็จสิ้น', value: completed, change: 'ปิดจ๊อบแล้ว', isPositive: true, icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-      { title: 'กำลังดำเนินการ', value: active, change: 'Active Now', isPositive: true, icon: Clock, color: 'text-blue-600', bg: 'bg-blue-50' },
-      { title: 'ยกเลิก/มีปัญหา', value: issues, change: 'ต้องตรวจสอบ', isPositive: false, icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50' },
+      { title: 'งานทั้งหมด', value: total, change: 'รวมทั้งหมด', isPositive: true, icon: Folder, color: 'text-indigo-600', bg: 'bg-indigo-50', onClick: resetFilters },
+      { title: 'งานเสร็จสิ้น', value: completed, change: 'ปิดจ๊อบแล้ว', isPositive: true, icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50', onClick: () => { setFilterStatus('confirmed'); setFilterTransport('delivered'); } },
+      { title: 'กำลังดำเนินการ', value: active, change: 'Active Now', isPositive: true, icon: Clock, color: 'text-blue-600', bg: 'bg-blue-50', onClick: () => { setFilterStatus('confirmed'); setFilterTransport('active_only'); } },
+      { title: 'ยกเลิก/มีปัญหา', value: issues, change: 'ต้องตรวจสอบ', isPositive: false, icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50', onClick: () => { setFilterStatus('cancelled'); setFilterTransport('all'); } },
     ];
   }, [allActivities, dealStatuses, transportStatuses]);
-
-  const resetFilters = () => {
-    setSearchTerm('');
-    setDateFilterMode('all');
-    setFilterDate('');
-    setFilterDateRange({ start: '', end: '' });
-    setFilterCategory('all');
-    setFilterStatus('all');
-    setFilterTransport('all');
-  };
 
   const closeModal = () => {
     setIsModalClosing(true);
@@ -2495,7 +2506,7 @@ const App = () => {
   // [REMOVED] handleSendToChatbot function as requested
 
   const renderTable = (limit = 0, customData = null) => {
-    const sourceData = limit > 0 ? (customData || sortedActivitiesForOverview) : (customData || filteredAndSortedActivities);
+    const sourceData = customData || filteredAndSortedActivities;
     const displayLimit = limit > 0 ? limit : visibleCount;
     const items = sourceData.slice(0, displayLimit);
 
@@ -2896,100 +2907,143 @@ const App = () => {
     );
   };
   
-  const renderFilterCard = () => (
-    <div
-      className={`sticky top-0 z-40 bg-white border-slate-200 transition-all duration-300 ease-in-out
-        ${isScrolled
-          ? 'mx-0 mt-0 py-3 px-4 sm:px-8 lg:px-10 border-b shadow-sm rounded-b-[2rem] rounded-t-none mb-6'
-          : 'mx-4 sm:mx-8 lg:mx-10 mt-4 p-4 rounded-[2rem] border shadow-sm mb-6 translate-y-0'
-        }
-      `}
-    >
+  const renderFilterCard = (tabKey = activeTab) => (
+    <>
+      <div
+        ref={(el) => {
+          if (el) filterSentinelsRef.current[tabKey] = el;
+        }}
+        className="h-px w-full pointer-events-none opacity-0 -mb-px"
+      />
+      <div
+        className={`sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 z-40 bg-white transition-all duration-200 ease-in-out
+          ${isScrolled
+            ? 'mx-0 mt-0 py-2.5 sm:py-3 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none mb-4'
+            : 'mx-4 sm:mx-8 lg:mx-10 mt-2 sm:mt-3 p-3.5 sm:p-5 rounded-[2rem] sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)] mb-4'
+          }
+        `}
+      >
       <div className={`flex items-center gap-2 mb-4 text-indigo-600 font-bold transition-all ${isScrolled ? 'scale-90 origin-left opacity-80 translate-y-1' : ''} hidden md:flex`}>
       </div>
       
-      <div className="flex flex-col gap-3 md:hidden">
-         <div className="flex gap-2">
-            <div className="relative flex-1 bg-white border border-slate-200 rounded-xl shadow-sm">
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+      <div className="flex flex-col gap-2.5 md:hidden">
+         {/* Row 1: Search + Filter Toggle + Reset */}
+         <div className="flex items-center gap-2">
+            <div className="relative flex-1 bg-slate-50 border border-slate-200/70 rounded-xl h-10 flex items-center hover:bg-slate-100/60 focus-within:bg-white focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
                     <Search className="w-4 h-4" />
                 </div>
                 <input
                     type="text"
                     placeholder="ค้นหา..."
-                    className="w-full h-10 pl-9 pr-4 bg-transparent outline-none text-slate-700 text-sm font-medium placeholder:text-slate-400 rounded-xl"
+                    className="w-full h-full pl-9 pr-8 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-medium placeholder:text-slate-400 rounded-xl"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                 />
+                {searchTerm && (
+                  <button
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-md"
+                    title="ล้างข้อความค้นหา"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
             </div>
+
+            {/* ปุ่มเปิด/ซ่อนตัวกรอง (Icon Only) */}
             <button
+              type="button"
               onClick={() => setIsMobileFilterExpanded(!isMobileFilterExpanded)}
-              className={`px-3 rounded-xl font-bold transition-colors flex items-center justify-center shadow-sm ${isMobileFilterExpanded ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+              className={`h-10 w-10 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 border ${
+                isMobileFilterExpanded 
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-200' 
+                  : 'bg-slate-50 text-slate-600 border-slate-200/70 hover:bg-slate-100'
+              }`}
+              title={isMobileFilterExpanded ? "ซ่อนตัวกรอง" : "เปิดตัวกรองเพิ่มเติม"}
+              aria-label="ตัวกรอง"
             >
               <SlidersHorizontal className="w-4 h-4" />
             </button>
+
+            {/* ปุ่มรีเซ็ตฟิลเตอร์ */}
             <button
               onClick={resetFilters}
-              className="px-3 bg-slate-100 text-slate-500 rounded-xl font-bold hover:bg-rose-50 hover:text-rose-600 transition-colors flex items-center justify-center shadow-sm"
+              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95"
+              title="ล้างค่าตัวกรองทั้งหมด"
             >
-              <RotateCcw className="w-4 h-4" />
+              <RotateCcw className="w-3.5 h-3.5" />
             </button>
          </div>
 
+         {/* แผงฟิลเตอร์เมื่อกดเปิด (Mobile Drawer) */}
          {isMobileFilterExpanded && (
-            <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4 no-scrollbar animate-in slide-in-from-top-2 fade-in duration-200 items-center">
-                <div className="shrink-0 w-[240px]">
+            <div className="flex flex-col gap-2 pt-2 border-t border-slate-100 animate-in slide-in-from-top-2 fade-in duration-200">
+                {/* 1. Date Filter Control (Full Width) */}
+                <div className="w-full h-10">
                     <DateFilterControl 
                         mode={dateFilterMode} setMode={setDateFilterMode}
                         date={filterDate} setDate={setFilterDate}
                         range={filterDateRange} setRange={setFilterDateRange}
                     />
                 </div>
-                {/* ... Filters Mobile ... */}
-                <div className="relative min-w-[140px] bg-white border border-slate-200 rounded-xl shadow-sm shrink-0 h-10">
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Tag className="w-3.5 h-3.5" /></div>
-                  <select
-                      className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none"
-                      value={filterCategory}
-                      onChange={(e) => setFilterCategory(e.target.value)}
-                  >
-                      <option value="all">ทุกหมวดหมู่</option>
-                      {projectCategories.map((cat, i) => (
-                        <option key={i} value={cat}>{cat}</option>
-                      ))}
-                  </select>
-                  <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
 
-                <div className="relative min-w-[140px] bg-white border border-slate-200 rounded-xl shadow-sm shrink-0 h-10">
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Briefcase className="w-3.5 h-3.5" /></div>
-                  <select
-                      className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none"
-                      value={filterStatus}
-                      onChange={(e) => setFilterStatus(e.target.value)}
-                  >
-                      <option value="all">ทุกสถานะ (ดีล)</option>
-                      {dealStatuses.map((status, i) => (
-                        <option key={i} value={status.value}>{status.label}</option>
-                      ))}
-                  </select>
-                  <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
+                {/* 2. Grid of Dropdowns (2 columns for Category & Deal, full width for Transport) */}
+                <div className="grid grid-cols-2 gap-2">
+                    {/* หมวดหมู่ */}
+                    <div className="relative bg-slate-50 border border-slate-200/70 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
+                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                        <Tag className="w-3.5 h-3.5" />
+                      </div>
+                      <select
+                          className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer"
+                          value={filterCategory}
+                          onChange={(e) => setFilterCategory(e.target.value)}
+                      >
+                          <option value="all">ทุกหมวดหมู่</option>
+                          {projectCategories.map((cat, i) => (
+                            <option key={i} value={cat}>{cat}</option>
+                          ))}
+                      </select>
+                      <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
 
-                <div className="relative min-w-[140px] bg-white border border-slate-200 rounded-xl shadow-sm shrink-0 h-10">
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Truck className="w-3.5 h-3.5" /></div>
-                  <select
-                      className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none"
-                      value={filterTransport}
-                      onChange={(e) => setFilterTransport(e.target.value)}
-                  >
-                      <option value="all">ขนส่ง (ทั้งหมด)</option>
-                      <option value="active_only">กำลังดำเนินการ (Active)</option> {/* Added Option */}
-                      {transportStatuses.map((status, i) => (
-                        <option key={i} value={status.value}>{status.label}</option>
-                      ))}
-                  </select>
-                  <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    {/* สถานะดีล */}
+                    <div className="relative bg-slate-50 border border-slate-200/70 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
+                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                        <Briefcase className="w-3.5 h-3.5" />
+                      </div>
+                      <select
+                          className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer"
+                          value={filterStatus}
+                          onChange={(e) => setFilterStatus(e.target.value)}
+                      >
+                          <option value="all">ทุกสถานะ (ดีล)</option>
+                          {dealStatuses.map((status, i) => (
+                            <option key={i} value={status.value}>{status.label}</option>
+                          ))}
+                      </select>
+                      <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+
+                    {/* ขนส่ง (เต็มแถว 2 คอลัมน์) */}
+                    <div className="col-span-2 relative bg-slate-50 border border-slate-200/70 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
+                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                        <Truck className="w-3.5 h-3.5" />
+                      </div>
+                      <select
+                          className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer"
+                          value={filterTransport}
+                          onChange={(e) => setFilterTransport(e.target.value)}
+                      >
+                          <option value="all">ขนส่ง: ทั้งหมด</option>
+                          <option value="active_only">กำลังดำเนินการ (Active)</option>
+                          {transportStatuses.map((status, i) => (
+                            <option key={i} value={status.value}>{status.label}</option>
+                          ))}
+                      </select>
+                      <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
                 </div>
             </div>
          )}
@@ -3071,6 +3125,7 @@ const App = () => {
           </div>
       </div>
     </div>
+    </>
   );
 
   const renderContent = () => {
@@ -3187,18 +3242,7 @@ const App = () => {
     // [PERFORMANCE FIX] ใช้เทคนิค Persistent Layout (ซ่อน/แสดง) แทนการ Unmount Component เพื่อความลื่นไหลสูงสุด
     return (
       <>
-        {/* --- Tab 1: Overview --- */}
-        <div className={activeTab === 'Overview' ? 'block' : 'hidden'}>
-          <OverviewView
-            userProfile={userProfile}
-            stats={stats}
-            sortedActivitiesForOverview={sortedActivitiesForOverview}
-            onSeeAllPlans={() => setActiveTab('Plans')}
-            renderTable={renderTable}
-          />
-        </div>
-
-        {/* --- Tab 2: Calendar --- */}
+        {/* --- Tab: Calendar --- */}
         <div className={activeTab === 'Calendar' ? 'block h-full' : 'hidden'}>
           <CalendarView 
             activities={allActivities} 
@@ -3211,7 +3255,7 @@ const App = () => {
         {/* --- Tab 3: Analytics --- */}
         <div className={activeTab === 'Analytics' ? 'block' : 'hidden'}>
           <AnalyticsView
-            renderFilterCard={renderFilterCard}
+            renderFilterCard={() => renderFilterCard('Analytics')}
             analyticsData={analyticsData}
             dateFilterMode={dateFilterMode}
             resetFilters={resetFilters}
@@ -3227,7 +3271,9 @@ const App = () => {
         {/* --- Tab 4: Plans --- */}
         <div className={activeTab === 'Plans' ? 'block' : 'hidden'}>
           <PlansView
-            renderFilterCard={renderFilterCard}
+            stats={stats}
+
+            renderFilterCard={() => renderFilterCard('Plans')}
             renderTable={renderTable}
             filteredAndSortedActivities={filteredAndSortedActivities}
             onOpenModal={() => openModal()}
@@ -3249,6 +3295,7 @@ const App = () => {
                 setFilterDate={setFilterDate}
                 filterDateRange={filterDateRange}
                 setFilterDateRange={setFilterDateRange}
+                isActive={activeTab === 'Finance'}
             />
         </div>
 
@@ -3259,6 +3306,7 @@ const App = () => {
             isUploadingProfile={isUploadingProfile}
             handleProfileImageUpload={handleProfileImageUpload}
             userProfile={userProfile}
+
             requestDeleteProfile={requestDeleteProfile}
             authorizedUsers={authorizedUsers}
             handleDeleteUser={handleDeleteUser}
@@ -3472,6 +3520,7 @@ const App = () => {
         {/* Only show header if logged in AND NOT in tracking mode */}
         {isLoggedIn && !trackingId && !quotationId && (
             <header 
+              ref={headerRef}
               className="bg-white/95 backdrop-blur-xl border-b border-slate-100 flex items-center justify-between px-4 sm:px-8 z-50 shrink-0 sticky top-0 left-0 right-0"
               style={{
                 paddingTop: 'env(safe-area-inset-top, 0px)',
@@ -3610,34 +3659,7 @@ const App = () => {
 
             {/* Row 1: Primary Quick Navigation (5 Slots) */}
             <div className="relative grid grid-cols-5 h-13 items-center px-1">
-                {/* 1. Overview */}
-                <button
-                    onClick={() => {
-                      setActiveTab('Overview');
-                      if (isMobileNavExpanded) setIsMobileNavExpanded(false);
-                    }}
-                    className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10 active:scale-95 transition-transform"
-                    title="ภาพรวม"
-                >
-                    <div className={`transition-all duration-200 flex flex-col items-center justify-center ${
-                        activeTab === 'Overview' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
-                    }`}>
-                        <Home 
-                          className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
-                          strokeWidth={activeTab === 'Overview' ? 2.5 : 2} 
-                        />
-                        <span className={`text-[10px] leading-none transition-all duration-200 ${
-                          isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Overview' ? 'font-bold text-indigo-600' : 'font-medium text-slate-500'}`}>
-                          ภาพรวม
-                        </span>
-                        {activeTab === 'Overview' && (
-                            <span className={`w-1.5 h-1.5 bg-indigo-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
-                        )}
-                    </div>
-                </button>
-
-                {/* 2. Calendar */}
+                {/* 1. Calendar */}
                 <button
                     onClick={() => {
                       setActiveTab('Calendar');
@@ -3664,18 +3686,7 @@ const App = () => {
                     </div>
                 </button>
 
-                {/* 3. Center Elevated Plus Button */}
-                <div className="relative flex justify-center items-center z-20 pointer-events-none">
-                     <button
-                        onClick={() => openModal()}
-                        className="w-11 h-11 bg-indigo-600 rounded-full text-white shadow-md shadow-indigo-300/50 flex items-center justify-center transform active:scale-95 transition-all border-2 border-white pointer-events-auto"
-                        title="เพิ่มรายการใหม่"
-                     >
-                        <Plus className="w-6 h-6" strokeWidth={2.5} />
-                     </button>
-                </div>
-
-                {/* 4. Plans (แผนงาน) */}
+                {/* 2. Plans */}
                 <button
                     onClick={() => {
                       setActiveTab('Plans');
@@ -3702,7 +3713,18 @@ const App = () => {
                     </div>
                 </button>
 
-                {/* 5. Finance (การเงิน) */}
+                {/* 3. Center Elevated Plus Button */}
+                <div className="relative flex justify-center items-center z-20 pointer-events-none">
+                     <button
+                        onClick={() => openModal()}
+                        className="w-11 h-11 bg-indigo-600 rounded-full text-white shadow-md shadow-indigo-300/50 flex items-center justify-center transform active:scale-95 transition-all border-2 border-white pointer-events-auto"
+                        title="เพิ่มรายการใหม่"
+                     >
+                        <Plus className="w-6 h-6" strokeWidth={2.5} />
+                     </button>
+                </div>
+
+                {/* 4. Finance */}
                 <button
                     onClick={() => {
                       setActiveTab('Finance');
@@ -3728,6 +3750,33 @@ const App = () => {
                         )}
                     </div>
                 </button>
+
+                {/* 5. Analytics */}
+                <button
+                    onClick={() => {
+                      setActiveTab('Analytics');
+                      if (isMobileNavExpanded) setIsMobileNavExpanded(false);
+                    }}
+                    className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10 active:scale-95 transition-transform"
+                    title="วิเคราะห์"
+                >
+                    <div className={`transition-all duration-200 flex flex-col items-center justify-center ${
+                        activeTab === 'Analytics' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
+                    }`}>
+                        <BarChart2 
+                          className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
+                          strokeWidth={activeTab === 'Analytics' ? 2.5 : 2} 
+                        />
+                        <span className={`text-[10px] leading-none transition-all duration-200 ${
+                          isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
+                        } ${activeTab === 'Analytics' ? 'font-bold text-indigo-600' : 'font-medium text-slate-500'}`}>
+                          วิเคราะห์
+                        </span>
+                        {activeTab === 'Analytics' && (
+                            <span className={`w-1.5 h-1.5 bg-indigo-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
+                        )}
+                    </div>
+                </button>
             </div>
 
             {/* Row 2: Secondary Navigation Section (ดึงขึ้นมาจะปรากฏในกล่องเดียวกัน ไร้กรอบสี่เหลี่ยม ไร้ขีดคั่น เป็นชิ้นเดียวกัน) */}
@@ -3741,25 +3790,7 @@ const App = () => {
               }}
             >
               <div className="pt-1.5 pb-1 grid grid-cols-5 px-1 items-center">
-                {/* 1. Analytics (วิเคราะห์) */}
-                <button
-                  onClick={() => {
-                    setActiveTab('Analytics');
-                    setIsMobileNavExpanded(false);
-                  }}
-                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
-                  title="สถิติและวิเคราะห์"
-                >
-                  <BarChart2 className={`w-6 h-6 transition-colors ${activeTab === 'Analytics' ? 'text-indigo-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Analytics' ? 2.5 : 2} />
-                  <span className={`text-[10px] mt-0.5 leading-none ${activeTab === 'Analytics' ? 'text-indigo-600 font-bold' : 'text-slate-500 font-medium'}`}>
-                    วิเคราะห์
-                  </span>
-                  {activeTab === 'Analytics' && (
-                    <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full mt-0.5" />
-                  )}
-                </button>
-
-                {/* 2. Settings (ตั้งค่า) */}
+                {/* 1. Settings (ตั้งค่า) */}
                 <button
                   onClick={() => {
                     setActiveTab('Settings');
@@ -3777,7 +3808,8 @@ const App = () => {
                   )}
                 </button>
 
-                {/* 3, 4, 5. Empty slots ready for future scalability */}
+                {/* 2, 3, 4, 5. Empty slots */}
+                <div className="flex items-center justify-center py-1 opacity-0 pointer-events-none" />
                 <div className="flex items-center justify-center py-1 opacity-0 pointer-events-none" />
                 <div className="flex items-center justify-center py-1 opacity-0 pointer-events-none" />
                 <div className="flex items-center justify-center py-1 opacity-0 pointer-events-none" />

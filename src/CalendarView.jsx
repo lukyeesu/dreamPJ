@@ -338,7 +338,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                       
                       return (
                           <div key={dayIdx} className="space-y-2">
-                              <div className={`sticky top-0 z-10 px-3 py-2 rounded-lg flex items-center gap-2 border-l-4 ${isCurrent ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-slate-50 border-slate-300 text-slate-600'}`}>
+                              <div className={`sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 z-10 px-3 py-2 rounded-lg flex items-center gap-2 border-l-4 ${isCurrent ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-slate-50 border-slate-300 text-slate-600'}`}>
                                   <span className="font-black w-6 text-right">{d.getDate()}</span>
                                   <span className="font-bold text-sm uppercase">{daysTH[d.getDay()]}</span>
                                   <div className="h-px bg-current opacity-10 flex-1 ml-2"></div>

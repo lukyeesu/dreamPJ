@@ -1,11 +1,11 @@
 import React from 'react';
-import { CalendarDays } from 'lucide-react';
+import { CalendarDays, ChevronDown } from 'lucide-react';
 import ModernDateTimePicker from './ModernDateTimePicker';
 
 export const DateFilterControl = ({ mode, setMode, date, setDate, range, setRange }) => {
   return (
-    <div className="flex bg-white border border-slate-200 rounded-2xl overflow-hidden h-full shadow-sm hover:border-indigo-300 transition-colors w-full md:w-auto">
-      <div className="relative border-r border-slate-100 bg-slate-50 w-[110px] shrink-0">
+    <div className="flex bg-white border border-slate-200 rounded-xl sm:rounded-2xl overflow-hidden h-full shadow-xs hover:border-indigo-300 transition-colors w-full md:w-auto">
+      <div className={`relative ${mode === 'all' ? 'w-full' : 'w-[110px] sm:w-[125px] border-r border-slate-100'} bg-slate-50 shrink-0 h-full flex items-center`}>
         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
           <CalendarDays className="w-4 h-4" />
         </div>
@@ -33,23 +33,20 @@ export const DateFilterControl = ({ mode, setMode, date, setDate, range, setRang
             }
             setRange({ start: '', end: '' });
           }}
-          className="w-full h-full py-3.5 pl-9 pr-2 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer"
+          className="w-full h-full pl-9 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer flex items-center"
         >
-          <option value="all">ทั้งหมด</option>
+          <option value="all">{mode === 'all' ? 'วันที่: ทั้งหมด' : 'ทั้งหมด'}</option>
           <option value="date">วันที่</option>
           <option value="week">รายสัปดาห์</option>
           <option value="month">เดือน</option>
           <option value="year">ปี</option>
           <option value="range">ช่วงเวลา</option>
         </select>
+        <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
       </div>
 
-      <div className="flex-1 min-w-[140px] relative bg-white">
-        {mode === 'all' && (
-          <div className="w-full h-full flex items-center px-4 text-slate-400 text-sm italic whitespace-nowrap">
-            แสดงข้อมูลทั้งหมด
-          </div>
-        )}
+      {mode !== 'all' && (
+        <div className="flex-1 min-w-[140px] relative bg-white">
 
         {mode === 'date' && (
           <ModernDateTimePicker
@@ -117,6 +114,7 @@ export const DateFilterControl = ({ mode, setMode, date, setDate, range, setRang
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };

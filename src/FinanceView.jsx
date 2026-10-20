@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   DollarSign,
   TrendingUp,
@@ -27,7 +27,9 @@ import {
   ExternalLink,
   Plus,
   ArrowUpDown,
-  LayoutList
+  LayoutList,
+  User,
+  Mic
 } from 'lucide-react';
 import DateFilterControl from './components/common/DateFilterControl';
 
@@ -82,15 +84,70 @@ export default function FinanceView({
   filterDate: propFilterDate,
   setFilterDate: propSetFilterDate,
   filterDateRange: propFilterDateRange,
-  setFilterDateRange: propSetFilterDateRange
+  setFilterDateRange: propSetFilterDateRange,
+  isActive = true
 }) {
   // --- View Mode State ---
   // 'sheet' = ตารางกำไรขาดทุนแบบสมุดบัญชีตามรูป (Accounting Sheet View)
   // 'dashboard' = แดชบอร์ดภาพรวมพร้อมการ์ดสถิติ (Interactive Dashboard View)
   const [viewMode, setViewMode] = useState('sheet');
 
+  // Sticky Collision State for Filter Toolbar
+  const [isFilterStuck, setIsFilterStuck] = useState(false);
+  const filterSentinelRef = useRef(null);
+
+  useEffect(() => {
+    if (!isActive) return;
+
+    const checkSticky = () => {
+      if (!filterSentinelRef.current) return;
+      if (filterSentinelRef.current.getClientRects().length === 0) return;
+
+      const rect = filterSentinelRef.current.getBoundingClientRect();
+      const isMobile = window.innerWidth < 768;
+      const header = document.querySelector('header');
+      const mainEl = document.querySelector('main');
+
+      const targetTop = isMobile
+        ? (header ? header.getBoundingClientRect().bottom : 56)
+        : (mainEl ? mainEl.getBoundingClientRect().top : 0);
+
+      const marginOffset = isMobile ? 8 : 12;
+      const stuck = rect.top <= targetTop - marginOffset + 1;
+      setIsFilterStuck(stuck);
+    };
+
+    window.addEventListener('scroll', checkSticky, { passive: true });
+    window.addEventListener('resize', checkSticky, { passive: true });
+    const mainEl = document.querySelector('main');
+    if (mainEl) {
+      mainEl.addEventListener('scroll', checkSticky, { passive: true });
+    }
+
+    checkSticky();
+
+    return () => {
+      window.removeEventListener('scroll', checkSticky);
+      window.removeEventListener('resize', checkSticky);
+      if (mainEl) {
+        mainEl.removeEventListener('scroll', checkSticky);
+      }
+    };
+  }, [isActive, viewMode]);
+
   // Mobile layout mode for 'sheet': 'card' (easy mobile cards) or 'table' (full A4 table)
   const [mobileSheetLayout, setMobileSheetLayout] = useState('card');
+  // Detail mode for 'sheet' and print: 'compact' (สรุปย่อ ประหยัดกระดาษ) or 'detailed' (แจกแจงรายการย่อย)
+  const [tableDetailMode, setTableDetailMode] = useState('compact');
+  const [isMobileFilterExpanded, setIsMobileFilterExpanded] = useState(false);
+
+  const handleResetFilters = () => {
+    setSearchQuery('');
+    setPaymentStatusFilter('all');
+    setDateFilterMode('all');
+    setFilterDate('');
+    setFilterDateRange({ start: '', end: '' });
+  };
 
   // --- Filter States ---
   // DateFilterControl modes: 'all', 'date', 'week', 'month', 'year', 'range'
@@ -257,7 +314,8 @@ export default function FinanceView({
   }, [processedData]);
 
   // --- Print in New Tab Handler (Multi-page A4 Support) ---
-  const handlePrint = () => {
+  const handlePrint = (modeParam) => {
+    const selectedMode = typeof modeParam === 'string' ? modeParam : tableDetailMode;
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       alert('เบราว์เซอร์บล็อกหน้าต่างใหม่ (Pop-up Blocked) กรุณากดอนุญาตให้เปิดหน้าต่าง Pop-up เพื่อพิมพ์เอกสาร');
@@ -337,27 +395,33 @@ export default function FinanceView({
             expenseLinesHtml = '<div style="padding-left: 12px; color: #94a3b8; font-style: italic; font-size: 11px;">-ไม่มีรายการค่าใช้จ่ายจริง</div>';
           }
 
+          const clientInfo = `ลูกค้า: ${escapeHtml(item.customer || '-')} • ศิลปิน: ${escapeHtml(item.artist || '-')}`;
+
           return `
-            <tr style="page-break-inside: avoid; break-inside: avoid;">
+            <tr class="table-row-item" style="page-break-inside: avoid; break-inside: avoid;">
               <td style="text-align: center; font-weight: bold; white-space: nowrap; padding: 8px 6px; border-left: 1px solid #000; border-right: 1px solid #000; border-bottom: 1px dashed #000;">
                 ${displayProjectDate || '-'}
               </td>
               <td style="padding: 8px 10px; border-left: 1px solid #000; border-right: 1px solid #000; border-bottom: 1px dashed #000;">
-                <div style="font-weight: 800; font-size: 13px; margin-bottom: 4px; display: flex; justify-content: space-between;">
-                  <span>${escapeHtml(item.id)} ${item.name ? `- ${escapeHtml(item.name)}` : ''}</span>
-                  <span style="font-size: 11px; font-weight: normal; color: #64748b;">${item.customer ? `ลูกค้า: ${escapeHtml(item.customer)}` : ''}</span>
+                <div class="job-title-row" style="font-weight: 800; font-size: 13px; line-height: 1.35; color: #0f172a;">
+                  ${escapeHtml(item.id)} ${item.name ? `- ${escapeHtml(item.name)}` : ''}
                 </div>
-                <div style="margin-top: 4px;">
-                  <div style="font-weight: bold; font-size: 11px; color: #0f172a;">1.เงินสนับสนุนศิลปิน (Money Order)</div>
-                  ${supportLinesHtml}
+                <div class="job-client-row" style="font-size: 11px; font-weight: normal; color: #64748b; margin-top: 2px; line-height: 1.3;">
+                  ${clientInfo}
                 </div>
-                <div style="margin-top: 6px;">
-                  <div style="font-weight: bold; font-size: 11px; color: #0f172a;">2.รายการเสนอราคา (Quotation)</div>
-                  ${quotationLinesHtml}
-                </div>
-                <div style="margin-top: 6px;">
-                  <div style="font-weight: bold; font-size: 11px; color: #0f172a;">3.รายจ่ายจริง / ต้นทุนเพิ่ม (Expenses)</div>
-                  ${expenseLinesHtml}
+                <div class="detail-sub-list">
+                  <div style="margin-top: 4px;">
+                    <div style="font-weight: bold; font-size: 11px; color: #0f172a;">1.เงินสนับสนุนศิลปิน (Money Order)</div>
+                    ${supportLinesHtml}
+                  </div>
+                  <div style="margin-top: 6px;">
+                    <div style="font-weight: bold; font-size: 11px; color: #0f172a;">2.รายการเสนอราคา (Quotation)</div>
+                    ${quotationLinesHtml}
+                  </div>
+                  <div style="margin-top: 6px;">
+                    <div style="font-weight: bold; font-size: 11px; color: #0f172a;">3.รายจ่ายจริง / ต้นทุนเพิ่ม (Expenses)</div>
+                    ${expenseLinesHtml}
+                  </div>
                 </div>
               </td>
               <td style="text-align: right; font-weight: bold; padding: 8px 8px; font-variant-numeric: tabular-nums; border-left: 1px solid #000; border-right: 1px solid #000; border-bottom: 1px dashed #000;">
@@ -433,6 +497,51 @@ export default function FinanceView({
       border-radius: 6px;
       font-size: 12px;
       color: #93c5fd;
+    }
+    .mode-toggle-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .toggle-pill-container {
+      display: inline-flex;
+      background: #1e293b;
+      padding: 3px;
+      border-radius: 10px;
+      border: 1px solid #334155;
+    }
+    .mode-btn {
+      background: transparent;
+      color: #94a3b8;
+      border: none;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      user-select: none;
+    }
+    .mode-btn:hover {
+      color: #ffffff;
+    }
+    .mode-btn.active {
+      background: #4f46e5;
+      color: #ffffff;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    }
+    body.mode-compact .detail-sub-list {
+      display: none !important;
+    }
+    body.mode-compact .job-title-row {
+      margin-bottom: 0 !important;
+    }
+    body.mode-compact .table-row-item td {
+      padding-top: 6px !important;
+      padding-bottom: 6px !important;
     }
     .btn-group {
       display: flex;
@@ -612,6 +721,21 @@ export default function FinanceView({
       .sign-box {
         width: 100%;
       }
+      .mode-toggle-group {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+      }
+      .toggle-pill-container {
+        display: flex;
+        width: 100%;
+      }
+      .mode-btn {
+        flex: 1;
+        justify-content: center;
+        font-size: 11px;
+        padding: 6px 8px;
+      }
     }
 
     /* Official A4 Print Output */
@@ -625,6 +749,21 @@ export default function FinanceView({
         font-size: 10pt !important;
         padding: 0 !important;
         margin: 0 !important;
+      }
+      body.mode-compact .detail-sub-list {
+        display: none !important;
+      }
+      body.mode-compact .job-title-row {
+        margin-bottom: 0 !important;
+      }
+      body.mode-compact .table-row-item td {
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        font-size: 9pt !important;
+      }
+      .job-client-row {
+        font-size: 8pt !important;
+        color: #475569 !important;
       }
       .paper-container {
         max-width: 100% !important;
@@ -666,12 +805,26 @@ export default function FinanceView({
     }
   </style>
 </head>
-<body>
+<body class="${selectedMode === 'compact' ? 'mode-compact' : ''}">
   <div class="top-action-bar no-print">
     <div class="top-bar-title">
       <span>แบบฟอร์มบันทึกข้อมูลกำไรขาดทุน</span>
       <span class="top-bar-badge">${processedData.length} รายการ</span>
     </div>
+
+    <!-- Toggle Print Mode (Compact vs Detailed) -->
+    <div class="mode-toggle-group">
+      <span style="font-size: 12px; color: #94a3b8; font-weight: 600;">รูปแบบการพิมพ์:</span>
+      <div class="toggle-pill-container">
+        <button id="btnModeCompact" class="mode-btn ${selectedMode === 'compact' ? 'active' : ''}" onclick="setPrintMode('compact')">
+          📄 แบบย่อ (ประหยัดกระดาษ)
+        </button>
+        <button id="btnModeDetailed" class="mode-btn ${selectedMode === 'detailed' ? 'active' : ''}" onclick="setPrintMode('detailed')">
+          📑 แบบละเอียด (มีรายการย่อย)
+        </button>
+      </div>
+    </div>
+
     <div class="btn-group">
       <button class="btn btn-primary" onclick="window.print()">
         พิมพ์ / บันทึก PDF
@@ -691,6 +844,7 @@ export default function FinanceView({
       <div class="doc-meta">
         <div><strong>วันที่พิมพ์:</strong> ${printDate} (${printTime} น.)</div>
         <div><strong>จำนวนงาน:</strong> ${processedData.length} รายการ</div>
+        <div id="metaPrintMode"><strong>รูปแบบ:</strong> ${selectedMode === 'compact' ? 'สรุปย่อ (ประหยัดกระดาษ)' : 'แจกแจงละเอียด'}</div>
       </div>
     </div>
 
@@ -729,6 +883,24 @@ export default function FinanceView({
       </div>
     </div>
   </div>
+
+  <script>
+    function setPrintMode(mode) {
+      if (mode === 'compact') {
+        document.body.classList.add('mode-compact');
+        document.getElementById('btnModeCompact').classList.add('active');
+        document.getElementById('btnModeDetailed').classList.remove('active');
+        var meta = document.getElementById('metaPrintMode');
+        if (meta) meta.innerHTML = '<strong>รูปแบบ:</strong> สรุปย่อ (ประหยัดกระดาษ)';
+      } else {
+        document.body.classList.remove('mode-compact');
+        document.getElementById('btnModeDetailed').classList.add('active');
+        document.getElementById('btnModeCompact').classList.remove('active');
+        var meta = document.getElementById('metaPrintMode');
+        if (meta) meta.innerHTML = '<strong>รูปแบบ:</strong> แจกแจงละเอียด';
+      }
+    }
+  </script>
 </body>
 </html>`;
 
@@ -917,7 +1089,7 @@ export default function FinanceView({
 
           {/* Print to A4 Button (Icon only, larger touch size) */}
           <button
-            onClick={handlePrint}
+            onClick={() => handlePrint(tableDetailMode)}
             className="flex items-center justify-center w-10 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md shadow-indigo-100 transition-all hover:-translate-y-0.5 active:translate-y-0 shrink-0"
             title="พิมพ์เอกสาร A4"
           >
@@ -1004,91 +1176,206 @@ export default function FinanceView({
       </div>
 
       {/* =========================================================================
-          FILTER TOOLBAR (Search on Left, Multi-level Date Selector on Right)
+          FILTER TOOLBAR (Clean, Modern, Unified Mobile & Desktop Filter)
          ========================================================================= */}
-      <div className="no-print bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
-        {/* Row 1: Search on Left + DateFilterControl on Right */}
-        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-          {/* Left: Compact Search Input */}
-          <div className="relative flex-1 md:max-w-md">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="ค้นหารหัส, ชื่องาน, ลูกค้า, ศิลปิน..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-11 pl-9 pr-8 bg-slate-50 border border-slate-200 rounded-2xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 font-bold p-1 rounded-md"
-                title="ล้างข้อความค้นหา"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+      <div ref={filterSentinelRef} className="h-px w-full pointer-events-none opacity-0 -mb-px" />
+      <div 
+        className={`no-print bg-white transition-all duration-200 ease-in-out z-40 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0
+          ${isFilterStuck
+            ? '-mx-4 sm:-mx-8 lg:-mx-10 mt-0 py-2.5 sm:py-3 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none mb-4'
+            : 'mt-2 sm:mt-3 p-3.5 sm:p-5 rounded-[2rem] sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)] mb-4'
+          }
+        `}
+      >
+        {/* --- MOBILE FILTER LAYOUT (Clean, Compact, No Clutter) --- */}
+        <div className="flex flex-col gap-2.5 md:hidden">
+          {/* Row 1: Search + Filter Toggle + Reset */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 bg-slate-50 border border-slate-200/70 rounded-xl h-10 flex items-center hover:bg-slate-100/60 focus-within:bg-white focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                <Search className="w-4 h-4" />
+              </div>
+              <input
+                type="text"
+                placeholder="ค้นหา..."
+                className="w-full h-full pl-9 pr-8 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-medium placeholder:text-slate-400 rounded-xl"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-md"
+                  title="ล้างข้อความค้นหา"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* ปุ่มเปิด/ซ่อนตัวกรอง (Icon Only) */}
+            <button
+              type="button"
+              onClick={() => setIsMobileFilterExpanded(!isMobileFilterExpanded)}
+              className={`h-10 w-10 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 border ${
+                isMobileFilterExpanded 
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-200' 
+                  : 'bg-slate-50 text-slate-600 border-slate-200/70 hover:bg-slate-100'
+              }`}
+              title={isMobileFilterExpanded ? "ซ่อนตัวกรอง" : "เปิดตัวกรองเพิ่มเติม"}
+              aria-label="ตัวกรอง"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+            </button>
+
+            {/* ปุ่มรีเซ็ตฟิลเตอร์ */}
+            <button
+              onClick={handleResetFilters}
+              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95"
+              title="ล้างค่าตัวกรองทั้งหมด"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
           </div>
 
-          {/* Right: Date Filter Control (Same as Analytics page) */}
-          <div className="w-full md:w-auto min-w-[280px] sm:min-w-[340px] h-11">
-            <DateFilterControl
-              mode={dateFilterMode}
-              setMode={setDateFilterMode}
-              date={filterDate}
-              setDate={setFilterDate}
-              range={filterDateRange}
-              setRange={setFilterDateRange}
-            />
-          </div>
+          {/* แผงฟิลเตอร์เมื่อกดเปิด (Mobile Drawer) */}
+          {isMobileFilterExpanded && (
+            <div className="flex flex-col gap-2 pt-2 border-t border-slate-100 animate-in slide-in-from-top-2 fade-in duration-200">
+              {/* 1. ตัวเลือกช่วงวันที่ (Full Width) */}
+              <div className="w-full h-10">
+                <DateFilterControl
+                  mode={dateFilterMode}
+                  setMode={setDateFilterMode}
+                  date={filterDate}
+                  setDate={setFilterDate}
+                  range={filterDateRange}
+                  setRange={setFilterDateRange}
+                />
+              </div>
+
+              {/* 2. Grid 2 คอลัมน์: สถานะการชำระ + สลับเรียงลำดับ */}
+              <div className="grid grid-cols-2 gap-2">
+                {/* สถานะการชำระ Mobile */}
+                <div className="relative bg-slate-50 border border-slate-200/70 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                    <Wallet className="w-3.5 h-3.5" />
+                  </div>
+                  <select
+                    value={paymentStatusFilter}
+                    onChange={(e) => setPaymentStatusFilter(e.target.value)}
+                    className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer rounded-xl"
+                  >
+                    <option value="all">สถานะ: ทั้งหมด</option>
+                    <option value="paid">ชำระครบแล้ว</option>
+                    <option value="deposit">มัดจำแล้ว</option>
+                    <option value="unpaid">รอชำระเงิน</option>
+                    <option value="refunded">คืนเงิน/ยกเลิก</option>
+                  </select>
+                  <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+
+                {/* เรียงลำดับ Mobile */}
+                <button
+                  onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
+                  className="h-10 px-3 bg-slate-50 border border-slate-200/70 rounded-xl text-xs font-bold text-slate-600 flex items-center justify-between hover:border-slate-300 transition-colors active:scale-95"
+                  title={sortOrder === 'desc' ? 'เรียงล่าสุดก่อน' : 'เรียงเก่าสุดก่อน'}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                    <span>เรียง:</span>
+                  </div>
+                  <span className="text-indigo-600 font-bold">{sortOrder === 'desc' ? 'ล่าสุด' : 'เก่าสุด'}</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Row 2: Payment Status Filter + Reset Filter + Sort Toggle */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Payment Status Dropdown */}
-            <div className="w-48 min-w-[140px]">
+        {/* --- DESKTOP FILTER LAYOUT (เหมือนหน้ารายการแผนงาน แบบ 2 แถวสูง 48px) --- */}
+        <div className="hidden md:flex flex-col gap-3">
+          {/* แถวที่ 1: ค้นหา + ตัวเลือกวันที่ */}
+          <div className="flex gap-3 h-[48px]">
+            {/* กล่องค้นหา Desktop */}
+            <div className="relative flex-[2] bg-slate-50 border border-slate-200/70 rounded-2xl hover:border-indigo-300 focus-within:bg-white focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all shadow-xs">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                <Search className="w-5 h-5" />
+              </div>
+              <input
+                type="text"
+                placeholder="ค้นหารหัส, ชื่องาน, ลูกค้า, ศิลปิน..."
+                className="w-full h-full pl-12 pr-10 bg-transparent outline-none text-slate-700 text-sm font-medium placeholder:text-slate-400 rounded-2xl"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 p-1 rounded-md"
+                  title="ล้างข้อความค้นหา"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* เลือกวันที่ Desktop */}
+            <div className="flex-1 min-w-[300px]">
+              <DateFilterControl
+                mode={dateFilterMode}
+                setMode={setDateFilterMode}
+                date={filterDate}
+                setDate={setFilterDate}
+                range={filterDateRange}
+                setRange={setFilterDateRange}
+              />
+            </div>
+          </div>
+
+          {/* แถวที่ 2: สถานะการชำระ + สลับเรียงลำดับ + ปุ่มรีเซ็ตตัวกรอง */}
+          <div className="flex gap-3 h-[48px]">
+            {/* สถานะการชำระ Dropdown */}
+            <div className="relative flex-1 bg-slate-50 border border-slate-200/70 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs group">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors">
+                <Wallet className="w-4 h-4" />
+              </div>
               <select
                 value={paymentStatusFilter}
                 onChange={(e) => setPaymentStatusFilter(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
               >
-                <option value="all">สถานะ: ทั้งหมด</option>
+                <option value="all">สถานะการชำระ: ทั้งหมด</option>
                 <option value="paid">ชำระครบแล้ว</option>
                 <option value="deposit">มัดจำแล้ว</option>
                 <option value="unpaid">รอชำระเงิน</option>
                 <option value="refunded">คืนเงิน/ยกเลิก</option>
               </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
 
-            {/* Reset Filter Button if active */}
-            {(searchQuery || paymentStatusFilter !== 'all' || dateFilterMode !== 'all') && (
-              <button
-                onClick={() => {
-                  setSearchQuery('');
-                  setPaymentStatusFilter('all');
-                  setDateFilterMode('all');
-                  setFilterDate('');
-                  setFilterDateRange({ start: '', end: '' });
-                }}
-                className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 text-rose-600 border border-rose-100 rounded-xl text-xs font-bold hover:bg-rose-100 transition active:scale-95"
-                title="ล้างตัวกรองทั้งหมด"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>ล้างตัวกรอง</span>
-              </button>
-            )}
-          </div>
+            {/* สลับการเรียงลำดับ Sort Toggle Button */}
+            <button
+              onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
+              className="relative flex-1 bg-slate-50 border border-slate-200/70 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs px-4 flex items-center justify-between cursor-pointer group"
+              title={sortOrder === 'desc' ? 'เรียงล่าสุดก่อน' : 'เรียงเก่าสุดก่อน'}
+            >
+              <div className="flex items-center gap-2.5">
+                <ArrowUpDown className="w-4 h-4 text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                <span className="text-sm font-bold text-slate-700">การเรียงลำดับ</span>
+              </div>
+              <span className="text-xs font-semibold px-2 py-0.5 bg-white border border-slate-200/80 rounded-md text-slate-600">
+                {sortOrder === 'desc' ? 'ล่าสุดก่อน' : 'เก่าสุดก่อน'}
+              </span>
+            </button>
 
-          {/* Sort Order Toggle */}
-          <button
-            onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
-            className="flex items-center gap-1.5 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition active:scale-95"
-            title={sortOrder === 'desc' ? 'เรียงล่าสุดก่อน' : 'เรียงเก่าสุดก่อน'}
-          >
-            <ArrowUpDown className="w-3.5 h-3.5 text-slate-500" />
-            <span>{sortOrder === 'desc' ? 'ล่าสุดก่อน' : 'เก่าสุดก่อน'}</span>
-          </button>
+            {/* ปุ่มรีเซ็ตฟิลเตอร์ Desktop */}
+            <button
+              onClick={handleResetFilters}
+              className="px-5 bg-slate-50 border border-slate-200/70 text-slate-500 rounded-2xl font-bold hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors flex items-center justify-center shadow-xs shrink-0"
+              title="ล้างค่าตัวกรองทั้งหมด"
+            >
+              <RotateCcw className="w-5 h-5" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1113,6 +1400,38 @@ export default function FinanceView({
             </div>
           </div>
 
+          {/* View / Print Detail Mode Selector (Compact vs Detailed) */}
+          <div className="no-print mb-4 flex flex-wrap items-center justify-between gap-2.5 bg-slate-50/90 p-2 sm:p-2.5 rounded-2xl border border-slate-200/80">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+              <FileText className="w-4 h-4 text-indigo-600" />
+              <span>รูปแบบตารางและการพิมพ์:</span>
+            </div>
+            <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200/80 shadow-xs">
+              <button
+                type="button"
+                onClick={() => setTableDetailMode('compact')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  tableDetailMode === 'compact'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                }`}
+              >
+                <span>📄 สรุปย่อ (ประหยัดกระดาษ)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTableDetailMode('detailed')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  tableDetailMode === 'detailed'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                }`}
+              >
+                <span>📑 ละเอียด (ดีเทล)</span>
+              </button>
+            </div>
+          </div>
+
           {/* Mobile View Toggle: Card View vs Full Table */}
           <div className="no-print md:hidden mb-4 flex items-center justify-between gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
             <button
@@ -1124,7 +1443,7 @@ export default function FinanceView({
               }`}
             >
               <LayoutList className="w-3.5 h-3.5" />
-              <span>การ์ดอ่านง่าย</span>
+              <span>การ์ด</span>
             </button>
             <button
               onClick={() => setMobileSheetLayout('table')}
@@ -1135,7 +1454,7 @@ export default function FinanceView({
               }`}
             >
               <TableIcon className="w-3.5 h-3.5" />
-              <span>ตารางเต็ม A4</span>
+              <span>ตาราง</span>
             </button>
           </div>
 
@@ -1340,108 +1659,117 @@ export default function FinanceView({
                     // Fallback item-level date or project date
                     const displayProjectDate = formatItemDate(item.paymentDate || item.rawDateTime || item.date);
 
+                    const clientInfo = `ลูกค้า: ${item.customer || '-'} • ศิลปิน: ${item.artist || '-'}`;
+
+                    const isCompact = tableDetailMode === 'compact';
+
                     return (
                       <tr key={item.id || index} className="align-top hover:bg-slate-50/50 transition">
                         {/* 1. วันที่ */}
-                        <td className="border-x border-slate-300 border-b border-dashed border-slate-400 px-3 py-3 text-center font-bold text-slate-800 whitespace-nowrap">
+                        <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-center font-bold text-slate-800 whitespace-nowrap`}>
                           {displayProjectDate}
                         </td>
 
-                        {/* 2. รายการ (ตรงตามรูปภาพตัวอย่าง 3 หมวดย่อยพร้อมวันที่ต่อท้าย) */}
-                        <td className="border-x border-slate-300 border-b border-dashed border-slate-400 px-4 py-3 text-slate-800">
+                        {/* 2. รายการ */}
+                        <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-4 ${isCompact ? 'py-2' : 'py-3'} text-slate-800`}>
                           {/* รหัสงาน & ชื่อ */}
-                          <div className="font-black text-slate-900 mb-1 flex items-center justify-between">
-                            <span>{item.id} {item.name ? `- ${item.name}` : ''}</span>
-                            <span className="no-print text-[11px] font-normal text-slate-400">
-                              {item.customer ? `ลูกค้า: ${item.customer}` : ''}
-                            </span>
+                          <div className="font-black text-slate-900 leading-snug">
+                            {item.id} {item.name ? `- ${item.name}` : ''}
+                          </div>
+                          <div className="no-print text-[11px] font-normal text-slate-400 mt-0.5 leading-tight">
+                            {clientInfo}
                           </div>
 
-                          {/* 1. เงินสนับสนุนศิลปิน (Money Order) */}
-                          <div className="mt-1.5 space-y-0.5">
-                            <p className="font-bold text-slate-900 text-xs">
-                              1.เงินสนับสนุนศิลปิน (Money Order)
-                            </p>
-                            {hasSupport && sTotal > 0 ? (
-                              item.customerSupport.map((sup, sIdx) => {
-                                const supDate = formatItemDate(sup.date || item.paymentDate || item.rawDateTime || item.date);
-                                const denomText = sup.denomination >= 20 ? `แบงค์ ${sup.denomination}บาท` : `เหรียญ ${sup.denomination}บาท`;
-                                return (
-                                  <p key={sIdx} className="text-xs text-slate-700 pl-3">
-                                    -{denomText} x {sup.quantity}ใบ = {formatCurrency(sup.price)}บาท {supDate ? `- ${supDate}` : ''}
-                                    {sup.detail ? ` (${sup.detail})` : ''}
-                                  </p>
-                                );
-                              })
-                            ) : (
-                              <p className="text-xs text-slate-400 pl-3 italic">-ไม่มีรายการสนับสนุน</p>
-                            )}
-                          </div>
+                          {/* 3 หมวดย่อย (แสดงเฉพาะเมื่อเลือกแบบละเอียด) */}
+                          {!isCompact && (
+                            <div className="mt-2 space-y-2 border-t border-slate-100 pt-1.5">
+                              {/* 1. เงินสนับสนุนศิลปิน (Money Order) */}
+                              <div className="space-y-0.5">
+                                <p className="font-bold text-slate-900 text-xs">
+                                  1.เงินสนับสนุนศิลปิน (Money Order)
+                                </p>
+                                {hasSupport && sTotal > 0 ? (
+                                  item.customerSupport.map((sup, sIdx) => {
+                                    const supDate = formatItemDate(sup.date || item.paymentDate || item.rawDateTime || item.date);
+                                    const denomText = sup.denomination >= 20 ? `แบงค์ ${sup.denomination}บาท` : `เหรียญ ${sup.denomination}บาท`;
+                                    return (
+                                      <p key={sIdx} className="text-xs text-slate-700 pl-3">
+                                        -{denomText} x {sup.quantity}ใบ = {formatCurrency(sup.price)}บาท {supDate ? `- ${supDate}` : ''}
+                                        {sup.detail ? ` (${sup.detail})` : ''}
+                                      </p>
+                                    );
+                                  })
+                                ) : (
+                                  <p className="text-xs text-slate-400 pl-3 italic">-ไม่มีรายการสนับสนุน</p>
+                                )}
+                              </div>
 
-                          {/* 2. รายการเสนอราคา (Quotation) */}
-                          <div className="mt-2 space-y-0.5">
-                            <p className="font-bold text-slate-900 text-xs">
-                              2.รายการเสนอราคา (Quotation)
-                            </p>
-                            {hasQuotation ? (
-                              item.quotationItems.map((quote, qIdx) => {
-                                const qDate = formatItemDate(quote.date || item.paymentDate || item.rawDateTime || item.date);
-                                const qLabel = quote.category ? `[${quote.category}] ` : '';
-                                const qDetail = quote.detail || 'รายการงาน';
-                                return (
-                                  <p key={qIdx} className="text-xs text-slate-700 pl-3">
-                                    -{qLabel}{qDetail} {formatCurrency(quote.price)}บาท {qDate ? `- ${qDate}` : ''}
+                              {/* 2. รายการเสนอราคา (Quotation) */}
+                              <div className="space-y-0.5">
+                                <p className="font-bold text-slate-900 text-xs">
+                                  2.รายการเสนอราคา (Quotation)
+                                </p>
+                                {hasQuotation ? (
+                                  item.quotationItems.map((quote, qIdx) => {
+                                    const qDate = formatItemDate(quote.date || item.paymentDate || item.rawDateTime || item.date);
+                                    const qLabel = quote.category ? `[${quote.category}] ` : '';
+                                    const qDetail = quote.detail || 'รายการงาน';
+                                    return (
+                                      <p key={qIdx} className="text-xs text-slate-700 pl-3">
+                                        -{qLabel}{qDetail} {formatCurrency(quote.price)}บาท {qDate ? `- ${qDate}` : ''}
+                                      </p>
+                                    );
+                                  })
+                                ) : qTotal > 0 ? (
+                                  <p className="text-xs text-slate-700 pl-3">
+                                    -ค่าจ้าง/บริการ {formatCurrency(qTotal)}บาท {displayProjectDate ? `- ${displayProjectDate}` : ''}
                                   </p>
-                                );
-                              })
-                            ) : qTotal > 0 ? (
-                              <p className="text-xs text-slate-700 pl-3">
-                                -ค่าจ้าง/บริการ {formatCurrency(qTotal)}บาท {displayProjectDate ? `- ${displayProjectDate}` : ''}
-                              </p>
-                            ) : (
-                              <p className="text-xs text-slate-400 pl-3 italic">-ไม่มีรายการเสนอราคา</p>
-                            )}
-                          </div>
+                                ) : (
+                                  <p className="text-xs text-slate-400 pl-3 italic">-ไม่มีรายการเสนอราคา</p>
+                                )}
+                              </div>
 
-                          {/* 3. รายจ่ายจริง / ต้นทุนเพิ่ม (Expenses) */}
-                          <div className="mt-2 space-y-0.5">
-                            <p className="font-bold text-slate-900 text-xs">
-                              3.รายจ่ายจริง / ต้นทุนเพิ่ม (Expenses)
-                            </p>
-                            {hasExpenses && eTotal > 0 ? (
-                              item.expenses.map((exp, eIdx) => {
-                                const expDate = formatItemDate(exp.date || item.paymentDate || item.rawDateTime || item.date);
-                                const expLabel = exp.category ? `[${exp.category}] ` : '';
-                                const expDetail = exp.detail || 'ค่าใช้จ่าย';
-                                return (
-                                  <p key={eIdx} className="text-xs text-slate-700 pl-3">
-                                    -{expLabel}{expDetail} {exp.quantity > 1 ? `${exp.quantity} หน่วย ` : ''}{formatCurrency(exp.price)} บาท {expDate ? `- ${expDate}` : ''}
-                                  </p>
-                                );
-                              })
-                            ) : (
-                              <p className="text-xs text-slate-400 pl-3 italic">-ไม่มีรายการค่าใช้จ่ายจริง</p>
-                            )}
-                          </div>
+                              {/* 3. รายจ่ายจริง / ต้นทุนเพิ่ม (Expenses) */}
+                              <div className="space-y-0.5">
+                                <p className="font-bold text-slate-900 text-xs">
+                                  3.รายจ่ายจริง / ต้นทุนเพิ่ม (Expenses)
+                                </p>
+                                {hasExpenses && eTotal > 0 ? (
+                                  item.expenses.map((exp, eIdx) => {
+                                    const expDate = formatItemDate(exp.date || item.paymentDate || item.rawDateTime || item.date);
+                                    const expLabel = exp.category ? `[${exp.category}] ` : '';
+                                    const expDetail = exp.detail || 'ค่าใช้จ่าย';
+                                    return (
+                                      <p key={eIdx} className="text-xs text-slate-700 pl-3">
+                                        -{expLabel}{expDetail} {exp.quantity > 1 ? `${exp.quantity} หน่วย ` : ''}{formatCurrency(exp.price)} บาท {expDate ? `- ${expDate}` : ''}
+                                      </p>
+                                    );
+                                  })
+                                ) : (
+                                  <p className="text-xs text-slate-400 pl-3 italic">-ไม่มีรายการค่าใช้จ่ายจริง</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </td>
 
                         {/* 3. รายรับ (เฉพาะค่าจ้าง ไม่รวมเงินสนับสนุนศิลปิน) */}
-                        <td className="border-x border-slate-300 border-b border-dashed border-slate-400 px-3 py-3 text-right font-bold text-slate-900 tabular-nums">
+                        <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-right font-bold text-slate-900 tabular-nums`}>
                           {qTotal > 0 ? formatCurrency(qTotal) : '-'}
                         </td>
 
                         {/* 4. เงินสนับสนุนศิลปิน */}
-                        <td className="border-x border-slate-300 border-b border-dashed border-slate-400 px-3 py-3 text-right font-bold text-slate-900 tabular-nums">
+                        <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-right font-bold text-slate-900 tabular-nums`}>
                           {sTotal > 0 ? formatCurrency(sTotal) : '-'}
                         </td>
 
                         {/* 5. รายจ่าย */}
-                        <td className="border-x border-slate-300 border-b border-dashed border-slate-400 px-3 py-3 text-right font-bold text-slate-900 tabular-nums">
+                        <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-right font-bold text-slate-900 tabular-nums`}>
                           {eTotal > 0 ? formatCurrency(eTotal) : '-'}
                         </td>
 
                         {/* 6. คงเหลือ */}
-                        <td className="border-x border-slate-300 border-b border-dashed border-slate-400 px-3 py-3 text-right font-black text-slate-900 tabular-nums">
+                        <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-right font-black text-slate-900 tabular-nums`}>
                           {formatCurrency(netBalance)}
                         </td>
                       </tr>
@@ -1480,15 +1808,43 @@ export default function FinanceView({
          ========================================================================= */}
       {viewMode === 'dashboard' && (
         <div className="space-y-4">
-          <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-4 sm:p-6">
-            <h3 className="text-lg font-black text-slate-900 mb-4 flex items-center gap-2">
-              <BarChart2 className="w-5 h-5 text-indigo-600" />
-              รายการงานและการเงิน ({processedData.length} รายการ)
-            </h3>
+          <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-4 sm:p-6 lg:p-8">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-100">
+              <h3 className="text-base sm:text-xl lg:text-2xl font-black text-slate-900 flex items-center gap-2.5">
+                <BarChart2 className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600" />
+                <span>รายการงานและการเงิน ({processedData.length} รายการ)</span>
+              </h3>
 
-            <div className="space-y-3">
+              {/* Quick Actions: Toggle expand all */}
+              {processedData.length > 0 && (
+                <button
+                  onClick={() => {
+                    const allExpanded = processedData.every(item => expandedRows[item.id]);
+                    if (allExpanded) {
+                      setExpandedRows({});
+                    } else {
+                      const all = {};
+                      processedData.forEach(item => { all[item.id] = true; });
+                      setExpandedRows(all);
+                    }
+                  }}
+                  className="self-start sm:self-auto text-xs sm:text-sm lg:text-base font-bold text-indigo-600 hover:text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100/70 px-3.5 sm:px-4 py-2 rounded-xl transition flex items-center gap-2 cursor-pointer active:scale-95"
+                >
+                  <LayoutList className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                  <span>
+                    {processedData.every(item => expandedRows[item.id])
+                      ? 'ย่อรายละเอียดทั้งหมด'
+                      : 'ขยายรายละเอียดทั้งหมด'}
+                  </span>
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-4 sm:space-y-5">
               {processedData.length === 0 ? (
-                <div className="text-center py-12 text-slate-400">ไม่พบงานตามเงื่อนไขที่เลือก</div>
+                <div className="text-center py-12 text-slate-400 font-medium text-xs sm:text-base">
+                  ไม่พบงานตามเงื่อนไขที่เลือก
+                </div>
               ) : (
                 processedData.map((item) => {
                   const hasQuotation = item.quotationItems && item.quotationItems.length > 0;
@@ -1509,118 +1865,253 @@ export default function FinanceView({
                   const profit = qTotal - eTotal;
                   const isExpanded = !!expandedRows[item.id];
                   const paymentStatus = item.paymentStatus || (item.dealStatus === 'completed' ? 'paid' : 'unpaid');
+                  const displayDate = formatItemDate(item.paymentDate || item.rawDateTime || item.date);
 
                   return (
                     <div
                       key={item.id}
-                      className="border border-slate-200 rounded-2xl p-4 hover:border-indigo-200 hover:shadow-sm transition bg-white"
+                      className="border border-slate-200/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-7 hover:border-indigo-200 hover:shadow-lg transition-all duration-200 bg-white"
                     >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div className="flex items-start gap-3">
-                          <div className="p-2.5 bg-slate-100 rounded-xl font-mono font-black text-xs text-slate-700">
+                      {/* --- ROW 1: Header (ID + Title + Status + Action) --- */}
+                      <div className="flex items-start justify-between gap-3 sm:gap-4">
+                        <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0 flex-1">
+                          <span className="shrink-0 px-2.5 py-1 sm:px-3.5 sm:py-1.5 bg-slate-100 text-slate-700 font-mono font-black text-xs sm:text-sm lg:text-base rounded-xl border border-slate-200/70">
                             {item.id}
-                          </div>
-                          <div>
-                            <h4 className="font-bold text-slate-900 text-sm sm:text-base">{item.name}</h4>
-                            <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-500">
-                              <span>ลูกค้า: <strong className="text-slate-700">{item.customer || '-'}</strong></span>
-                              <span>•</span>
-                              <span>ศิลปิน: <strong className="text-slate-700">{item.artist || '-'}</strong></span>
-                              <span>•</span>
-                              <span>วันที่: {formatDateTimeDisplay(item.paymentDate || item.rawDateTime)}</span>
-                            </div>
-                          </div>
+                          </span>
+                          <h4 className="font-black text-slate-900 text-sm sm:text-lg lg:text-xl truncate leading-snug" title={item.name}>
+                            {item.name || 'ไม่มีชื่องาน'}
+                          </h4>
                         </div>
 
-                        {/* Status & Summary Pills */}
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                            paymentStatus === 'paid' ? 'bg-emerald-100 text-emerald-700' :
-                            paymentStatus === 'deposit' ? 'bg-blue-100 text-blue-700' :
-                            paymentStatus === 'refunded' ? 'bg-rose-100 text-rose-700' :
-                            'bg-amber-100 text-amber-700'
+                        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+                          {/* Payment Status Pill */}
+                          <span className={`px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-full text-[11px] sm:text-xs lg:text-sm font-bold border whitespace-nowrap ${
+                            paymentStatus === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200/70' :
+                            paymentStatus === 'deposit' ? 'bg-sky-50 text-sky-700 border-sky-200/70' :
+                            paymentStatus === 'refunded' ? 'bg-rose-50 text-rose-700 border-rose-200/70' :
+                            'bg-amber-50 text-amber-700 border-amber-200/70'
                           }`}>
                             {paymentStatus === 'paid' ? 'ชำระครบแล้ว' :
                              paymentStatus === 'deposit' ? `มัดจำ ฿${formatCurrency(item.depositAmount)}` :
                              paymentStatus === 'refunded' ? 'คืนเงิน/ยกเลิก' : 'รอชำระเงิน'}
                           </span>
 
-                          <div className="text-right pl-2">
-                            <span className="text-[10px] text-slate-400 font-bold block">กำไรสุทธิ</span>
-                            <span className={`font-black text-sm sm:text-base ${profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              ฿{formatCurrency(profit)}
-                            </span>
-                          </div>
-
-                          {/* Quick Edit */}
+                          {/* Quick Edit Button */}
                           {onOpenProjectModal && (
                             <button
-                              onClick={() => onOpenProjectModal(item, false)}
-                              className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                              onClick={(e) => { e.stopPropagation(); onOpenProjectModal(item, false); }}
+                              className="w-8 h-8 sm:w-9 sm:h-9 lg:w-10 lg:h-10 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition active:scale-95 cursor-pointer"
                               title="แก้ไขงาน"
                             >
-                              <SlidersHorizontal className="w-4 h-4" />
+                              <SlidersHorizontal className="w-4 h-4 sm:w-5 sm:h-5" />
                             </button>
                           )}
-
-                          {/* Expand Details */}
-                          <button
-                            onClick={() => toggleRowExpand(item.id)}
-                            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
-                          >
-                            {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                          </button>
                         </div>
                       </div>
 
-                      {/* Collapsible Sub-item Details */}
+                      {/* --- ROW 2: Metadata (Date, Customer, Artist) --- */}
+                      <div className="flex flex-wrap items-center gap-x-3 sm:gap-x-6 gap-y-1.5 mt-2 sm:mt-3 text-xs sm:text-sm lg:text-base text-slate-500 font-medium">
+                        {displayDate && (
+                          <span className="flex items-center gap-1.5 sm:gap-2 text-slate-600">
+                            <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-5 lg:h-5 text-slate-400 shrink-0" />
+                            <span>{displayDate}</span>
+                          </span>
+                        )}
+                        {item.customer && (
+                          <span className="flex items-center gap-1.5 sm:gap-2 truncate max-w-[200px] sm:max-w-none">
+                            <User className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-5 lg:h-5 text-slate-400 shrink-0" />
+                            <span className="text-slate-400">ลูกค้า:</span>
+                            <strong className="text-slate-700 font-bold truncate">{item.customer}</strong>
+                          </span>
+                        )}
+                        {item.artist && (
+                          <span className="flex items-center gap-1.5 sm:gap-2 truncate max-w-[200px] sm:max-w-none">
+                            <Mic className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-5 lg:h-5 text-slate-400 shrink-0" />
+                            <span className="text-slate-400">ศิลปิน:</span>
+                            <strong className="text-slate-700 font-bold truncate">{item.artist}</strong>
+                          </span>
+                        )}
+                      </div>
+
+                      {/* --- ROW 3: Financial 4-Step Metric Strip (The Financial Equation: Revenue -> Support -> Expenses = Profit) --- */}
+                      <div className="mt-3.5 sm:mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 lg:gap-3.5 text-left">
+                        {/* 1. รายรับ (Quotation) */}
+                        <div className="bg-slate-50/80 p-3 sm:p-3.5 lg:p-4 rounded-xl sm:rounded-2xl border border-slate-100 flex flex-col justify-between">
+                          <span className="text-xs sm:text-sm lg:text-base font-bold text-slate-500 block truncate">
+                            1. รายรับ (ค่าจ้าง)
+                          </span>
+                          <span className="text-base sm:text-lg md:text-xl xl:text-2xl font-black text-slate-900 tracking-tight tabular-nums mt-1 sm:mt-1.5">
+                            ฿{formatCurrency(qTotal)}
+                          </span>
+                          <span className="text-[11px] sm:text-xs lg:text-sm text-slate-400 font-medium truncate mt-1">
+                            {hasQuotation ? `${item.quotationItems.length} รายการ` : 'ค่าจ้างรวม'}
+                          </span>
+                        </div>
+
+                        {/* 2. เงินส่งต่อศิลปิน (Support) */}
+                        <div className="bg-indigo-50/40 p-3 sm:p-3.5 lg:p-4 rounded-xl sm:rounded-2xl border border-indigo-100/70 flex flex-col justify-between">
+                          <span className="text-xs sm:text-sm lg:text-base font-bold text-indigo-700 block truncate">
+                            2. ส่งต่อศิลปิน
+                          </span>
+                          <span className="text-base sm:text-lg md:text-xl xl:text-2xl font-black text-indigo-700 tracking-tight tabular-nums mt-1 sm:mt-1.5">
+                            {sTotal > 0 ? `฿${formatCurrency(sTotal)}` : '-'}
+                          </span>
+                          <span className="text-[11px] sm:text-xs lg:text-sm text-indigo-400 font-medium truncate mt-1">
+                            {sTotal > 0 ? `${item.customerSupport?.length || 0} รายการ` : 'ไม่มียอดส่งต่อ'}
+                          </span>
+                        </div>
+
+                        {/* 3. รายจ่ายจริง (Expenses) */}
+                        <div className="bg-rose-50/40 p-3 sm:p-3.5 lg:p-4 rounded-xl sm:rounded-2xl border border-rose-100/70 flex flex-col justify-between">
+                          <span className="text-xs sm:text-sm lg:text-base font-bold text-rose-700 block truncate">
+                            3. รายจ่ายจริง
+                          </span>
+                          <span className="text-base sm:text-lg md:text-xl xl:text-2xl font-black text-rose-600 tracking-tight tabular-nums mt-1 sm:mt-1.5">
+                            {eTotal > 0 ? `฿${formatCurrency(eTotal)}` : '-'}
+                          </span>
+                          <span className="text-[11px] sm:text-xs lg:text-sm text-rose-400 font-medium truncate mt-1">
+                            {eTotal > 0 ? `${item.expenses?.length || 0} รายการ` : 'ไม่มีต้นทุนเพิ่ม'}
+                          </span>
+                        </div>
+
+                        {/* 4. คงเหลือสุทธิ (Net Margin / Hero Pill) */}
+                        <div className={`p-3 sm:p-3.5 lg:p-4 rounded-xl sm:rounded-2xl border flex flex-col justify-between ${
+                          profit >= 0
+                            ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900 shadow-xs'
+                            : 'bg-rose-50/80 border-rose-200 text-rose-900 shadow-xs'
+                        }`}>
+                          <span className={`text-xs sm:text-sm lg:text-base font-bold block truncate ${
+                            profit >= 0 ? 'text-emerald-800' : 'text-rose-800'
+                          }`}>
+                            4. กำไรสุทธิ
+                          </span>
+                          <span className={`text-base sm:text-lg md:text-xl xl:text-2xl font-black tracking-tight tabular-nums mt-1 sm:mt-1.5 ${
+                            profit >= 0 ? 'text-emerald-700' : 'text-rose-600'
+                          }`}>
+                            {profit >= 0 ? '+' : ''}฿{formatCurrency(profit)}
+                          </span>
+                          <span className={`text-[11px] sm:text-xs lg:text-sm font-semibold truncate mt-1 ${
+                            profit >= 0 ? 'text-emerald-600' : 'text-rose-500'
+                          }`}>
+                            {qTotal > 0 ? `Margin ${((profit / qTotal) * 100).toFixed(0)}%` : '-'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* --- ROW 4: Full-width Clickable Toggle Accordion Bar --- */}
+                      <button
+                        onClick={() => toggleRowExpand(item.id)}
+                        className="w-full mt-3 sm:mt-5 pt-3 sm:pt-4 border-t border-slate-100 flex items-center justify-between text-xs sm:text-sm lg:text-base font-bold text-slate-500 hover:text-indigo-600 transition group select-none cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span>{isExpanded ? 'ซ่อนรายละเอียดรายการย่อย' : 'ดูแจกแจงรายการย่อย'}</span>
+                          <span className="text-[11px] sm:text-xs lg:text-sm px-2.5 py-0.5 bg-slate-100 text-slate-600 rounded-md group-hover:bg-indigo-50 group-hover:text-indigo-600 font-semibold">
+                            {(item.quotationItems?.length || 0) + (item.customerSupport?.length || 0) + (item.expenses?.length || 0)} รายการ
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-slate-400 group-hover:text-indigo-600 shrink-0 font-medium">
+                          <span className="text-xs sm:text-sm hidden sm:inline">{isExpanded ? 'ย่อ' : 'ขยาย'}</span>
+                          {isExpanded ? <ChevronUp className="w-4 h-4 sm:w-5 sm:h-5" /> : <ChevronDown className="w-4 h-4 sm:w-5 sm:h-5" />}
+                        </div>
+                      </button>
+
+                      {/* --- ROW 5: Detailed Breakdown Drawer (When Expanded) --- */}
                       {isExpanded && (
-                        <div className="mt-4 pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs animate-in fade-in duration-200">
-                          {/* Quotation breakdown */}
-                          <div className="bg-emerald-50/60 p-3 rounded-xl border border-emerald-100">
-                            <p className="font-bold text-emerald-800 mb-1.5 flex justify-between">
-                              <span>รายการเสนอราคา</span>
-                              <span>฿{formatCurrency(qTotal)}</span>
-                            </p>
-                            <div className="space-y-1">
-                              {hasQuotation ? item.quotationItems.map((q, idx) => (
-                                <div key={idx} className="flex justify-between text-slate-600">
-                                  <span>- {q.detail || q.category} ({formatItemDate(q.date)})</span>
-                                  <span className="font-semibold">{formatCurrency(q.price)}</span>
-                                </div>
-                              )) : <p className="text-slate-400">-</p>}
+                        <div className="mt-3 sm:mt-5 pt-3 sm:pt-5 border-t border-slate-100 grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 lg:gap-5 animate-in fade-in duration-200">
+                          {/* 1. Quotation breakdown */}
+                          <div className="bg-slate-50/90 p-3.5 sm:p-5 rounded-xl sm:rounded-2xl border border-slate-200/70 flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-200 text-emerald-800 font-bold text-xs sm:text-sm lg:text-base">
+                                <span className="flex items-center gap-2">
+                                  <FileText className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-emerald-600 shrink-0" />
+                                  <span>รายการเสนอราคา</span>
+                                </span>
+                                <span className="tabular-nums font-black text-emerald-700 text-sm sm:text-base lg:text-lg">฿{formatCurrency(qTotal)}</span>
+                              </div>
+                              <div className="space-y-2">
+                                {hasQuotation ? (
+                                  item.quotationItems.map((q, idx) => (
+                                    <div key={idx} className="flex items-start justify-between gap-2.5 text-slate-600 text-xs sm:text-sm pb-1.5 border-b border-slate-100 last:border-b-0">
+                                      <div className="truncate flex-1">
+                                        <span className="font-semibold text-slate-700 block">{q.detail || 'รายการงาน'}</span>
+                                        <div className="flex items-center gap-2 text-[11px] sm:text-xs text-slate-400 mt-0.5">
+                                          {q.category && <span>({q.category})</span>}
+                                          {q.date && <span>{formatItemDate(q.date)}</span>}
+                                        </div>
+                                      </div>
+                                      <span className="font-bold text-slate-800 tabular-nums shrink-0 text-xs sm:text-sm lg:text-base">฿{formatCurrency(q.price)}</span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <p className="text-xs sm:text-sm text-slate-400 italic">ค่าจ้าง/บริการเหมา ฿{formatCurrency(qTotal)}</p>
+                                )}
+                              </div>
                             </div>
                           </div>
 
-                          {/* Support breakdown */}
-                          <div className="bg-indigo-50/60 p-3 rounded-xl border border-indigo-100">
-                            <p className="font-bold text-indigo-800 mb-1.5 flex justify-between">
-                              <span>เงินสนับสนุนศิลปิน</span>
-                              <span>฿{formatCurrency(sTotal)}</span>
-                            </p>
-                            <div className="space-y-1">
-                              {hasSupport && sTotal > 0 ? item.customerSupport.map((s, idx) => (
-                                <div key={idx} className="flex justify-between text-slate-600">
-                                  <span>- {s.denomination}บ. x {s.quantity} ({formatItemDate(s.date)})</span>
-                                  <span className="font-semibold">{formatCurrency(s.price)}</span>
-                                </div>
-                              )) : <p className="text-slate-400">-</p>}
+                          {/* 2. Support breakdown */}
+                          <div className="bg-indigo-50/50 p-3.5 sm:p-5 rounded-xl sm:rounded-2xl border border-indigo-100 flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-indigo-100 text-indigo-900 font-bold text-xs sm:text-sm lg:text-base">
+                                <span className="flex items-center gap-2">
+                                  <Gift className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-indigo-600 shrink-0" />
+                                  <span>เงินส่งต่อศิลปิน</span>
+                                </span>
+                                <span className="tabular-nums font-black text-indigo-700 text-sm sm:text-base lg:text-lg">{sTotal > 0 ? `฿${formatCurrency(sTotal)}` : '-'}</span>
+                              </div>
+                              <div className="space-y-2">
+                                {hasSupport && sTotal > 0 ? (
+                                  item.customerSupport.map((s, idx) => {
+                                    const denomText = s.denomination >= 20 ? `แบงค์ ${s.denomination}บ.` : `เหรียญ ${s.denomination}บ.`;
+                                    return (
+                                      <div key={idx} className="flex items-start justify-between gap-2.5 text-slate-600 text-xs sm:text-sm pb-1.5 border-b border-indigo-100/50 last:border-b-0">
+                                        <div className="truncate flex-1">
+                                          <span className="font-semibold text-slate-700 block">{denomText} x {s.quantity}</span>
+                                          <div className="flex items-center gap-2 text-[11px] sm:text-xs text-slate-400 mt-0.5">
+                                            {s.detail && <span>({s.detail})</span>}
+                                            {s.date && <span>{formatItemDate(s.date)}</span>}
+                                          </div>
+                                        </div>
+                                        <span className="font-bold text-indigo-700 tabular-nums shrink-0 text-xs sm:text-sm lg:text-base">฿{formatCurrency(s.price)}</span>
+                                      </div>
+                                    );
+                                  })
+                                ) : (
+                                  <p className="text-xs sm:text-sm text-slate-400 italic">ไม่มีรายการส่งต่อศิลปิน</p>
+                                )}
+                              </div>
                             </div>
                           </div>
 
-                          {/* Expenses breakdown */}
-                          <div className="bg-rose-50/60 p-3 rounded-xl border border-rose-100">
-                            <p className="font-bold text-rose-800 mb-1.5 flex justify-between">
-                              <span>รายจ่ายจริง</span>
-                              <span>฿{formatCurrency(eTotal)}</span>
-                            </p>
-                            <div className="space-y-1">
-                              {hasExpenses && eTotal > 0 ? item.expenses.map((e, idx) => (
-                                <div key={idx} className="flex justify-between text-slate-600">
-                                  <span>- {e.detail || e.category} ({formatItemDate(e.date)})</span>
-                                  <span className="font-semibold">{formatCurrency(e.price)}</span>
-                                </div>
-                              )) : <p className="text-slate-400">-</p>}
+                          {/* 3. Expenses breakdown */}
+                          <div className="bg-rose-50/50 p-3.5 sm:p-5 rounded-xl sm:rounded-2xl border border-rose-100 flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-rose-100 text-rose-900 font-bold text-xs sm:text-sm lg:text-base">
+                                <span className="flex items-center gap-2">
+                                  <TrendingDown className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-rose-600 shrink-0" />
+                                  <span>รายจ่ายจริง (ต้นทุน)</span>
+                                </span>
+                                <span className="tabular-nums font-black text-rose-700 text-sm sm:text-base lg:text-lg">{eTotal > 0 ? `฿${formatCurrency(eTotal)}` : '-'}</span>
+                              </div>
+                              <div className="space-y-2">
+                                {hasExpenses && eTotal > 0 ? (
+                                  item.expenses.map((e, idx) => (
+                                    <div key={idx} className="flex items-start justify-between gap-2.5 text-slate-600 text-xs sm:text-sm pb-1.5 border-b border-rose-100/50 last:border-b-0">
+                                      <div className="truncate flex-1">
+                                        <span className="font-semibold text-slate-700 block">{e.detail || 'ค่าใช้จ่าย'}</span>
+                                        <div className="flex items-center gap-2 text-[11px] sm:text-xs text-slate-400 mt-0.5">
+                                          {e.category && <span>({e.category})</span>}
+                                          {e.quantity > 1 && <span>จำนวน: {e.quantity}</span>}
+                                          {e.date && <span>{formatItemDate(e.date)}</span>}
+                                        </div>
+                                      </div>
+                                      <span className="font-bold text-rose-600 tabular-nums shrink-0 text-xs sm:text-sm lg:text-base">฿{formatCurrency(e.price)}</span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <p className="text-xs sm:text-sm text-slate-400 italic">ไม่มีรายการรายจ่ายเพิ่มเติม</p>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </div>
