@@ -1533,57 +1533,103 @@ export default function FinanceView({
       </div>
 
       {/* =========================================================================
-          FINANCIAL KPI CARDS (Sleek, Balanced, No Fluff)
+          FINANCIAL KPI CARDS (Adaptive, Balanced, Fully Responsive)
          ========================================================================= */}
-      <div className="no-print grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
-        {/* Card 1: รายรับรวม */}
-        <div className="bg-white p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)] hover:shadow-md transition flex flex-col justify-between group">
-          <div className="flex items-center justify-between mb-2 sm:mb-3">
-            <span className="text-xs font-bold text-slate-500">รายรับรวม</span>
-            <div className="p-1.5 sm:p-2 bg-emerald-50 text-emerald-600 rounded-xl group-hover:scale-110 transition-transform">
-              <DollarSign className="w-4 h-4 sm:w-5 sm:h-5" />
-            </div>
-          </div>
-          <p className="text-base sm:text-2xl font-black text-slate-900 tracking-tight truncate tabular-nums">
-            ฿{formatCurrency(financialSummary.totalRevenue)}
-          </p>
-          <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-50 text-[11px] text-slate-500 font-medium">
-            <span className="truncate">ค่าจ้าง: ฿{formatCurrency(financialSummary.totalQuotation)}</span>
-            <span className="text-indigo-600 font-bold shrink-0 ml-1">{financialSummary.projectCount} งาน</span>
-          </div>
-        </div>
-
-        {/* Card 2: เงินสนับสนุนศิลปิน */}
-        <div className="bg-white p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)] hover:shadow-md transition flex flex-col justify-between group">
-          <div className="flex items-center justify-between mb-2 sm:mb-3">
-            <span className="text-xs font-bold text-slate-500">เงินสนับสนุน</span>
+      <div className="no-print grid grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3.5 lg:gap-4">
+        {/* Card 1: เงินสนับสนุนศิลปิน */}
+        <div className="bg-white p-3 sm:p-4 lg:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)] hover:shadow-md transition flex flex-col justify-between group">
+          <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+            <span className="text-xs sm:text-sm font-bold text-slate-500">เงินสนับสนุน</span>
             <div className="p-1.5 sm:p-2 bg-indigo-50 text-indigo-600 rounded-xl group-hover:scale-110 transition-transform">
               <Gift className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
           </div>
-          <p className="text-base sm:text-2xl font-black text-indigo-700 tracking-tight truncate tabular-nums">
-            ฿{formatCurrency(financialSummary.totalSupport)}
-          </p>
-          <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-50 text-[11px] text-slate-500 font-medium">
-            <span className="text-indigo-600 font-semibold truncate">ยอดส่งต่อศิลปิน</span>
-            <span className="text-slate-400 font-normal shrink-0">ไม่หักกำไร</span>
+          <div className="my-1.5 sm:my-2 flex flex-col justify-center">
+            {(() => {
+              const formatted = formatCurrency(financialSummary.totalSupport);
+              const len = formatted.length;
+              const sizeClass = len >= 13
+                ? 'text-base sm:text-xl md:text-base lg:text-xl xl:text-2xl 2xl:text-3xl'
+                : len >= 9
+                  ? 'text-lg sm:text-2xl md:text-lg lg:text-2xl xl:text-3xl 2xl:text-4xl'
+                  : 'text-xl sm:text-3xl md:text-xl lg:text-3xl xl:text-4xl 2xl:text-5xl';
+              return (
+                <div className="flex items-baseline font-black tracking-tight text-indigo-700 truncate tabular-nums">
+                  <span className="text-xs sm:text-sm font-bold opacity-60 mr-0.5 select-none shrink-0">฿</span>
+                  <span className={`${sizeClass} truncate`}>{formatted}</span>
+                </div>
+              );
+            })()}
+          </div>
+          <div className="flex items-center justify-between mt-1.5 pt-2 sm:mt-2 sm:pt-2.5 border-t border-slate-100 text-xs text-slate-500 font-medium">
+            <span className="text-[11px] sm:text-xs text-slate-600 font-medium whitespace-nowrap">ส่งต่อศิลปิน</span>
+            <span className="inline-flex items-center font-medium text-[10px] sm:text-xs text-slate-600 bg-slate-100 px-1.5 sm:px-2 py-0.5 rounded-full shrink-0">
+              ไม่หักกำไร
+            </span>
+          </div>
+        </div>
+
+        {/* Card 2: รายรับรวม */}
+        <div className="bg-white p-3 sm:p-4 lg:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)] hover:shadow-md transition flex flex-col justify-between group">
+          <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+            <span className="text-xs sm:text-sm font-bold text-slate-500">รายรับรวม</span>
+            <div className="p-1.5 sm:p-2 bg-emerald-50 text-emerald-600 rounded-xl group-hover:scale-110 transition-transform">
+              <DollarSign className="w-4 h-4 sm:w-5 sm:h-5" />
+            </div>
+          </div>
+          <div className="my-1.5 sm:my-2 flex flex-col justify-center">
+            {(() => {
+              const formatted = formatCurrency(financialSummary.totalRevenue);
+              const len = formatted.length;
+              const sizeClass = len >= 13
+                ? 'text-base sm:text-xl md:text-base lg:text-xl xl:text-2xl 2xl:text-3xl'
+                : len >= 9
+                  ? 'text-lg sm:text-2xl md:text-lg lg:text-2xl xl:text-3xl 2xl:text-4xl'
+                  : 'text-xl sm:text-3xl md:text-xl lg:text-3xl xl:text-4xl 2xl:text-5xl';
+              return (
+                <div className="flex items-baseline font-black tracking-tight text-slate-900 truncate tabular-nums">
+                  <span className="text-xs sm:text-sm font-bold opacity-60 mr-0.5 select-none shrink-0">฿</span>
+                  <span className={`${sizeClass} truncate`}>{formatted}</span>
+                </div>
+              );
+            })()}
+          </div>
+          <div className="flex items-center justify-between mt-1.5 pt-2 sm:mt-2 sm:pt-2.5 border-t border-slate-100 text-xs text-slate-500 font-medium">
+            <span className="text-[11px] sm:text-xs text-slate-500 font-medium whitespace-nowrap" title={`ยอดจ้างรวม: ฿${formatCurrency(financialSummary.totalQuotation)}`}>ยอดจ้างรวม</span>
+            <span className="inline-flex items-center font-bold text-[11px] sm:text-xs text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100/60 shrink-0">
+              {financialSummary.projectCount} งาน
+            </span>
           </div>
         </div>
 
         {/* Card 3: รายจ่ายจริง (ต้นทุน) */}
-        <div className="bg-white p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)] hover:shadow-md transition flex flex-col justify-between group">
-          <div className="flex items-center justify-between mb-2 sm:mb-3">
-            <span className="text-xs font-bold text-slate-500">รายจ่ายจริง</span>
+        <div className="bg-white p-3 sm:p-4 lg:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)] hover:shadow-md transition flex flex-col justify-between group">
+          <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+            <span className="text-xs sm:text-sm font-bold text-slate-500">รายจ่ายจริง</span>
             <div className="p-1.5 sm:p-2 bg-rose-50 text-rose-600 rounded-xl group-hover:scale-110 transition-transform">
               <TrendingDown className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
           </div>
-          <p className="text-base sm:text-2xl font-black text-rose-600 tracking-tight truncate tabular-nums">
-            ฿{formatCurrency(financialSummary.totalExpenses)}
-          </p>
-          <div className="mt-2 pt-2 border-t border-slate-50 text-[11px] text-slate-500 font-medium flex justify-between items-center">
-            <span>ต้นทุนต่องาน:</span>
-            <span className="text-rose-600 font-bold shrink-0">
+          <div className="my-1.5 sm:my-2 flex flex-col justify-center">
+            {(() => {
+              const formatted = formatCurrency(financialSummary.totalExpenses);
+              const len = formatted.length;
+              const sizeClass = len >= 13
+                ? 'text-base sm:text-xl md:text-base lg:text-xl xl:text-2xl 2xl:text-3xl'
+                : len >= 9
+                  ? 'text-lg sm:text-2xl md:text-lg lg:text-2xl xl:text-3xl 2xl:text-4xl'
+                  : 'text-xl sm:text-3xl md:text-xl lg:text-3xl xl:text-4xl 2xl:text-5xl';
+              return (
+                <div className="flex items-baseline font-black tracking-tight text-rose-600 truncate tabular-nums">
+                  <span className="text-xs sm:text-sm font-bold opacity-60 mr-0.5 select-none shrink-0">฿</span>
+                  <span className={`${sizeClass} truncate`}>{formatted}</span>
+                </div>
+              );
+            })()}
+          </div>
+          <div className="flex items-center justify-between mt-1.5 pt-2 sm:mt-2 sm:pt-2.5 border-t border-slate-100 text-xs text-slate-500 font-medium">
+            <span className="text-[11px] sm:text-xs text-slate-500 font-medium whitespace-nowrap">ต้นทุนต่องาน</span>
+            <span className="inline-flex items-center font-bold text-[11px] sm:text-xs text-rose-700 bg-rose-50 px-1.5 sm:px-2 py-0.5 rounded-full border border-rose-100/60 shrink-0">
               {financialSummary.totalQuotation > 0
                 ? `${((financialSummary.totalExpenses / financialSummary.totalQuotation) * 100).toFixed(1)}%`
                 : '0%'}
@@ -1592,19 +1638,37 @@ export default function FinanceView({
         </div>
 
         {/* Card 4: กำไรคงเหลือสุทธิ (Hero Card) */}
-        <div className="bg-gradient-to-br from-white via-white to-emerald-50/40 p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-emerald-200/80 shadow-[0_2px_12px_rgb(16,185,129,0.08)] hover:shadow-md transition flex flex-col justify-between group">
-          <div className="flex items-center justify-between mb-2 sm:mb-3">
-            <span className="text-xs font-bold text-emerald-800">คงเหลือสุทธิ (กำไร)</span>
-            <div className="p-1.5 sm:p-2 bg-emerald-600 text-white rounded-xl group-hover:scale-110 transition-transform shadow-sm">
+        <div className="bg-gradient-to-br from-white via-white to-emerald-50/50 p-3 sm:p-4 lg:p-5 rounded-2xl sm:rounded-3xl border border-emerald-200/80 shadow-[0_2px_12px_rgb(16,185,129,0.08)] hover:shadow-md transition flex flex-col justify-between group">
+          <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+            <span className="text-xs sm:text-sm font-bold text-emerald-800">คงเหลือสุทธิ (กำไร)</span>
+            <div className="p-1.5 sm:p-2 bg-emerald-600 text-white rounded-xl group-hover:scale-110 transition-transform shadow-xs">
               <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
           </div>
-          <p className="text-base sm:text-2xl font-black text-emerald-700 tracking-tight truncate tabular-nums">
-            ฿{formatCurrency(financialSummary.totalProfit)}
-          </p>
-          <div className="mt-2 pt-2 border-t border-emerald-100/60 text-[11px] text-emerald-800 font-semibold flex justify-between items-center">
-            <span>Margin สุทธิ:</span>
-            <span className="font-bold text-emerald-700 bg-emerald-100/60 px-1.5 py-0.5 rounded-md">{financialSummary.netMarginPercent}%</span>
+          <div className="my-1.5 sm:my-2 flex flex-col justify-center">
+            {(() => {
+              const formatted = formatCurrency(financialSummary.totalProfit);
+              const len = formatted.length;
+              const sizeClass = len >= 13
+                ? 'text-base sm:text-xl md:text-base lg:text-xl xl:text-2xl 2xl:text-3xl'
+                : len >= 9
+                  ? 'text-lg sm:text-2xl md:text-lg lg:text-2xl xl:text-3xl 2xl:text-4xl'
+                  : 'text-xl sm:text-3xl md:text-xl lg:text-3xl xl:text-4xl 2xl:text-5xl';
+              const colorClass = financialSummary.totalProfit >= 0 ? 'text-emerald-700' : 'text-rose-600';
+              return (
+                <div className={`flex items-baseline font-black tracking-tight ${colorClass} truncate tabular-nums`}>
+                  <span className="text-xs sm:text-sm font-bold opacity-60 mr-0.5 select-none shrink-0">฿</span>
+                  <span className={`${sizeClass} truncate`}>{formatted}</span>
+                </div>
+              );
+            })()}
+          </div>
+          <div className="flex items-center justify-between mt-1.5 pt-2 sm:mt-2 sm:pt-2.5 border-t border-emerald-100/80 text-xs font-semibold text-emerald-800">
+            <span className="text-[11px] sm:text-xs text-emerald-800 font-bold whitespace-nowrap">Margin สุทธิ</span>
+            <span className="inline-flex items-center gap-1 font-bold text-[11px] sm:text-xs text-emerald-800 bg-emerald-100/80 px-1.5 sm:px-2 py-0.5 rounded-full border border-emerald-200/80 shrink-0">
+              <TrendingUp className="w-3 h-3 text-emerald-600 shrink-0" />
+              <span>{financialSummary.netMarginPercent}%</span>
+            </span>
           </div>
         </div>
       </div>
