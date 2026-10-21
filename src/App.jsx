@@ -73,6 +73,7 @@ import {
   LogIn,
   UserPlus,
   Image as ImageIcon,
+  Receipt,
   UploadCloud,
   HardDrive,
   Maximize2,
@@ -355,6 +356,25 @@ const App = () => {
   // Drive Settings
   const [driveFolderId, setDriveFolderId] = useState('');
   const [assetsDriveFolderId, setAssetsDriveFolderId] = useState(''); 
+  const [driveFolders, setDriveFolders] = useState(() => {
+    try {
+      const saved = localStorage.getItem('nexus_drive_folders');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [
+      { id: 'f_ref', name: 'รูปภาพอ้างอิงงาน', folderId: '', type: 'reference' },
+      { id: 'f_slips', name: 'สลิปโอนเงินลูกค้า', folderId: '', type: 'slips' },
+      { id: 'f_assets', name: 'ไฟล์ตกแต่งและ Assets', folderId: '', type: 'assets' }
+    ];
+  });
+
+  const getFolderIdByType = (type) => {
+    const found = driveFolders.find(f => f.type === type && f.folderId && f.folderId.trim() !== '');
+    if (found) return found.folderId.trim();
+    if (type === 'reference') return driveFolderId;
+    if (type === 'assets') return assetsDriveFolderId;
+    return driveFolderId || '';
+  }; 
   
   // Chatbot Tokens
   const [lineBotToken, setLineBotToken] = useState('');
@@ -441,6 +461,7 @@ const App = () => {
   const [locationName, setLocationName] = useState('');
   const [mapLink, setMapLink] = useState('');
   const [uploadedImage, setUploadedImage] = useState(null);
+  const [uploadedSlips, setUploadedSlips] = useState([]);
   const [note, setNote] = useState('');
   const [wage, setWage] = useState(0);
   const [deliveryFee, setDeliveryFee] = useState(0);
@@ -943,6 +964,26 @@ const App = () => {
 
                 if (data.drive_folder_id !== undefined) setDriveFolderId(data.drive_folder_id);
                 if (data.assets_drive_folder_id !== undefined) setAssetsDriveFolderId(data.assets_drive_folder_id);
+                if (data.drive_folders) {
+                  let folders = data.drive_folders;
+                  if (typeof folders === 'string') {
+                    try { folders = JSON.parse(folders); } catch (e) {}
+                  }
+                  if (Array.isArray(folders) && folders.length > 0) {
+                    setDriveFolders(folders);
+                    localStorage.setItem('nexus_drive_folders', JSON.stringify(folders));
+                  }
+                } else if (data.drive_folder_id || data.assets_drive_folder_id) {
+                  setDriveFolders(prev => prev.map(f => {
+                    if (f.type === 'reference' && data.drive_folder_id && !f.folderId) {
+                      return { ...f, folderId: data.drive_folder_id };
+                    }
+                    if (f.type === 'assets' && data.assets_drive_folder_id && !f.folderId) {
+                      return { ...f, folderId: data.assets_drive_folder_id };
+                    }
+                    return f;
+                  }));
+                }
                 
                 // Load Chatbot Tokens from settings
                 if (data.line_bot_token !== undefined) setLineBotToken(data.line_bot_token);
@@ -1163,6 +1204,10 @@ const App = () => {
           if (partialData.deal_statuses) localStorage.setItem('nexus_deal_statuses', JSON.stringify(partialData.deal_statuses));
           if (partialData.transport_statuses) localStorage.setItem('nexus_transport_statuses', JSON.stringify(partialData.transport_statuses));
 
+          if (partialData.drive_folders) {
+              setDriveFolders(partialData.drive_folders);
+              localStorage.setItem('nexus_drive_folders', JSON.stringify(partialData.drive_folders));
+          }
           if (partialData.drive_folder_id) {
               setDriveFolderId(partialData.drive_folder_id);
           }
@@ -1743,6 +1788,48 @@ const App = () => {
       e.preventDefault();
   };
 
+  const handleSlipUpload = async (files) => {
+    if (!files || files.length === 0) return;
+    setIsSaving(true);
+    try {
+      const fileList = Array.from(files);
+      const newSlips = [];
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        if (!file.type || !file.type.startsWith('image/')) continue;
+        let base64Data = '';
+        if (file.size > 2 * 1024 * 1024) {
+          base64Data = await compressImage(file);
+        } else {
+          base64Data = await toBase64(file);
+        }
+        newSlips.push({
+          id: `slip_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
+          url: base64Data,
+          name: file.name,
+          createdAt: new Date().toISOString()
+        });
+      }
+      if (newSlips.length > 0) {
+        setUploadedSlips(prev => [...prev, ...newSlips]);
+        showToast(`เพิ่มสลิป ${newSlips.length} รูปเรียบร้อย`, 'success');
+      }
+    } catch (err) {
+      console.error("Slip upload error:", err);
+      showToast('เกิดข้อผิดพลาดในการอัปโหลดสลิป', 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleRemoveSlip = (slipKey) => {
+    setUploadedSlips(prev => prev.filter(s => {
+      const id = typeof s === 'object' ? s.id : s;
+      const url = typeof s === 'object' ? s.url : s;
+      return id !== slipKey && url !== slipKey;
+    }));
+  };
+
   const filteredAndSortedActivities = useMemo(() => {
     let items = allActivities.filter(item => {
       const searchLower = searchTerm.toLowerCase();
@@ -2088,6 +2175,7 @@ const App = () => {
       setLocationName(activity.location || '');
       setMapLink(activity.mapLink || '');
       setUploadedImage(activity.image || null); 
+      setUploadedSlips(Array.isArray(activity.slips) ? activity.slips : (activity.slip ? [activity.slip] : [])); 
       
       if (activity.quotationItems && activity.quotationItems.length > 0) {
           // [MODIFIED] Map existing items to include quantity, unitPrice, and item date
@@ -2177,6 +2265,7 @@ const App = () => {
       setLocationName('');
       setMapLink('');
       setUploadedImage(null);
+      setUploadedSlips([]);
       setNote('');
       setWage(0);
       setDeliveryFee(0); 
@@ -2292,11 +2381,54 @@ const App = () => {
       recipientPhone: recipientPhone,
       location: locationName,
       mapLink: mapLink,
-      image: uploadedImage 
+      image: uploadedImage,
+      slips: uploadedSlips
     };
 
     if (GOOGLE_SCRIPT_URL) {
       try {
+        // Upload any base64 slips to Google Drive slips folder if configured
+        const slipFolderId = getFolderIdByType('slips');
+        let finalSlips = Array.isArray(uploadedSlips) ? [...uploadedSlips] : [];
+        if (slipFolderId && finalSlips.length > 0) {
+          for (let i = 0; i < finalSlips.length; i++) {
+            const itemSlip = finalSlips[i];
+            const slipUrl = typeof itemSlip === 'object' ? itemSlip.url : itemSlip;
+            if (typeof slipUrl === 'string' && slipUrl.startsWith('data:image')) {
+              try {
+                const mimeType = slipUrl.split(',')[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+                const rawBase64 = slipUrl.substring(slipUrl.indexOf(',') + 1);
+                const fileName = `slip_${activityData.id}_${Date.now()}_${i + 1}.png`;
+                const uploadRes = await fetch(GOOGLE_SCRIPT_URL, {
+                  method: 'POST',
+                  headers: { "Content-Type": "text/plain;charset=utf-8" },
+                  body: JSON.stringify({
+                    action: 'uploadAsset',
+                    data: {
+                      folderId: slipFolderId,
+                      fileData: rawBase64,
+                      fileName: fileName,
+                      mimeType: mimeType
+                    }
+                  })
+                });
+                const resJson = await uploadRes.json();
+                if (resJson.status === 'success' && resJson.url) {
+                  const fileLink = resJson.fileId 
+                    ? `https://drive.google.com/uc?export=view&id=${resJson.fileId}`
+                    : resJson.url;
+                  finalSlips[i] = typeof itemSlip === 'object' 
+                    ? { ...itemSlip, url: fileLink, fileId: resJson.fileId }
+                    : fileLink;
+                }
+              } catch (slipErr) {
+                console.warn("Upload slip to Drive error:", slipErr);
+              }
+            }
+          }
+          activityData.slips = finalSlips;
+        }
+
         const response = await fetch(GOOGLE_SCRIPT_URL, {
           method: 'POST',
           headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
@@ -3317,6 +3449,8 @@ const App = () => {
             handleAddUser={handleAddUser}
             driveFolderId={driveFolderId}
             setDriveFolderId={setDriveFolderId}
+            driveFolders={driveFolders}
+            setDriveFolders={setDriveFolders}
             saveSystemSettings={saveSystemSettings}
             assetsDriveFolderId={assetsDriveFolderId}
             setAssetsDriveFolderId={setAssetsDriveFolderId}
@@ -4448,6 +4582,129 @@ const App = () => {
                                    </div>
                                 )
                              )}
+                          </div>
+
+                          {/* Payment Slips Upload Area */}
+                          <div className="space-y-2 pt-3 border-t border-slate-100">
+                            <div className="flex items-center justify-between">
+                              <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-1.5">
+                                <Receipt className="w-4 h-4 text-amber-500" />
+                                <span>สลิปโอนเงิน (หลักฐานชำระเงิน)</span>
+                                {uploadedSlips.length > 0 && (
+                                  <span className="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full font-bold">
+                                    {uploadedSlips.length} รูป
+                                  </span>
+                                )}
+                              </label>
+                              {!viewOnlyMode && (
+                                <button
+                                  type="button"
+                                  onClick={() => document.getElementById('slip-multi-upload').click()}
+                                  className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  เพิ่มสลิป
+                                </button>
+                              )}
+                            </div>
+
+                            <input
+                              type="file"
+                              id="slip-multi-upload"
+                              className="hidden"
+                              accept="image/*"
+                              multiple
+                              onChange={(e) => {
+                                if (e.target.files && e.target.files.length > 0) {
+                                  handleSlipUpload(e.target.files);
+                                  e.target.value = '';
+                                }
+                              }}
+                            />
+
+                            {/* Slips Preview Grid or Upload Prompt */}
+                            {uploadedSlips.length > 0 ? (
+                              <div className="space-y-2">
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                                  {uploadedSlips.map((slip, idx) => {
+                                    const slipSrc = typeof slip === 'object' ? slip.url : slip;
+                                    const slipKey = typeof slip === 'object' ? (slip.id || idx) : idx;
+                                    return (
+                                      <div
+                                        key={slipKey}
+                                        className="relative group rounded-xl overflow-hidden border border-slate-200 bg-slate-50 aspect-[3/4] cursor-pointer shadow-xs hover:shadow-md transition"
+                                        onClick={() => setPreviewImage(slipSrc)}
+                                      >
+                                        <img
+                                          src={processImageUrl(slipSrc)}
+                                          alt={`สลิป ${idx + 1}`}
+                                          className="w-full h-full object-cover"
+                                          referrerPolicy="no-referrer"
+                                          onError={(e) => {
+                                            e.target.onerror = null;
+                                            e.target.src = "https://placehold.co/300x400?text=Slip+Error";
+                                          }}
+                                        />
+                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5">
+                                          <Maximize2 className="w-5 h-5 text-white" />
+                                        </div>
+                                        {!viewOnlyMode && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleRemoveSlip(slipKey);
+                                            }}
+                                            className="absolute top-1.5 right-1.5 p-1 bg-white/90 backdrop-blur-sm text-rose-500 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition shadow-sm z-10"
+                                            title="ลบสลิป"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        )}
+                                        <div className="absolute bottom-1 left-1.5 px-1.5 py-0.5 bg-black/60 backdrop-blur-xs rounded text-[10px] text-white font-medium">
+                                          ใบที่ {idx + 1}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                  {!viewOnlyMode && (
+                                    <button
+                                      type="button"
+                                      onClick={() => document.getElementById('slip-multi-upload').click()}
+                                      className="border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center aspect-[3/4] text-slate-400 hover:text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50/20 transition group"
+                                    >
+                                      <Plus className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                                      <span className="text-xs font-bold mt-1">เพิ่มอีก</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              !viewOnlyMode ? (
+                                <div
+                                  className="w-full border-2 border-dashed border-slate-200 rounded-2xl p-4 flex flex-col items-center justify-center text-center hover:border-amber-400 hover:bg-amber-50/20 transition-all cursor-pointer group"
+                                  onClick={() => document.getElementById('slip-multi-upload').click()}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                                      handleSlipUpload(e.dataTransfer.files);
+                                    }
+                                  }}
+                                  onDragOver={(e) => e.preventDefault()}
+                                >
+                                  <div className="p-2.5 bg-amber-50 text-amber-500 rounded-full mb-2 group-hover:scale-110 transition-transform">
+                                    <Receipt className="w-5 h-5" />
+                                  </div>
+                                  <p className="text-sm font-bold text-slate-600">คลิกเพื่ออัพโหลดสลิป หรือลากไฟล์มาวาง</p>
+                                  <p className="text-xs text-slate-400 mt-0.5">เลือกได้หลายรูปพร้อมกัน (JPG, PNG)</p>
+                                </div>
+                              ) : (
+                                <div className="w-full px-4 py-6 bg-slate-50 border border-slate-200 rounded-xl text-slate-400 italic text-sm flex flex-col items-center gap-1.5">
+                                  <Receipt className="w-6 h-6 opacity-40" />
+                                  <span>ไม่มีสลิปโอนเงิน</span>
+                                </div>
+                              )
+                            )}
                           </div>
 
                         </div>

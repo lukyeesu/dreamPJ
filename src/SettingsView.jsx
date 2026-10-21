@@ -8,6 +8,9 @@ import {
   Users,
   UserPlus,
   HardDrive,
+  Folder,
+  FolderPlus,
+  Receipt,
   Save,
   Bot,
   MessageCircle,
@@ -446,6 +449,8 @@ const SettingsView = ({
   handleAddUser,
   driveFolderId,
   setDriveFolderId,
+  driveFolders = [],
+  setDriveFolders,
   saveSystemSettings,
   assetsDriveFolderId,
   setAssetsDriveFolderId,
@@ -733,62 +738,167 @@ const SettingsView = ({
           </div>
         </div>
 
-        {/* Google Drive Settings */}
+        {/* Google Drive Settings (Multi-Folder Management) */}
         <div className="mb-8">
-          <h3 className="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
-            <HardDrive className="w-5 h-5 text-blue-600" />
-            ตั้งค่า Google Drive
-          </h3>
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-            {/* Main Data Folder */}
-            <div className="mb-6">
-              <label className="text-sm font-bold text-slate-700 mb-1 block">
-                โฟลเดอร์เก็บข้อมูลงาน (Work Data)
-              </label>
-              <p className="text-xs text-slate-500 mb-3">
-                ระบุ Folder ID สำหรับเก็บรูปภาพงานและเอกสาร
-              </p>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <input
-                  type="text"
-                  placeholder="Work Data Folder ID (e.g., 1xYz...)"
-                  value={driveFolderId}
-                  onChange={(e) => setDriveFolderId(e.target.value)}
-                  className="w-full sm:flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all min-w-0"
-                />
-                <button
-                  onClick={() => saveSystemSettings('drive_folder_id', driveFolderId)}
-                  className="w-full sm:w-auto px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition flex items-center justify-center gap-2 shrink-0"
-                >
-                  <Save className="w-4 h-4" /> บันทึก
-                </button>
-              </div>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+              <HardDrive className="w-5 h-5 text-blue-600" />
+              ตั้งค่า Google Drive (แยกโฟลเดอร์ตามหมวดหมู่)
+            </h3>
+            <button
+              type="button"
+              onClick={() => {
+                const newId = `folder_${Date.now()}`;
+                const newFolder = {
+                  id: newId,
+                  name: `โฟลเดอร์ใหม่ ${(driveFolders || []).length + 1}`,
+                  folderId: '',
+                  type: 'custom'
+                };
+                if (setDriveFolders) setDriveFolders([...(driveFolders || []), newFolder]);
+              }}
+              className="px-3.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-2xs"
+            >
+              <FolderPlus className="w-4 h-4" />
+              เพิ่มโฟลเดอร์
+            </button>
+          </div>
+
+          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm space-y-4">
+            <p className="text-xs text-slate-500">
+              ระบุ Folder ID จาก Google Drive เพื่อแยกจัดเก็บไฟล์ตามหมวดหมู่ (เช่น สลิปโอนเงิน, รูปภาพงาน, โลโก้/Assets) ทำให้ค้นหาและเป็นระเบียบยิ่งขึ้น
+            </p>
+
+            <div className="space-y-3">
+              {(driveFolders && driveFolders.length > 0 ? driveFolders : [
+                { id: 'f_ref', name: 'รูปภาพอ้างอิงงาน', folderId: driveFolderId || '', type: 'reference' },
+                { id: 'f_slips', name: 'สลิปโอนเงินลูกค้า', folderId: '', type: 'slips' },
+                { id: 'f_assets', name: 'ไฟล์ตกแต่งและ Assets', folderId: assetsDriveFolderId || '', type: 'assets' }
+              ]).map((folder, index) => {
+                const folderType = folder.type || 'custom';
+                const typeConfig = {
+                  slips: { label: 'สลิปโอนเงิน (Payment Slips)', icon: Receipt, color: 'text-amber-600 bg-amber-50 border-amber-200' },
+                  reference: { label: 'รูปภาพอ้างอิงงาน (Reference)', icon: ImageIcon, color: 'text-indigo-600 bg-indigo-50 border-indigo-200' },
+                  assets: { label: 'ไฟล์ตกแต่ง / Assets ร้าน', icon: Palette, color: 'text-blue-600 bg-blue-50 border-blue-200' },
+                  custom: { label: 'กำหนดเอง (Custom)', icon: Folder, color: 'text-emerald-600 bg-emerald-50 border-emerald-200' }
+                }[folderType] || { label: 'กำหนดเอง (Custom)', icon: Folder, color: 'text-emerald-600 bg-emerald-50 border-emerald-200' };
+                const IconComponent = typeConfig.icon;
+
+                return (
+                  <div
+                    key={folder.id || index}
+                    className="p-4 rounded-2xl border border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition space-y-3"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className={`p-1.5 rounded-lg border flex items-center justify-center ${typeConfig.color}`}>
+                          <IconComponent className="w-4 h-4" />
+                        </span>
+                        <input
+                          type="text"
+                          value={folder.name || ''}
+                          onChange={(e) => {
+                            const updated = (driveFolders || []).map(f => f.id === folder.id ? { ...f, name: e.target.value } : f);
+                            if (setDriveFolders) setDriveFolders(updated);
+                          }}
+                          placeholder="ชื่อโฟลเดอร์"
+                          className="font-bold text-sm text-slate-800 bg-transparent border-b border-dashed border-slate-300 focus:border-indigo-500 focus:outline-none px-1 py-0.5"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-auto">
+                        <select
+                          value={folder.type || 'custom'}
+                          onChange={(e) => {
+                            const updated = (driveFolders || []).map(f => f.id === folder.id ? { ...f, type: e.target.value } : f);
+                            if (setDriveFolders) setDriveFolders(updated);
+                          }}
+                          className="px-2.5 py-1 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        >
+                          <option value="slips">สลิปโอนเงิน (Payment Slips)</option>
+                          <option value="reference">รูปภาพอ้างอิงงาน (Reference)</option>
+                          <option value="assets">ไฟล์ตกแต่ง / Assets</option>
+                          <option value="custom">กำหนดเอง (Custom)</option>
+                        </select>
+
+                        {(driveFolders || []).length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = (driveFolders || []).filter(f => f.id !== folder.id);
+                              if (setDriveFolders) setDriveFolders(updated);
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                            title="ลบโฟลเดอร์นี้"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        placeholder="Google Drive Folder ID (e.g., 1xYz...)"
+                        value={folder.folderId || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const updated = (driveFolders || []).map(f => f.id === folder.id ? { ...f, folderId: val } : f);
+                          if (setDriveFolders) setDriveFolders(updated);
+                          if (folder.type === 'reference' && setDriveFolderId) setDriveFolderId(val);
+                          if (folder.type === 'assets' && setAssetsDriveFolderId) setAssetsDriveFolderId(val);
+                        }}
+                        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition min-w-0"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
-            {/* Assets/Media Folder */}
-            <div className="pt-6 border-t border-slate-100">
-              <label className="text-sm font-bold text-slate-700 mb-1 block flex items-center gap-2">
-                โฟลเดอร์เก็บไฟล์ตกแต่ง (Assets & Media)
-                <span className="bg-blue-100 text-blue-600 text-[10px] px-2 py-0.5 rounded-full">New</span>
-              </label>
-              <p className="text-xs text-slate-500 mb-3">
-                ระบุ Folder ID สำหรับเก็บ Logo ร้าน, รูปโปรไฟล์ผู้ใช้ และไฟล์ตกแต่ง UI อื่นๆ (แยกจากข้อมูลงาน)
-              </p>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <input
-                  type="text"
-                  placeholder="Assets Folder ID (e.g., 1xYz...)"
-                  value={assetsDriveFolderId}
-                  onChange={(e) => setAssetsDriveFolderId(e.target.value)}
-                  className="w-full sm:flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all min-w-0"
-                />
-                <button
-                  onClick={() => saveSystemSettings('assets_drive_folder_id', assetsDriveFolderId)}
-                  className="px-6 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition shrink-0"
-                >
-                  บันทึก ID
-                </button>
-              </div>
+            <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const newId = `folder_${Date.now()}`;
+                  const newFolder = {
+                    id: newId,
+                    name: `โฟลเดอร์ใหม่ ${(driveFolders || []).length + 1}`,
+                    folderId: '',
+                    type: 'custom'
+                  };
+                  if (setDriveFolders) setDriveFolders([...(driveFolders || []), newFolder]);
+                }}
+                className="w-full sm:w-auto px-4 py-2 border-2 border-dashed border-slate-200 hover:border-blue-400 hover:bg-blue-50/20 text-slate-600 hover:text-blue-600 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                เพิ่มโฟลเดอร์อีก
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const refFolder = (driveFolders || []).find(f => f.type === 'reference');
+                  const assetsFolder = (driveFolders || []).find(f => f.type === 'assets');
+                  const payload = {
+                    drive_folders: driveFolders
+                  };
+                  if (refFolder && refFolder.folderId) {
+                    payload.drive_folder_id = refFolder.folderId.trim();
+                  }
+                  if (assetsFolder && assetsFolder.folderId) {
+                    payload.assets_drive_folder_id = assetsFolder.folderId.trim();
+                  }
+                  if (saveSystemSettings) {
+                    saveSystemSettings(payload);
+                  }
+                }}
+                className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-sm transition flex items-center justify-center gap-2 text-sm"
+              >
+                <Save className="w-4 h-4" />
+                บันทึกการตั้งค่า Google Drive
+              </button>
             </div>
           </div>
         </div>

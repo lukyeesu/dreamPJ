@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, startTransition } from 'react';
 import {
   DollarSign,
   TrendingUp,
@@ -29,9 +29,12 @@ import {
   ArrowUpDown,
   LayoutList,
   User,
-  Mic
+  Mic,
+  Receipt,
+  Maximize2
 } from 'lucide-react';
 import DateFilterControl from './components/common/DateFilterControl';
+import { processImageUrl } from './utils/formatters';
 
 // --- Helper Functions for Formatting ---
 const formatCurrency = (amount) => {
@@ -90,7 +93,51 @@ export default function FinanceView({
   // --- View Mode State ---
   // 'sheet' = ตารางกำไรขาดทุนแบบสมุดบัญชีตามรูป (Accounting Sheet View)
   // 'dashboard' = แดชบอร์ดภาพรวมพร้อมการ์ดสถิติ (Interactive Dashboard View)
+  // 'slips' = ตารางสลิปโอนเงิน (Slips Table View)
   const [viewMode, setViewMode] = useState('sheet');
+  const [previewSlipImage, setPreviewSlipImage] = useState(null);
+  const [slipsPerRow, setSlipsPerRow] = useState(3); // 3 (ชัดเจน อ่านง่าย) หรือ 4 (กะทัดรัด)
+  const [slipsFilterMode, setSlipsFilterMode] = useState('all'); // 'all' (ทั้งหมด) หรือ 'has_slips' (เฉพาะที่มีสลิป)
+  const [visibleCount, setVisibleCount] = useState(35); // Progressive rendering for smooth 60fps performance
+
+  const handleViewModeChange = (mode) => {
+    startTransition(() => {
+      setViewMode(mode);
+      setVisibleCount(35);
+    });
+  };
+
+  const handleDetailModeChange = (mode) => {
+    startTransition(() => {
+      setTableDetailMode(mode);
+    });
+  };
+
+  const handleMobileLayoutChange = (mode) => {
+    startTransition(() => {
+      setMobileSheetLayout(mode);
+    });
+  };
+
+  const handleSlipsFilterModeChange = (mode) => {
+    startTransition(() => {
+      setSlipsFilterMode(mode);
+      setVisibleCount(35);
+    });
+  };
+
+  const handleSlipsPerRowChange = (cols) => {
+    startTransition(() => {
+      setSlipsPerRow(cols);
+    });
+  };
+
+  const [isMobileScreen, setIsMobileScreen] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+  useEffect(() => {
+    const handleResize = () => setIsMobileScreen(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize, { passive: true });
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Sticky Collision State for Filter Toolbar
   const [isFilterStuck, setIsFilterStuck] = useState(false);
@@ -99,22 +146,26 @@ export default function FinanceView({
   useEffect(() => {
     if (!isActive) return;
 
+    let rafId = null;
     const checkSticky = () => {
-      if (!filterSentinelRef.current) return;
-      if (filterSentinelRef.current.getClientRects().length === 0) return;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        if (!filterSentinelRef.current) return;
+        if (filterSentinelRef.current.getClientRects().length === 0) return;
 
-      const rect = filterSentinelRef.current.getBoundingClientRect();
-      const isMobile = window.innerWidth < 768;
-      const header = document.querySelector('header');
-      const mainEl = document.querySelector('main');
+        const rect = filterSentinelRef.current.getBoundingClientRect();
+        const isMobile = window.innerWidth < 768;
+        const header = document.querySelector('header');
+        const mainEl = document.querySelector('main');
 
-      const targetTop = isMobile
-        ? (header ? header.getBoundingClientRect().bottom : 56)
-        : (mainEl ? mainEl.getBoundingClientRect().top : 0);
+        const targetTop = isMobile
+          ? (header ? header.getBoundingClientRect().bottom : 56)
+          : (mainEl ? mainEl.getBoundingClientRect().top : 0);
 
-      const marginOffset = isMobile ? 8 : 12;
-      const stuck = rect.top <= targetTop - marginOffset + 1;
-      setIsFilterStuck(stuck);
+        const marginOffset = isMobile ? 8 : 12;
+        const stuck = rect.top <= targetTop - marginOffset + 1;
+        setIsFilterStuck(stuck);
+      });
     };
 
     window.addEventListener('scroll', checkSticky, { passive: true });
@@ -127,13 +178,14 @@ export default function FinanceView({
     checkSticky();
 
     return () => {
+      if (rafId) cancelAnimationFrame(rafId);
       window.removeEventListener('scroll', checkSticky);
       window.removeEventListener('resize', checkSticky);
       if (mainEl) {
         mainEl.removeEventListener('scroll', checkSticky);
       }
     };
-  }, [isActive, viewMode]);
+  }, [isActive]);
 
   // Mobile layout mode for 'sheet': 'card' (easy mobile cards) or 'table' (full A4 table)
   const [mobileSheetLayout, setMobileSheetLayout] = useState('card');
@@ -175,7 +227,7 @@ export default function FinanceView({
 
   // --- Filter and Process Activities ---
   const processedData = useMemo(() => {
-    return activities.filter(item => {
+    const filtered = activities.filter(item => {
       // 1. Search Query Filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -239,61 +291,84 @@ export default function FinanceView({
       }
 
       return true;
-    }).sort((a, b) => {
+    });
+
+    filtered.sort((a, b) => {
       const dateA = new Date(a.paymentDate || a.rawDateTime || 0).getTime();
       const dateB = new Date(b.paymentDate || b.rawDateTime || 0).getTime();
       return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
+    });
+
+    // Precalculate all item metrics once to maximize render performance
+    return filtered.map(item => {
+      const qTotal = item.quotationItems && item.quotationItems.length > 0
+        ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || 0), 0)
+        : (parseFloat(item.wage) || 0);
+
+      const sTotal = item.customerSupport && item.customerSupport.length > 0
+        ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
+        : 0;
+
+      const eTotal = item.expenses && item.expenses.length > 0
+        ? item.expenses.reduce((sum, e) => sum + (parseFloat(e.price) || 0), 0)
+        : 0;
+
+      const explicitTransfer = parseFloat(item.transferredAmount ?? item.transferAmount);
+      const itemTransfer = !isNaN(explicitTransfer) && explicitTransfer > 0
+        ? explicitTransfer
+        : (sTotal + qTotal);
+
+      const paymentStatus = item.paymentStatus || (item.dealStatus === 'completed' ? 'paid' : 'unpaid');
+      const deposit = parseFloat(item.depositAmount) || 0;
+      const dateFormatted = formatItemDate(item.paymentDate || item.rawDateTime || item.date);
+      const slips = Array.isArray(item.slips) ? item.slips : (item.slip ? [item.slip] : []);
+
+      return {
+        ...item,
+        _qTotal: qTotal,
+        _sTotal: sTotal,
+        _eTotal: eTotal,
+        _transfer: itemTransfer,
+        _profit: qTotal - eTotal,
+        _paymentStatus: paymentStatus,
+        _deposit: deposit,
+        _dateFormatted: dateFormatted,
+        _slips: slips,
+        _hasSlips: slips.length > 0
+      };
     });
   }, [activities, searchQuery, paymentStatusFilter, dateFilterMode, filterDate, filterDateRange, sortOrder]);
 
   // --- Financial Calculations ---
   const financialSummary = useMemo(() => {
-    let totalRevenue = 0;       // [MODIFIED] เฉพาะค่าจ้าง/ราคาเสนอราคา ไม่รวมเงินสนับสนุนศิลปิน
+    let totalRevenue = 0;       // เฉพาะค่าจ้าง/ราคาเสนอราคา ไม่รวมเงินสนับสนุนศิลปิน
     let totalQuotation = 0;     // Shop job charges
     let totalSupport = 0;       // Artist support funds
     let totalExpenses = 0;      // Actual expenses / COGS
     let totalProfit = 0;        // รายรับ - รายจ่ายจริง (Quotation - Expenses)
     let totalDeposits = 0;      // Received deposits
+    let totalTransfers = 0;     // ยอดโอนจากลูกค้า
     let pendingReceivables = 0; // Unpaid balances (เฉพาะส่วนค่าจ้าง)
     let paidProjectsCount = 0;
 
-    processedData.forEach(item => {
-      // Calculate Quotation Wage
-      const itemQuotation = item.quotationItems && item.quotationItems.length > 0
-        ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || 0), 0)
-        : (parseFloat(item.wage) || 0);
+    for (let i = 0; i < processedData.length; i++) {
+      const item = processedData[i];
+      totalQuotation += item._qTotal;
+      totalSupport += item._sTotal;
+      totalRevenue += item._qTotal;
+      totalExpenses += item._eTotal;
+      totalProfit += item._profit;
+      totalDeposits += item._deposit;
+      totalTransfers += item._transfer;
 
-      // Calculate Support
-      const itemSupport = item.customerSupport && item.customerSupport.length > 0
-        ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
-        : 0;
-
-      // Calculate Expenses
-      const itemExpenses = item.expenses && item.expenses.length > 0
-        ? item.expenses.reduce((sum, e) => sum + (parseFloat(e.price) || 0), 0)
-        : 0;
-
-      // [MODIFIED] รายรับ = เฉพาะค่าจ้าง/ใบเสนอราคา ไม่รวมเงินสนับสนุนศิลปิน
-      const itemRevenue = itemQuotation;
-      const itemProfit = itemQuotation - itemExpenses;
-      const itemPaymentStatus = item.paymentStatus || (item.dealStatus === 'completed' ? 'paid' : 'unpaid');
-      const itemDeposit = parseFloat(item.depositAmount) || 0;
-
-      totalQuotation += itemQuotation;
-      totalSupport += itemSupport;
-      totalRevenue += itemRevenue; // Revenue is pure quotation wage
-      totalExpenses += itemExpenses;
-      totalProfit += itemProfit;
-      totalDeposits += itemDeposit;
-
-      if (itemPaymentStatus === 'paid') {
+      if (item._paymentStatus === 'paid') {
         paidProjectsCount++;
-      } else if (itemPaymentStatus === 'deposit') {
-        pendingReceivables += Math.max(0, itemRevenue - itemDeposit);
-      } else if (itemPaymentStatus === 'unpaid') {
-        pendingReceivables += itemRevenue;
+      } else if (item._paymentStatus === 'deposit') {
+        pendingReceivables += Math.max(0, item._qTotal - item._deposit);
+      } else if (item._paymentStatus === 'unpaid') {
+        pendingReceivables += item._qTotal;
       }
-    });
+    }
 
     const netMarginPercent = totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : 0;
     const aov = processedData.length > 0 ? Math.round(totalRevenue / processedData.length) : 0;
@@ -305,6 +380,7 @@ export default function FinanceView({
       totalExpenses,
       totalProfit,
       totalDeposits,
+      totalTransfers,
       pendingReceivables,
       paidProjectsCount,
       netMarginPercent,
@@ -313,9 +389,59 @@ export default function FinanceView({
     };
   }, [processedData]);
 
+  // --- Data for Slips Table View ---
+  const projectsWithSlipsCount = useMemo(() => {
+    let count = 0;
+    for (let i = 0; i < processedData.length; i++) {
+      if (processedData[i]._hasSlips) count++;
+    }
+    return count;
+  }, [processedData]);
+
+  const displayedSlipsData = useMemo(() => {
+    if (slipsFilterMode === 'has_slips') {
+      return processedData.filter(item => item._hasSlips);
+    }
+    return processedData;
+  }, [processedData, slipsFilterMode]);
+
+  // Progressive slices for screen rendering (smooth 60fps)
+  const visibleSheetData = useMemo(() => processedData.slice(0, visibleCount), [processedData, visibleCount]);
+  const visibleDashboardData = useMemo(() => processedData.slice(0, visibleCount), [processedData, visibleCount]);
+  const visibleSlipsData = useMemo(() => displayedSlipsData.slice(0, visibleCount), [displayedSlipsData, visibleCount]);
+
+  // Reset visibleCount when search/filters change
+  useEffect(() => {
+    setVisibleCount(35);
+  }, [searchQuery, paymentStatusFilter, dateFilterMode, filterDate, filterDateRange, sortOrder]);
+
+  // Auto-load more items when scrolling near the bottom
+  useEffect(() => {
+    if (!isActive) return;
+    const handleScroll = () => {
+      const scrollY = window.scrollY || document.documentElement.scrollTop;
+      const windowHeight = window.innerHeight;
+      const docHeight = document.documentElement.scrollHeight;
+      if (scrollY + windowHeight >= docHeight - 500) {
+        setVisibleCount(prev => {
+          const maxCount = Math.max(processedData.length, displayedSlipsData.length);
+          if (prev < maxCount) {
+            return Math.min(prev + 35, maxCount);
+          }
+          return prev;
+        });
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [isActive, processedData.length, displayedSlipsData.length]);
+
   // --- Print in New Tab Handler (Multi-page A4 Support) ---
   const handlePrint = (modeParam) => {
-    const selectedMode = typeof modeParam === 'string' ? modeParam : tableDetailMode;
+    const initialMode = (typeof modeParam === 'string' && ['compact', 'detailed', 'slips'].includes(modeParam))
+      ? modeParam
+      : (tableDetailMode === 'detailed' ? 'detailed' : 'compact');
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       alert('เบราว์เซอร์บล็อกหน้าต่างใหม่ (Pop-up Blocked) กรุณากดอนุญาตให้เปิดหน้าต่าง Pop-up เพื่อพิมพ์เอกสาร');
@@ -329,26 +455,18 @@ export default function FinanceView({
 
     // Build Rows HTML for Table / Print
     const rowsHtml = processedData.length === 0
-      ? `<tr><td colspan="6" style="text-align: center; padding: 24px; color: #94a3b8; font-style: italic;">ไม่พบข้อมูลบันทึกกำไรขาดทุนตามเงื่อนไขที่เลือก</td></tr>`
+      ? `<tr><td colspan="7" style="text-align: center; padding: 24px; color: #94a3b8; font-style: italic;">ไม่พบข้อมูลบันทึกกำไรขาดทุนตามเงื่อนไขที่เลือก</td></tr>`
       : processedData.map((item) => {
           const hasQuotation = item.quotationItems && item.quotationItems.length > 0;
-          const qTotal = hasQuotation
-            ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || 0), 0)
-            : (parseFloat(item.wage) || 0);
-
-          const hasSupport = item.customerSupport && item.customerSupport.length > 0;
-          const sTotal = hasSupport
-            ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
-            : 0;
-
-          const hasExpenses = item.expenses && item.expenses.length > 0;
-          const eTotal = hasExpenses
-            ? item.expenses.reduce((sum, e) => sum + (parseFloat(e.price) || 0), 0)
-            : 0;
-
+          const qTotal = item._qTotal;
           const itemRevenue = qTotal;
-          const netBalance = qTotal - eTotal;
-          const displayProjectDate = formatItemDate(item.paymentDate || item.rawDateTime || item.date);
+          const hasSupport = item.customerSupport && item.customerSupport.length > 0;
+          const sTotal = item._sTotal;
+          const hasExpenses = item.expenses && item.expenses.length > 0;
+          const eTotal = item._eTotal;
+          const netBalance = item._profit;
+          const displayProjectDate = item._dateFormatted;
+          const itemTransfer = item._transfer;
 
           // 1. Support lines
           let supportLinesHtml = '';
@@ -425,15 +543,18 @@ export default function FinanceView({
                 </div>
               </td>
               <td style="text-align: right; font-weight: bold; padding: 8px 8px; font-variant-numeric: tabular-nums; border-left: 1px solid #000; border-right: 1px solid #000; border-bottom: 1px dashed #000;">
-                ${itemRevenue > 0 ? formatCurrency(itemRevenue) : '-'}
+                ${itemTransfer > 0 ? formatCurrency(itemTransfer) : '-'}
               </td>
               <td style="text-align: right; font-weight: bold; padding: 8px 8px; font-variant-numeric: tabular-nums; border-left: 1px solid #000; border-right: 1px solid #000; border-bottom: 1px dashed #000;">
                 ${sTotal > 0 ? formatCurrency(sTotal) : '-'}
               </td>
-              <td style="text-align: right; font-weight: bold; padding: 8px 8px; font-variant-numeric: tabular-nums; border-left: 1px solid #000; border-right: 1px solid #000; border-bottom: 1px dashed #000;">
+              <td class="col-revenue" style="text-align: right; font-weight: bold; padding: 8px 8px; font-variant-numeric: tabular-nums; border-left: 1px solid #000; border-right: 1px solid #000; border-bottom: 1px dashed #000; background-color: #f0fdf4; color: #15803d;">
+                ${itemRevenue > 0 ? formatCurrency(itemRevenue) : '-'}
+              </td>
+              <td class="col-expense" style="text-align: right; font-weight: bold; padding: 8px 8px; font-variant-numeric: tabular-nums; border-left: 1px solid #000; border-right: 1px solid #000; border-bottom: 1px dashed #000; background-color: #fff1f2; color: #be123c;">
                 ${eTotal > 0 ? formatCurrency(eTotal) : '-'}
               </td>
-              <td style="text-align: right; font-weight: 800; padding: 8px 8px; font-variant-numeric: tabular-nums; border-left: 1px solid #000; border-right: 1px solid #000; border-bottom: 1px dashed #000;">
+              <td class="${netBalance >= 0 ? 'col-profit' : 'col-loss'}" style="text-align: right; font-weight: 800; padding: 8px 8px; font-variant-numeric: tabular-nums; border-left: 1px solid #000; border-right: 1px solid #000; border-bottom: 1px dashed #000; background-color: ${netBalance >= 0 ? '#e6f4ea' : '#fce8e6'}; color: ${netBalance >= 0 ? '#137333' : '#c5221f'};">
                 ${formatCurrency(netBalance)}
               </td>
             </tr>
@@ -444,12 +565,79 @@ export default function FinanceView({
     const grandTotalHtml = `
       <tr style="background: #f1f5f9; font-weight: 800; border-top: 2px solid #000; border-bottom: 2px solid #000; font-size: 12px; page-break-inside: avoid; break-inside: avoid;">
         <td colspan="2" style="text-align: center; padding: 10px 8px; border-top: 2px solid #000; border-bottom: 2px solid #000;">ยอดรวมสุทธิ (Grand Total)</td>
-        <td style="text-align: right; padding: 10px 8px; color: #065f46; font-variant-numeric: tabular-nums; border-top: 2px solid #000; border-bottom: 2px solid #000;">฿${formatCurrency(financialSummary.totalRevenue)}</td>
-        <td style="text-align: right; padding: 10px 8px; color: #3730a3; font-variant-numeric: tabular-nums; border-top: 2px solid #000; border-bottom: 2px solid #000;">฿${formatCurrency(financialSummary.totalSupport)}</td>
-        <td style="text-align: right; padding: 10px 8px; color: #9f1239; font-variant-numeric: tabular-nums; border-top: 2px solid #000; border-bottom: 2px solid #000;">฿${formatCurrency(financialSummary.totalExpenses)}</td>
-        <td style="text-align: right; padding: 10px 8px; color: #064e3b; font-variant-numeric: tabular-nums; background: #ecfdf5; border-top: 2px solid #000; border-bottom: 2px solid #000;">฿${formatCurrency(financialSummary.totalProfit)}</td>
+        <td style="text-align: right; padding: 10px 8px; color: #0f172a; font-variant-numeric: tabular-nums; border-top: 2px solid #000; border-bottom: 2px solid #000;">฿${formatCurrency(financialSummary.totalTransfers)}</td>
+        <td style="text-align: right; padding: 10px 8px; color: #0f172a; font-variant-numeric: tabular-nums; border-top: 2px solid #000; border-bottom: 2px solid #000;">฿${formatCurrency(financialSummary.totalSupport)}</td>
+        <td class="col-revenue" style="text-align: right; padding: 10px 8px; font-variant-numeric: tabular-nums; border-top: 2px solid #000; border-bottom: 2px solid #000; background-color: #bbf7d0; color: #14532d;">฿${formatCurrency(financialSummary.totalRevenue)}</td>
+        <td class="col-expense" style="text-align: right; padding: 10px 8px; font-variant-numeric: tabular-nums; border-top: 2px solid #000; border-bottom: 2px solid #000; background-color: #fecdd3; color: #881337;">฿${formatCurrency(financialSummary.totalExpenses)}</td>
+        <td class="${financialSummary.totalProfit >= 0 ? 'col-profit' : 'col-loss'}" style="text-align: right; padding: 10px 8px; font-variant-numeric: tabular-nums; border-top: 2px solid #000; border-bottom: 2px solid #000; background-color: ${financialSummary.totalProfit >= 0 ? '#b7e1cd' : '#fad2cf'}; color: ${financialSummary.totalProfit >= 0 ? '#0d652d' : '#b31412'};">฿${formatCurrency(financialSummary.totalProfit)}</td>
       </tr>
     `;
+
+    // Build Attached Slips Table Rows
+    const itemsWithSlips = processedData.filter(item => item._hasSlips);
+    const totalAttachedSlips = processedData.reduce((sum, item) => sum + (item._slips ? item._slips.length : 0), 0);
+
+    const slipsRowsHtml = processedData.length === 0
+      ? `<tr><td colspan="2" style="text-align: center; padding: 24px; color: #94a3b8; font-style: italic;">ไม่พบข้อมูลสลิปโอนเงิน</td></tr>`
+      : processedData.map((item) => {
+          const itemDate = item._dateFormatted || '-';
+          const slips = item._slips || [];
+          const hasSlips = item._hasSlips;
+          const transferAmount = item._transfer;
+          const qTotal = item._qTotal;
+
+          let slipsHtml = '';
+          if (hasSlips) {
+            slipsHtml = `
+              <div class="slips-flex" style="display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-start; margin-top: 6px;">
+                ${slips.map((slip, idx) => {
+                  const slipSrc = typeof slip === 'object' ? slip.url : slip;
+                  const processedUrl = processImageUrl(slipSrc);
+                  return `
+                    <div class="slip-item" style="display: inline-flex; flex-direction: column; align-items: center; width: auto; max-width: 100%; page-break-inside: avoid; break-inside: avoid;">
+                      <img
+                        src="${processedUrl}"
+                        alt="สลิป ${idx + 1}"
+                        style="height: 240px; width: auto; max-width: 100%; object-fit: contain; display: block; border-radius: 4px; border: 1px solid #cbd5e1; box-shadow: 0 1px 3px rgba(0,0,0,0.06);"
+                        onerror="this.onerror=null;this.src='https://placehold.co/300x400?text=Slip+Error';"
+                      />
+                      ${slips.length > 1 ? `<div style="font-size: 10px; font-weight: 700; color: #64748b; margin-top: 2px;">ใบที่ ${idx + 1}</div>` : ''}
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            `;
+          } else {
+            slipsHtml = `
+              <div style="color: #94a3b8; font-style: italic; font-size: 11px; margin-top: 2px;">
+                - ไม่มีรูปสลิปแนบ -
+              </div>
+            `;
+          }
+
+          const clientInfo = `ลูกค้า: ${escapeHtml(item.customer || '-')} • ศิลปิน: ${escapeHtml(item.artist || '-')}`;
+
+          return `
+            <tr class="${hasSlips ? 'slip-row-has-slip' : 'slip-row-no-slip'}" style="page-break-inside: avoid; break-inside: avoid; border-bottom: 1px dashed #000;">
+              <td style="width: 80px; vertical-align: top; text-align: center; font-weight: bold; font-size: 11px; padding: 8px 6px; border-left: 1px solid #000; border-right: 1px solid #000; border-bottom: 1px dashed #000; background: #fafafa;">
+                ${escapeHtml(itemDate)}
+              </td>
+              <td style="vertical-align: top; padding: 8px 10px; border-left: 1px solid #000; border-right: 1px solid #000; border-bottom: 1px dashed #000;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px;">
+                  <div>
+                    <span style="font-weight: 800; font-size: 12px; color: #0f172a;">${escapeHtml(item.id)} ${item.name ? `- ${escapeHtml(item.name)}` : ''}</span>
+                  </div>
+                  ${transferAmount > 0 ? `<div style="font-size: 11px; font-weight: 700; color: #059669; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0; white-space: nowrap;">ยอดโอน: ฿${formatCurrency(transferAmount)}</div>` : ''}
+                </div>
+                <div style="font-size: 11px; color: #64748b; margin-bottom: 3px;">
+                  <span>${clientInfo}</span>
+                  ${qTotal > 0 ? `<span style="margin: 0 4px;">•</span><span>ยอดงาน: ฿${formatCurrency(qTotal)}</span>` : ''}
+                </div>
+                ${slipsHtml}
+              </td>
+            </tr>
+          `;
+        }).join('');
 
     const fullHtml = `<!DOCTYPE html>
 <html lang="th">
@@ -478,11 +666,14 @@ export default function FinanceView({
       z-index: 1000;
       background: #0f172a;
       color: #ffffff;
-      padding: 12px 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
       box-shadow: 0 4px 15px rgba(0,0,0,0.18);
+    }
+    .top-bar-main {
+      padding: 12px 24px;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 16px;
     }
     .top-bar-title {
       font-size: 14px;
@@ -490,6 +681,8 @@ export default function FinanceView({
       display: flex;
       align-items: center;
       gap: 10px;
+      justify-self: start;
+      white-space: nowrap;
     }
     .top-bar-badge {
       background: #334155;
@@ -502,6 +695,7 @@ export default function FinanceView({
       display: flex;
       align-items: center;
       gap: 10px;
+      justify-self: center;
     }
     .toggle-pill-container {
       display: inline-flex;
@@ -509,6 +703,24 @@ export default function FinanceView({
       padding: 3px;
       border-radius: 10px;
       border: 1px solid #334155;
+    }
+    .top-bar-sub {
+      background: #1e293b;
+      border-top: 1px solid #334155;
+      padding: 8px 24px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      animation: fadeInSubBar 0.15s ease-out;
+    }
+    .sub-bar-inner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    @keyframes fadeInSubBar {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
     }
     .mode-btn {
       background: transparent;
@@ -533,6 +745,14 @@ export default function FinanceView({
       color: #ffffff;
       box-shadow: 0 1px 4px rgba(0,0,0,0.3);
     }
+    body.mode-compact #accountingSection,
+    body.mode-detailed #accountingSection {
+      display: block !important;
+    }
+    body.mode-compact #slipsSection,
+    body.mode-detailed #slipsSection {
+      display: none !important;
+    }
     body.mode-compact .detail-sub-list {
       display: none !important;
     }
@@ -543,10 +763,17 @@ export default function FinanceView({
       padding-top: 6px !important;
       padding-bottom: 6px !important;
     }
+    body.mode-slips #accountingSection {
+      display: none !important;
+    }
+    body.mode-slips #slipsSection {
+      display: block !important;
+    }
     .btn-group {
       display: flex;
       align-items: center;
       gap: 8px;
+      justify-self: end;
     }
     .btn {
       display: inline-flex;
@@ -637,6 +864,45 @@ export default function FinanceView({
       border-bottom: 1px dashed #000;
       vertical-align: top;
     }
+    /* Highlighted Columns: Revenue, Expenses, Profit/Loss (เข้มกว่า) */
+    .col-revenue {
+      background-color: #f0fdf4 !important;
+      color: #15803d !important;
+    }
+    th.col-revenue {
+      background-color: #dcfce7 !important;
+      color: #166534 !important;
+      font-weight: 800 !important;
+    }
+    .col-expense {
+      background-color: #fff1f2 !important;
+      color: #be123c !important;
+    }
+    th.col-expense {
+      background-color: #ffe4e6 !important;
+      color: #9f1239 !important;
+      font-weight: 800 !important;
+    }
+    .col-profit {
+      background-color: #e6f4ea !important;
+      color: #137333 !important;
+      font-weight: 800 !important;
+    }
+    th.col-profit {
+      background-color: #ceead6 !important;
+      color: #0d652d !important;
+      font-weight: 800 !important;
+    }
+    .col-loss {
+      background-color: #fce8e6 !important;
+      color: #c5221f !important;
+      font-weight: 800 !important;
+    }
+    th.col-loss {
+      background-color: #fad2cf !important;
+      color: #b31412 !important;
+      font-weight: 800 !important;
+    }
     .signature-grid {
       display: flex;
       justify-content: space-between;
@@ -664,7 +930,11 @@ export default function FinanceView({
     /* Screen view on mobile phones */
     @media screen and (max-width: 768px) {
       .top-action-bar {
+        padding: 0;
+      }
+      .top-bar-main {
         padding: 10px 14px;
+        display: flex;
         flex-direction: column;
         gap: 8px;
         align-items: stretch;
@@ -677,11 +947,19 @@ export default function FinanceView({
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 6px;
+        justify-self: stretch;
       }
       .btn {
         padding: 8px 8px;
         font-size: 12px;
         justify-content: center;
+      }
+      .top-bar-sub {
+        padding: 8px 14px;
+      }
+      .sub-bar-inner {
+        width: 100%;
+        justify-content: space-between;
       }
       .paper-container {
         margin: 8px 6px 24px 6px;
@@ -728,13 +1006,19 @@ export default function FinanceView({
       }
       .toggle-pill-container {
         display: flex;
+        flex-wrap: wrap;
         width: 100%;
+        gap: 3px;
       }
       .mode-btn {
-        flex: 1;
+        flex: 1 1 auto;
+        min-width: 80px;
         justify-content: center;
         font-size: 11px;
-        padding: 6px 8px;
+        padding: 6px 6px;
+      }
+      #slipsFilterContainer {
+        justify-content: center;
       }
     }
 
@@ -749,6 +1033,20 @@ export default function FinanceView({
         font-size: 10pt !important;
         padding: 0 !important;
         margin: 0 !important;
+      }
+      body.mode-compact #accountingSection,
+      body.mode-detailed #accountingSection {
+        display: block !important;
+      }
+      body.mode-compact #slipsSection,
+      body.mode-detailed #slipsSection {
+        display: none !important;
+      }
+      body.mode-slips #accountingSection {
+        display: none !important;
+      }
+      body.mode-slips #slipsSection {
+        display: block !important;
       }
       body.mode-compact .detail-sub-list {
         display: none !important;
@@ -802,104 +1100,224 @@ export default function FinanceView({
       .sign-box {
         width: 220px !important;
       }
+      .col-revenue {
+        background-color: #f0fdf4 !important;
+        color: #15803d !important;
+      }
+      th.col-revenue {
+        background-color: #dcfce7 !important;
+        color: #166534 !important;
+      }
+      .col-expense {
+        background-color: #fff1f2 !important;
+        color: #be123c !important;
+      }
+      th.col-expense {
+        background-color: #ffe4e6 !important;
+        color: #9f1239 !important;
+      }
+      .col-profit {
+        background-color: #e6f4ea !important;
+        color: #137333 !important;
+      }
+      th.col-profit {
+        background-color: #ceead6 !important;
+        color: #0d652d !important;
+      }
+      .col-loss {
+        background-color: #fce8e6 !important;
+        color: #c5221f !important;
+      }
+      th.col-loss {
+        background-color: #fad2cf !important;
+        color: #b31412 !important;
+      }
     }
   </style>
 </head>
-<body class="${selectedMode === 'compact' ? 'mode-compact' : ''}">
+<body class="mode-${initialMode}">
   <div class="top-action-bar no-print">
-    <div class="top-bar-title">
-      <span>แบบฟอร์มบันทึกข้อมูลกำไรขาดทุน</span>
-      <span class="top-bar-badge">${processedData.length} รายการ</span>
-    </div>
+    <div class="top-bar-main">
+      <div class="top-bar-title">
+        <span id="barTitle">${initialMode === 'slips' ? 'ตารางหลักฐานสลิปโอนเงิน' : 'แบบฟอร์มบันทึกข้อมูลกำไรขาดทุน'}</span>
+        <span class="top-bar-badge">${processedData.length} รายการ</span>
+      </div>
 
-    <!-- Toggle Print Mode (Compact vs Detailed) -->
-    <div class="mode-toggle-group">
-      <span style="font-size: 12px; color: #94a3b8; font-weight: 600;">รูปแบบการพิมพ์:</span>
-      <div class="toggle-pill-container">
-        <button id="btnModeCompact" class="mode-btn ${selectedMode === 'compact' ? 'active' : ''}" onclick="setPrintMode('compact')">
-          📄 แบบย่อ (ประหยัดกระดาษ)
+      <!-- Toggle Print Mode (3 options: Compact vs Detailed vs Slips) -->
+      <div class="mode-toggle-group">
+        <span style="font-size: 12px; color: #94a3b8; font-weight: 600;">รูปแบบการพิมพ์:</span>
+        <div class="toggle-pill-container">
+          <button id="btnModeCompact" class="mode-btn ${initialMode === 'compact' ? 'active' : ''}" onclick="setPrintMode('compact')">
+            📄 แบบย่อ
+          </button>
+          <button id="btnModeDetailed" class="mode-btn ${initialMode === 'detailed' ? 'active' : ''}" onclick="setPrintMode('detailed')">
+            📑 แบบละเอียด
+          </button>
+          <button id="btnModeSlips" class="mode-btn ${initialMode === 'slips' ? 'active' : ''}" onclick="setPrintMode('slips')">
+            🧾 แบบสลิป (${itemsWithSlips.length} งาน)
+          </button>
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="window.print()">
+          พิมพ์ / บันทึก PDF
         </button>
-        <button id="btnModeDetailed" class="mode-btn ${selectedMode === 'detailed' ? 'active' : ''}" onclick="setPrintMode('detailed')">
-          📑 แบบละเอียด (มีรายการย่อย)
+        <button class="btn btn-secondary" onclick="window.close()">
+          ปิด
         </button>
       </div>
     </div>
 
-    <div class="btn-group">
-      <button class="btn btn-primary" onclick="window.print()">
-        พิมพ์ / บันทึก PDF
-      </button>
-      <button class="btn btn-secondary" onclick="window.close()">
-        ปิด
-      </button>
+    <!-- Slips Filter Sub-bar (Dedicated row: completely separates filter from mode buttons so buttons NEVER jump) -->
+    <div id="slipsFilterContainer" class="top-bar-sub" style="display: ${initialMode === 'slips' ? 'flex' : 'none'};">
+      <div class="sub-bar-inner">
+        <span style="font-size: 12px; color: #94a3b8; font-weight: 600;">แสดงรายการสลิป:</span>
+        <div id="slipsFilterPill" style="display: inline-flex; align-items: center; background: #0f172a; padding: 2px; border-radius: 8px; border: 1px solid #334155;">
+          <button id="btnSlipsOnly" onclick="setSlipsFilter('has_slips')" style="padding: 4px 12px; font-size: 11px; font-weight: 700; border: none; background: #4f46e5; color: #fff; border-radius: 6px; cursor: pointer; transition: all 0.15s;">
+            เฉพาะมีสลิป (${itemsWithSlips.length})
+          </button>
+          <button id="btnSlipsAll" onclick="setSlipsFilter('all')" style="padding: 4px 12px; font-size: 11px; font-weight: 700; border: none; background: transparent; color: #94a3b8; border-radius: 6px; cursor: pointer; transition: all 0.15s;">
+            ทั้งหมด (${processedData.length})
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 
   <div class="paper-container">
-    <div class="doc-header">
-      <div>
-        <h1 class="doc-title">บันทึกข้อมูลกำไรขาดทุน</h1>
-        <p class="doc-subtitle">${escapeHtml(shopName)} ${shopPhone}</p>
+    <!-- ========================================================
+         ส่วนที่ 1: ตารางบันทึกข้อมูลกำไรขาดทุน (แบบย่อ / แบบละเอียด)
+         ======================================================== -->
+    <div id="accountingSection">
+      <div class="doc-header">
+        <div>
+          <h1 class="doc-title">บันทึกข้อมูลกำไรขาดทุน</h1>
+          <p class="doc-subtitle">${escapeHtml(shopName)} ${shopPhone}</p>
+        </div>
+        <div class="doc-meta">
+          <div><strong>วันที่พิมพ์:</strong> ${printDate} (${printTime} น.)</div>
+          <div><strong>จำนวนงาน:</strong> ${processedData.length} รายการ</div>
+          <div id="metaPrintMode"><strong>รูปแบบ:</strong> ${initialMode === 'compact' ? 'สรุปย่อ (ประหยัดกระดาษ)' : (initialMode === 'slips' ? 'ตารางสลิปโอนเงิน' : 'แจกแจงละเอียด')}</div>
+        </div>
       </div>
-      <div class="doc-meta">
-        <div><strong>วันที่พิมพ์:</strong> ${printDate} (${printTime} น.)</div>
-        <div><strong>จำนวนงาน:</strong> ${processedData.length} รายการ</div>
-        <div id="metaPrintMode"><strong>รูปแบบ:</strong> ${selectedMode === 'compact' ? 'สรุปย่อ (ประหยัดกระดาษ)' : 'แจกแจงละเอียด'}</div>
+
+      <!-- A4 Table View (Pan-able on phone, prints cleanly on paper) -->
+      <div class="table-scroll-wrapper" id="tableScrollWrapper">
+        <table class="accounting-table">
+          <thead>
+            <tr>
+              <th style="width: 80px;">วันที่</th>
+              <th>รายการ</th>
+              <th style="width: 85px; text-align: right;">ยอดโอน</th>
+              <th style="width: 90px; text-align: right;">เงินศิลปิน</th>
+              <th class="col-revenue" style="width: 85px; text-align: right; background-color: #dcfce7; color: #166534;">รายรับ</th>
+              <th class="col-expense" style="width: 85px; text-align: right; background-color: #ffe4e6; color: #9f1239;">รายจ่าย</th>
+              <th class="col-profit" style="width: 95px; text-align: right; background-color: #ceead6; color: #0d652d;">กำไร/ขาดทุน</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+          <tfoot>
+            ${grandTotalHtml}
+          </tfoot>
+        </table>
+      </div>
+
+      <div class="signature-grid">
+        <div class="sign-box">
+          <div class="sign-line"></div>
+          <div style="font-weight: bold;">ผู้จัดทำ / ผู้ลงบันทึก</div>
+          <div style="color: #64748b; font-size: 11px; margin-top: 4px;">วันที่: ......./......./...........</div>
+        </div>
+        <div class="sign-box">
+          <div class="sign-line"></div>
+          <div style="font-weight: bold;">ผู้ตรวจสอบ / ผู้อนุมัติ</div>
+          <div style="color: #64748b; font-size: 11px; margin-top: 4px;">วันที่: ......./......./...........</div>
+        </div>
       </div>
     </div>
 
-    <!-- A4 Table View (Pan-able on phone, prints cleanly on paper) -->
-    <div class="table-scroll-wrapper" id="tableScrollWrapper">
-      <table class="accounting-table">
-        <thead>
-          <tr>
-            <th style="width: 80px;">วันที่</th>
-            <th>รายการ</th>
-            <th style="width: 85px; text-align: right;">รายรับ</th>
-            <th style="width: 95px; text-align: right;">เงินศิลปิน</th>
-            <th style="width: 85px; text-align: right;">รายจ่าย</th>
-            <th style="width: 95px; text-align: right;">คงเหลือ</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rowsHtml}
-        </tbody>
-        <tfoot>
-          ${grandTotalHtml}
-        </tfoot>
-      </table>
-    </div>
-
-    <div class="signature-grid">
-      <div class="sign-box">
-        <div class="sign-line"></div>
-        <div style="font-weight: bold;">ผู้จัดทำ / ผู้ลงบันทึก</div>
-        <div style="color: #64748b; font-size: 11px; margin-top: 4px;">วันที่: ......./......./...........</div>
+    <!-- ========================================================
+         ส่วนที่ 2: ตารางหลักฐานสลิปโอนเงิน (แบบสลิป)
+         ======================================================== -->
+    <div id="slipsSection" class="slips-section">
+      <div class="doc-header">
+        <div>
+          <h1 class="doc-title">ตารางหลักฐานสลิปโอนเงิน</h1>
+          <p class="doc-subtitle">${escapeHtml(shopName)} ${shopPhone}</p>
+        </div>
+        <div class="doc-meta">
+          <div><strong>วันที่พิมพ์:</strong> ${printDate} (${printTime} น.)</div>
+          <div><strong>รายการที่มีสลิป:</strong> ${itemsWithSlips.length} รายการ (รวม ${totalAttachedSlips} ใบ)</div>
+          <div><strong>รูปแบบ:</strong> ตารางสลิปโอนเงิน</div>
+        </div>
       </div>
-      <div class="sign-box">
-        <div class="sign-line"></div>
-        <div style="font-weight: bold;">ผู้ตรวจสอบ / ผู้อนุมัติ</div>
-        <div style="color: #64748b; font-size: 11px; margin-top: 4px;">วันที่: ......./......./...........</div>
+
+      <div class="table-scroll-wrapper">
+        <table class="accounting-table" style="width: 100%; border-collapse: collapse; border: 1.5px solid #000;">
+          <thead>
+            <tr style="background-color: #f1f5f9;">
+              <th style="width: 80px; border: 1px solid #000; padding: 8px 6px; text-align: center; font-weight: 700;">วันที่</th>
+              <th style="border: 1px solid #000; padding: 8px 10px; text-align: left; font-weight: 700;">รายการ และ หลักฐานสลิปโอนเงิน</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${slipsRowsHtml}
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
 
   <script>
     function setPrintMode(mode) {
-      if (mode === 'compact') {
-        document.body.classList.add('mode-compact');
-        document.getElementById('btnModeCompact').classList.add('active');
-        document.getElementById('btnModeDetailed').classList.remove('active');
-        var meta = document.getElementById('metaPrintMode');
-        if (meta) meta.innerHTML = '<strong>รูปแบบ:</strong> สรุปย่อ (ประหยัดกระดาษ)';
-      } else {
-        document.body.classList.remove('mode-compact');
-        document.getElementById('btnModeDetailed').classList.add('active');
-        document.getElementById('btnModeCompact').classList.remove('active');
-        var meta = document.getElementById('metaPrintMode');
-        if (meta) meta.innerHTML = '<strong>รูปแบบ:</strong> แจกแจงละเอียด';
+      var body = document.body;
+      body.classList.remove('mode-compact', 'mode-detailed', 'mode-slips');
+      body.classList.add('mode-' + mode);
+
+      var btnCompact = document.getElementById('btnModeCompact');
+      var btnDetailed = document.getElementById('btnModeDetailed');
+      var btnSlips = document.getElementById('btnModeSlips');
+      if (btnCompact) btnCompact.classList.toggle('active', mode === 'compact');
+      if (btnDetailed) btnDetailed.classList.toggle('active', mode === 'detailed');
+      if (btnSlips) btnSlips.classList.toggle('active', mode === 'slips');
+
+      var slipsFilter = document.getElementById('slipsFilterContainer');
+      if (slipsFilter) {
+        slipsFilter.style.display = mode === 'slips' ? 'flex' : 'none';
+      }
+
+      var barTitle = document.getElementById('barTitle');
+      if (barTitle) {
+        barTitle.textContent = mode === 'slips' ? 'ตารางหลักฐานสลิปโอนเงิน' : 'แบบฟอร์มบันทึกข้อมูลกำไรขาดทุน';
+      }
+
+      var meta = document.getElementById('metaPrintMode');
+      if (meta) {
+        if (mode === 'compact') meta.innerHTML = '<strong>รูปแบบ:</strong> สรุปย่อ (ประหยัดกระดาษ)';
+        else if (mode === 'detailed') meta.innerHTML = '<strong>รูปแบบ:</strong> แจกแจงละเอียด';
+        else if (mode === 'slips') meta.innerHTML = '<strong>รูปแบบ:</strong> ตารางสลิปโอนเงิน';
       }
     }
+
+    function setSlipsFilter(mode) {
+      var noSlipsRows = document.querySelectorAll('.slip-row-no-slip');
+      var btnOnly = document.getElementById('btnSlipsOnly');
+      var btnAll = document.getElementById('btnSlipsAll');
+      if (mode === 'has_slips') {
+        noSlipsRows.forEach(function(r) { r.style.display = 'none'; });
+        if (btnOnly) { btnOnly.style.background = '#4f46e5'; btnOnly.style.color = '#fff'; }
+        if (btnAll) { btnAll.style.background = 'transparent'; btnAll.style.color = '#cbd5e1'; }
+      } else {
+        noSlipsRows.forEach(function(r) { r.style.display = ''; });
+        if (btnAll) { btnAll.style.background = '#4f46e5'; btnAll.style.color = '#fff'; }
+        if (btnOnly) { btnOnly.style.background = 'transparent'; btnOnly.style.color = '#cbd5e1'; }
+      }
+    }
+    // Default to showing only rows with slips
+    setSlipsFilter('has_slips');
   </script>
 </body>
 </html>`;
@@ -907,6 +1325,11 @@ export default function FinanceView({
     printWindow.document.open();
     printWindow.document.write(fullHtml);
     printWindow.document.close();
+  };
+
+  // --- Print Slips Sheet Handler (Delegates to unified handlePrint('slips')) ---
+  const handlePrintSlips = () => {
+    handlePrint('slips');
   };
 
   // --- Export to CSV Handler ---
@@ -1053,8 +1476,8 @@ export default function FinanceView({
         {/* View Mode Toggle: Clean segmented control */}
         <div className="bg-slate-100 p-1 rounded-xl flex items-center border border-slate-200 shrink-0">
           <button
-            onClick={() => setViewMode('sheet')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+            onClick={() => handleViewModeChange('sheet')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
               viewMode === 'sheet'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-500 hover:text-slate-800'
@@ -1064,8 +1487,8 @@ export default function FinanceView({
             <span>ตารางบัญชี</span>
           </button>
           <button
-            onClick={() => setViewMode('dashboard')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+            onClick={() => handleViewModeChange('dashboard')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
               viewMode === 'dashboard'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-500 hover:text-slate-800'
@@ -1073,6 +1496,17 @@ export default function FinanceView({
           >
             <BarChart2 className="w-4 h-4 text-emerald-600" />
             <span>การ์ดสรุป</span>
+          </button>
+          <button
+            onClick={() => handleViewModeChange('slips')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              viewMode === 'slips'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Receipt className="w-4 h-4 text-amber-600" />
+            <span>ตารางสลิป</span>
           </button>
         </div>
 
@@ -1089,9 +1523,9 @@ export default function FinanceView({
 
           {/* Print to A4 Button (Icon only, larger touch size) */}
           <button
-            onClick={() => handlePrint(tableDetailMode)}
+            onClick={() => handlePrint(viewMode === 'slips' ? 'slips' : tableDetailMode)}
             className="flex items-center justify-center w-10 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md shadow-indigo-100 transition-all hover:-translate-y-0.5 active:translate-y-0 shrink-0"
-            title="พิมพ์เอกสาร A4"
+            title={viewMode === 'slips' ? "พิมพ์ตารางสลิป A4" : "พิมพ์เอกสาร A4"}
           >
             <Printer className="w-5 h-5" />
           </button>
@@ -1409,7 +1843,7 @@ export default function FinanceView({
             <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200/80 shadow-xs">
               <button
                 type="button"
-                onClick={() => setTableDetailMode('compact')}
+                onClick={() => handleDetailModeChange('compact')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   tableDetailMode === 'compact'
                     ? 'bg-indigo-600 text-white shadow-xs'
@@ -1420,7 +1854,7 @@ export default function FinanceView({
               </button>
               <button
                 type="button"
-                onClick={() => setTableDetailMode('detailed')}
+                onClick={() => handleDetailModeChange('detailed')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   tableDetailMode === 'detailed'
                     ? 'bg-indigo-600 text-white shadow-xs'
@@ -1435,7 +1869,7 @@ export default function FinanceView({
           {/* Mobile View Toggle: Card View vs Full Table */}
           <div className="no-print md:hidden mb-4 flex items-center justify-between gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
             <button
-              onClick={() => setMobileSheetLayout('card')}
+              onClick={() => handleMobileLayoutChange('card')}
               className={`flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 active:scale-95 ${
                 mobileSheetLayout === 'card'
                   ? 'bg-white text-indigo-700 shadow-xs'
@@ -1446,7 +1880,7 @@ export default function FinanceView({
               <span>การ์ด</span>
             </button>
             <button
-              onClick={() => setMobileSheetLayout('table')}
+              onClick={() => handleMobileLayoutChange('table')}
               className={`flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 active:scale-95 ${
                 mobileSheetLayout === 'table'
                   ? 'bg-white text-indigo-700 shadow-xs'
@@ -1459,34 +1893,31 @@ export default function FinanceView({
           </div>
 
           {/* Mobile Card View (Easy reading on phones) */}
-          <div className={`no-print ${mobileSheetLayout === 'card' ? 'block md:hidden' : 'hidden'} space-y-3 mb-4`}>
-            {/* List of Mobile Ledger Cards */}
-            {processedData.length === 0 ? (
-              <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-slate-400 font-medium text-xs">
-                ไม่พบข้อมูลบันทึกกำไรขาดทุนตามเงื่อนไขที่เลือก
-              </div>
-            ) : (
-              processedData.map((item, index) => {
+          {isMobileScreen && mobileSheetLayout === 'card' && (
+            <div className="no-print space-y-3 mb-4">
+              {/* List of Mobile Ledger Cards */}
+              {processedData.length === 0 ? (
+                <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-slate-400 font-medium text-xs">
+                  ไม่พบข้อมูลบันทึกกำไรขาดทุนตามเงื่อนไขที่เลือก
+                </div>
+              ) : (
+                visibleSheetData.map((item, index) => {
                 const hasQuotation = item.quotationItems && item.quotationItems.length > 0;
-                const qTotal = hasQuotation
-                  ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || 0), 0)
-                  : (parseFloat(item.wage) || 0);
-
+                const qTotal = item._qTotal;
                 const hasSupport = item.customerSupport && item.customerSupport.length > 0;
-                const sTotal = hasSupport
-                  ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
-                  : 0;
-
+                const sTotal = item._sTotal;
                 const hasExpenses = item.expenses && item.expenses.length > 0;
-                const eTotal = hasExpenses
-                  ? item.expenses.reduce((sum, e) => sum + (parseFloat(e.price) || 0), 0)
-                  : 0;
-
-                const netBalance = qTotal - eTotal;
-                const displayProjectDate = formatItemDate(item.paymentDate || item.rawDateTime || item.date);
+                const eTotal = item._eTotal;
+                const netBalance = item._profit;
+                const displayProjectDate = item._dateFormatted;
+                const itemTransfer = item._transfer;
 
                 return (
-                  <div key={item.id || index} className="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-xs space-y-3">
+                  <div
+                    key={item.id || index}
+                    style={{ contentVisibility: 'auto', containIntrinsicSize: '0 80px' }}
+                    className="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-xs space-y-3"
+                  >
                     {/* Header: Date + Project ID + Net badge */}
                     <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100">
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -1591,80 +2022,91 @@ export default function FinanceView({
                       </div>
                     </div>
 
-                    {/* Summary 4-Column Strip for this item */}
-                    <div className="grid grid-cols-4 gap-1 pt-2 border-t border-slate-100 text-center">
-                      <div className="bg-slate-50 p-1.5 rounded-lg">
-                        <span className="text-[9px] text-slate-400 block font-medium">รายรับ</span>
-                        <span className="text-[11px] font-bold text-slate-800 tabular-nums">{qTotal > 0 ? formatCurrency(qTotal) : '-'}</span>
+                    {/* Summary 5-Column Strip for this item */}
+                    <div className="grid grid-cols-5 gap-1 pt-2 border-t border-slate-100 text-center">
+                      <div className="bg-slate-50 p-1 rounded-lg">
+                        <span className="text-[9px] text-slate-400 block font-medium truncate">ยอดโอน</span>
+                        <span className="text-[10px] sm:text-[11px] font-bold text-slate-800 tabular-nums">{itemTransfer > 0 ? formatCurrency(itemTransfer) : '-'}</span>
                       </div>
-                      <div className="bg-slate-50 p-1.5 rounded-lg">
-                        <span className="text-[9px] text-slate-400 block font-medium">สนับสนุน</span>
-                        <span className="text-[11px] font-bold text-indigo-700 tabular-nums">{sTotal > 0 ? formatCurrency(sTotal) : '-'}</span>
+                      <div className="bg-slate-50 p-1 rounded-lg">
+                        <span className="text-[9px] text-slate-400 block font-medium truncate">เงินศิลปิน</span>
+                        <span className="text-[10px] sm:text-[11px] font-bold text-slate-800 tabular-nums">{sTotal > 0 ? formatCurrency(sTotal) : '-'}</span>
                       </div>
-                      <div className="bg-slate-50 p-1.5 rounded-lg">
-                        <span className="text-[9px] text-slate-400 block font-medium">รายจ่าย</span>
-                        <span className="text-[11px] font-bold text-rose-600 tabular-nums">{eTotal > 0 ? formatCurrency(eTotal) : '-'}</span>
+                      <div className="bg-slate-50 p-1 rounded-lg">
+                        <span className="text-[9px] text-slate-400 block font-medium truncate">รายรับ</span>
+                        <span className="text-[10px] sm:text-[11px] font-bold text-slate-800 tabular-nums">{qTotal > 0 ? formatCurrency(qTotal) : '-'}</span>
                       </div>
-                      <div className="bg-emerald-50/70 p-1.5 rounded-lg border border-emerald-100">
-                        <span className="text-[9px] text-emerald-800 block font-bold">คงเหลือ</span>
-                        <span className="text-[11px] font-black text-emerald-700 tabular-nums">{formatCurrency(netBalance)}</span>
+                      <div className="bg-slate-50 p-1 rounded-lg">
+                        <span className="text-[9px] text-slate-400 block font-medium truncate">รายจ่าย</span>
+                        <span className="text-[10px] sm:text-[11px] font-bold text-rose-600 tabular-nums">{eTotal > 0 ? formatCurrency(eTotal) : '-'}</span>
+                      </div>
+                      <div className="bg-emerald-50/70 p-1 rounded-lg border border-emerald-100">
+                        <span className="text-[9px] text-emerald-800 block font-bold truncate">กำไร/ขาดทุน</span>
+                        <span className="text-[10px] sm:text-[11px] font-black text-emerald-700 tabular-nums">{formatCurrency(netBalance)}</span>
                       </div>
                     </div>
                   </div>
                 );
               })
             )}
+
+            {visibleCount < processedData.length && (
+              <div className="pt-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount(prev => prev + 35)}
+                  className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+                >
+                  โหลดเพิ่มเติม (แสดง {visibleSheetData.length} จาก {processedData.length} รายการ)
+                </button>
+              </div>
+            )}
           </div>
+          )}
 
           {/* Table Container (Shows on desktop or when mobile user switches to full table, always prints) */}
-          <div className={`table-container-for-print ${mobileSheetLayout === 'table' ? 'block' : 'hidden md:block'} overflow-x-auto -mx-2 sm:mx-0`}>
-            <table className="accounting-print-table w-full border-collapse border border-slate-300 text-xs sm:text-sm min-w-[680px]">
+          {(!isMobileScreen || mobileSheetLayout === 'table') && (
+            <div className="table-container-for-print overflow-x-auto -mx-2 sm:mx-0">
+              <table className="accounting-print-table w-full border-collapse border border-slate-300 text-xs sm:text-sm min-w-[760px]">
               <thead>
                 <tr className="bg-slate-100 text-slate-800 font-bold">
-                  <th className="border border-slate-300 px-3 py-2.5 text-center w-28 sm:w-32">วันที่</th>
+                  <th className="border border-slate-300 px-3 py-2.5 text-center w-24 sm:w-28">วันที่</th>
                   <th className="border border-slate-300 px-4 py-2.5 text-center">รายการ</th>
-                  <th className="border border-slate-300 px-3 py-2.5 text-right w-24 sm:w-28">รายรับ</th>
-                  <th className="border border-slate-300 px-3 py-2.5 text-right w-24 sm:w-28">เงินศิลปิน</th>
-                  <th className="border border-slate-300 px-3 py-2.5 text-right w-24 sm:w-28">รายจ่าย</th>
-                  <th className="border border-slate-300 px-3 py-2.5 text-right w-24 sm:w-32">คงเหลือ</th>
+                  <th className="border border-slate-300 px-3 py-2.5 text-right w-20 sm:w-24">ยอดโอน</th>
+                  <th className="border border-slate-300 px-3 py-2.5 text-right w-20 sm:w-24">เงินศิลปิน</th>
+                  <th className="border border-slate-300 px-3 py-2.5 text-right w-20 sm:w-24 bg-emerald-50/70 text-emerald-800 font-bold">รายรับ</th>
+                  <th className="border border-slate-300 px-3 py-2.5 text-right w-20 sm:w-24 bg-rose-50/70 text-rose-800 font-bold">รายจ่าย</th>
+                  <th className="border border-slate-300 px-3 py-2.5 text-right w-24 sm:w-28 bg-[#ceead6] text-[#0d652d] font-bold">กำไร/ขาดทุน</th>
                 </tr>
               </thead>
               <tbody>
                 {processedData.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-10 text-slate-400 font-medium border border-slate-300">
+                    <td colSpan={7} className="text-center py-10 text-slate-400 font-medium border border-slate-300">
                       ไม่พบข้อมูลบันทึกกำไรขาดทุนตามเงื่อนไขที่เลือก
                     </td>
                   </tr>
                 ) : (
-                  processedData.map((item, index) => {
-                    // Item Calculations
+                  visibleSheetData.map((item, index) => {
+                    // Precomputed Item Metrics
                     const hasQuotation = item.quotationItems && item.quotationItems.length > 0;
-                    const qTotal = hasQuotation
-                      ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || 0), 0)
-                      : (parseFloat(item.wage) || 0);
-
+                    const qTotal = item._qTotal;
                     const hasSupport = item.customerSupport && item.customerSupport.length > 0;
-                    const sTotal = hasSupport
-                      ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
-                      : 0;
-
+                    const sTotal = item._sTotal;
                     const hasExpenses = item.expenses && item.expenses.length > 0;
-                    const eTotal = hasExpenses
-                      ? item.expenses.reduce((sum, e) => sum + (parseFloat(e.price) || 0), 0)
-                      : 0;
-
-                    const netBalance = qTotal - eTotal;
-
-                    // Fallback item-level date or project date
-                    const displayProjectDate = formatItemDate(item.paymentDate || item.rawDateTime || item.date);
-
+                    const eTotal = item._eTotal;
+                    const netBalance = item._profit;
+                    const itemTransfer = item._transfer;
+                    const displayProjectDate = item._dateFormatted;
                     const clientInfo = `ลูกค้า: ${item.customer || '-'} • ศิลปิน: ${item.artist || '-'}`;
-
                     const isCompact = tableDetailMode === 'compact';
 
                     return (
-                      <tr key={item.id || index} className="align-top hover:bg-slate-50/50 transition">
+                      <tr
+                        key={item.id || index}
+                        style={{ contentVisibility: 'auto', containIntrinsicSize: '0 54px' }}
+                        className="align-top hover:bg-slate-50/50 transition"
+                      >
                         {/* 1. วันที่ */}
                         <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-center font-bold text-slate-800 whitespace-nowrap`}>
                           {displayProjectDate}
@@ -1753,28 +2195,47 @@ export default function FinanceView({
                           )}
                         </td>
 
-                        {/* 3. รายรับ (เฉพาะค่าจ้าง ไม่รวมเงินสนับสนุนศิลปิน) */}
+                        {/* 3. ยอดโอน */}
                         <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-right font-bold text-slate-900 tabular-nums`}>
-                          {qTotal > 0 ? formatCurrency(qTotal) : '-'}
+                          {itemTransfer > 0 ? formatCurrency(itemTransfer) : '-'}
                         </td>
 
-                        {/* 4. เงินสนับสนุนศิลปิน */}
+                        {/* 4. เงินศิลปิน */}
                         <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-right font-bold text-slate-900 tabular-nums`}>
                           {sTotal > 0 ? formatCurrency(sTotal) : '-'}
                         </td>
 
-                        {/* 5. รายจ่าย */}
-                        <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-right font-bold text-slate-900 tabular-nums`}>
+                        {/* 5. รายรับ (เฉพาะค่าจ้าง ไม่รวมเงินสนับสนุนศิลปิน) */}
+                        <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-right font-bold text-emerald-700 bg-emerald-50/30 tabular-nums`}>
+                          {qTotal > 0 ? formatCurrency(qTotal) : '-'}
+                        </td>
+
+                        {/* 6. รายจ่าย */}
+                        <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-right font-bold text-rose-600 bg-rose-50/30 tabular-nums`}>
                           {eTotal > 0 ? formatCurrency(eTotal) : '-'}
                         </td>
 
-                        {/* 6. คงเหลือ */}
-                        <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-right font-black text-slate-900 tabular-nums`}>
+                        {/* 7. กำไร/ขาดทุน */}
+                        <td className={`border-x border-slate-300 border-b border-dashed border-slate-400 px-3 ${isCompact ? 'py-2' : 'py-3'} text-right font-black tabular-nums ${netBalance >= 0 ? 'bg-[#e6f4ea] text-[#137333]' : 'bg-[#fce8e6] text-[#c5221f]'}`}>
                           {formatCurrency(netBalance)}
                         </td>
                       </tr>
                     );
                   })
+                )}
+
+                {visibleCount < processedData.length && (
+                  <tr className="no-print">
+                    <td colSpan={7} className="text-center py-3 bg-slate-50 border border-slate-300">
+                      <button
+                        type="button"
+                        onClick={() => setVisibleCount(prev => prev + 35)}
+                        className="px-4 py-1.5 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-lg border border-slate-300 transition cursor-pointer shadow-2xs"
+                      >
+                        โหลดเพิ่มเติม (แสดง {visibleSheetData.length} จาก {processedData.length} รายการ)
+                      </button>
+                    </td>
+                  </tr>
                 )}
               </tbody>
 
@@ -1784,22 +2245,26 @@ export default function FinanceView({
                   <td colSpan={2} className="border border-slate-300 px-4 py-3 text-center">
                     ยอดรวมสุทธิ (Grand Total)
                   </td>
-                  <td className="border border-slate-300 px-3 py-3 text-right tabular-nums text-emerald-800">
-                    ฿{formatCurrency(financialSummary.totalRevenue)}
+                  <td className="border border-slate-300 px-3 py-3 text-right tabular-nums text-slate-900">
+                    ฿{formatCurrency(financialSummary.totalTransfers)}
                   </td>
-                  <td className="border border-slate-300 px-3 py-3 text-right tabular-nums text-indigo-800">
+                  <td className="border border-slate-300 px-3 py-3 text-right tabular-nums text-slate-900">
                     ฿{formatCurrency(financialSummary.totalSupport)}
                   </td>
-                  <td className="border border-slate-300 px-3 py-3 text-right tabular-nums text-rose-800">
+                  <td className="border border-slate-300 px-3 py-3 text-right tabular-nums text-emerald-800 bg-emerald-100/50 font-bold">
+                    ฿{formatCurrency(financialSummary.totalRevenue)}
+                  </td>
+                  <td className="border border-slate-300 px-3 py-3 text-right tabular-nums text-rose-800 bg-rose-100/50 font-bold">
                     ฿{formatCurrency(financialSummary.totalExpenses)}
                   </td>
-                  <td className="border border-slate-300 px-3 py-3 text-right tabular-nums text-emerald-900 bg-emerald-50/50">
+                  <td className={`border border-slate-300 px-3 py-3 text-right tabular-nums font-black ${financialSummary.totalProfit >= 0 ? 'bg-[#b7e1cd] text-[#0d652d]' : 'bg-[#fad2cf] text-[#b31412]'}`}>
                     ฿{formatCurrency(financialSummary.totalProfit)}
                   </td>
                 </tr>
               </tfoot>
             </table>
           </div>
+          )}
         </div>
       )}
 
@@ -1846,30 +2311,22 @@ export default function FinanceView({
                   ไม่พบงานตามเงื่อนไขที่เลือก
                 </div>
               ) : (
-                processedData.map((item) => {
+                visibleDashboardData.map((item) => {
                   const hasQuotation = item.quotationItems && item.quotationItems.length > 0;
-                  const qTotal = hasQuotation
-                    ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || 0), 0)
-                    : (parseFloat(item.wage) || 0);
-
+                  const qTotal = item._qTotal;
                   const hasSupport = item.customerSupport && item.customerSupport.length > 0;
-                  const sTotal = hasSupport
-                    ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
-                    : 0;
-
+                  const sTotal = item._sTotal;
                   const hasExpenses = item.expenses && item.expenses.length > 0;
-                  const eTotal = hasExpenses
-                    ? item.expenses.reduce((sum, e) => sum + (parseFloat(e.price) || 0), 0)
-                    : 0;
-
-                  const profit = qTotal - eTotal;
+                  const eTotal = item._eTotal;
+                  const profit = item._profit;
                   const isExpanded = !!expandedRows[item.id];
-                  const paymentStatus = item.paymentStatus || (item.dealStatus === 'completed' ? 'paid' : 'unpaid');
-                  const displayDate = formatItemDate(item.paymentDate || item.rawDateTime || item.date);
+                  const paymentStatus = item._paymentStatus;
+                  const displayDate = item._dateFormatted;
 
                   return (
                     <div
                       key={item.id}
+                      style={{ contentVisibility: 'auto', containIntrinsicSize: '0 120px' }}
                       className="border border-slate-200/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-7 hover:border-indigo-200 hover:shadow-lg transition-all duration-200 bg-white"
                     >
                       {/* --- ROW 1: Header (ID + Title + Status + Action) --- */}
@@ -2120,7 +2577,285 @@ export default function FinanceView({
                   );
                 })
               )}
+
+              {visibleCount < processedData.length && (
+                <div className="pt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCount(prev => prev + 35)}
+                    className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-bold rounded-2xl transition cursor-pointer"
+                  >
+                    โหลดเพิ่มเติม (แสดง {visibleDashboardData.length} จาก {processedData.length} รายการ)
+                  </button>
+                </div>
+              )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          VIEW 3: SLIPS TABLE VIEW (ตารางสลิปโอนเงิน)
+         ========================================================================= */}
+      {viewMode === 'slips' && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+            {/* Header Toolbar */}
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
+                  <Receipt className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-slate-900">
+                    ตารางสลิปโอนเงิน ({displayedSlipsData.length} รายการ)
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    แสดงรายการงานและหลักฐานสลิปโอนเงิน (มีสลิป {projectsWithSlipsCount} งาน)
+                  </p>
+                </div>
+              </div>
+
+              {/* Toolbar Controls */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Slips Filter Toggle: ทั้งหมด vs เฉพาะที่มีสลิป */}
+                <div className="bg-slate-100 p-1 rounded-xl flex items-center border border-slate-200 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => handleSlipsFilterModeChange('all')}
+                    className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer ${
+                      slipsFilterMode === 'all'
+                        ? 'bg-white text-slate-900 shadow-2xs'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    ทั้งหมด ({processedData.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSlipsFilterModeChange('has_slips')}
+                    className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 cursor-pointer ${
+                      slipsFilterMode === 'has_slips'
+                        ? 'bg-white text-indigo-700 shadow-2xs'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <span>เฉพาะมีสลิป</span>
+                    <span className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0.2 rounded-full font-extrabold">
+                      {projectsWithSlipsCount}
+                    </span>
+                  </button>
+                </div>
+
+                {/* Columns per Row Toggle: 3 vs 4 */}
+                <div className="bg-slate-100 p-1 rounded-xl flex items-center border border-slate-200 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => handleSlipsPerRowChange(3)}
+                    className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer ${
+                      slipsPerRow === 3
+                        ? 'bg-white text-slate-900 shadow-2xs'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                    title="แถวละ 3 รูป - ขนาดใหญ่ ตัวหนังสือและยอดเงินอ่านชัดเจน"
+                  >
+                    3 รูป/แถว (ชัดเจน)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSlipsPerRowChange(4)}
+                    className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer ${
+                      slipsPerRow === 4
+                        ? 'bg-white text-slate-900 shadow-2xs'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                    title="แถวละ 4 รูป - ขนาดกะทัดรัด"
+                  >
+                    4 รูป/แถว
+                  </button>
+                </div>
+
+                {/* Print Slips Button */}
+                <button
+                  type="button"
+                  onClick={() => handlePrint('slips')}
+                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-2xs active:scale-95 shrink-0"
+                  title="พิมพ์ตารางสลิปโอนเงิน A4"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>พิมพ์ A4</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Table */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/80 border-b border-slate-200 text-xs font-bold text-slate-600">
+                    <th className="py-3.5 px-4 w-28 sm:w-36 text-center border-r border-slate-200/60">
+                      วันที่
+                    </th>
+                    <th className="py-3.5 px-4 sm:px-6">
+                      รายการ
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {displayedSlipsData.length > 0 ? (
+                    visibleSlipsData.map((item) => {
+                      const itemDate = item._dateFormatted;
+                      const slips = item._slips;
+                      const hasSlips = item._hasSlips;
+
+                      return (
+                        <tr
+                          key={item.id}
+                          style={{ contentVisibility: 'auto', containIntrinsicSize: '0 160px' }}
+                          className="hover:bg-slate-50/40 transition"
+                        >
+                          {/* Date Column */}
+                          <td className="py-4 px-4 align-top text-center border-r border-slate-100">
+                            <span className="font-bold text-slate-900 text-xs sm:text-sm block">
+                              {itemDate || '-'}
+                            </span>
+                          </td>
+
+                          {/* Item & Slips Grid Column */}
+                          <td className="py-4 px-4 sm:px-6 align-top">
+                            {/* Project Header */}
+                            <div className="mb-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-slate-900 text-sm sm:text-base">
+                                  <span className="text-indigo-600 font-extrabold">{item.id}</span>
+                                  {' - '}
+                                  <span>{item.name || 'ไม่มีชื่อโปรเจค'}</span>
+                                </span>
+                                {onOpenProjectModal && (
+                                  <button
+                                    onClick={() => onOpenProjectModal(item, false)}
+                                    className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                                    title="เปิดแก้ไขงาน"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                              <div className="text-xs text-slate-400 font-medium flex items-center gap-1.5 mt-0.5">
+                                <span>ลูกค้า: <strong className="text-slate-600 font-semibold">{item.customer || '-'}</strong></span>
+                                <span>•</span>
+                                <span>ศิลปิน: <strong className="text-slate-600 font-semibold">{item.artist || '-'}</strong></span>
+                                {item.wage > 0 && (
+                                  <>
+                                    <span>•</span>
+                                    <span>ยอดงาน: <strong className="text-slate-700 font-semibold">฿{formatCurrency(item.wage)}</strong></span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Slips Flex Grid or No-Slip Note */}
+                            {hasSlips ? (
+                              <div className="flex flex-wrap items-start gap-3 pt-1">
+                                {slips.map((slip, slipIdx) => {
+                                  const slipSrc = typeof slip === 'object' ? slip.url : slip;
+                                  return (
+                                    <div
+                                      key={slip.id || slipIdx}
+                                      onClick={() => setPreviewSlipImage(slipSrc)}
+                                      className={`group relative rounded-xl overflow-hidden border border-slate-200 bg-white shadow-2xs hover:shadow-md hover:border-indigo-400 transition-all cursor-pointer ${
+                                        slipsPerRow === 3 ? 'h-64 sm:h-72' : 'h-48 sm:h-56'
+                                      } w-auto max-w-full`}
+                                    >
+                                      <img
+                                        src={processImageUrl(slipSrc)}
+                                        alt={`สลิปโอนเงิน ${slipIdx + 1}`}
+                                        className="h-full w-auto max-w-full object-contain transition-transform duration-200 group-hover:scale-102"
+                                        referrerPolicy="no-referrer"
+                                        onError={(e) => {
+                                          e.target.onerror = null;
+                                          e.target.src = "https://placehold.co/300x400?text=Slip+Error";
+                                        }}
+                                      />
+                                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white">
+                                        <Maximize2 className="w-5 h-5" />
+                                        <span className="text-xs font-bold">ดูขยาย</span>
+                                      </div>
+                                      <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-xs rounded text-[10px] text-white font-medium">
+                                        ใบที่ {slipIdx + 1}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="text-xs text-slate-400 italic py-1">
+                                - ไม่มีรูปสลิปแนบ -
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={2} className="py-16 text-center">
+                        <div className="flex flex-col items-center justify-center text-slate-400">
+                          <div className="p-3 bg-slate-100 rounded-full mb-3">
+                            <Receipt className="w-8 h-8 opacity-40 text-slate-500" />
+                          </div>
+                          <p className="font-bold text-slate-600 text-sm">ไม่พบรายการตามเงื่อนไขที่เลือก</p>
+                          <p className="text-xs text-slate-400 mt-1 max-w-sm">
+                            ลองปรับเปลี่ยนคำค้นหาหรือช่วงวันที่ในแถบด้านบน
+                          </p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+
+                  {visibleCount < displayedSlipsData.length && (
+                    <tr className="no-print">
+                      <td colSpan={2} className="py-3 text-center bg-slate-50 border-t border-slate-200">
+                        <button
+                          type="button"
+                          onClick={() => setVisibleCount(prev => prev + 35)}
+                          className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 transition cursor-pointer shadow-2xs"
+                        >
+                          โหลดเพิ่มเติม (แสดง {visibleSlipsData.length} จาก {displayedSlipsData.length} รายการ)
+                        </button>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox Modal for Slips View */}
+      {previewSlipImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setPreviewSlipImage(null)}
+        >
+          <div
+            className="relative max-w-2xl max-h-[90vh] bg-white rounded-2xl overflow-hidden shadow-2xl p-2 flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setPreviewSlipImage(null)}
+              className="absolute top-4 right-4 z-10 p-2 bg-black/60 hover:bg-black/80 text-white rounded-full transition shadow-md"
+              title="ปิด"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <img
+              src={processImageUrl(previewSlipImage)}
+              alt="สลิปโอนเงินขนาดเต็ม"
+              className="max-h-[82vh] w-auto max-w-full object-contain rounded-xl"
+              referrerPolicy="no-referrer"
+            />
           </div>
         </div>
       )}
