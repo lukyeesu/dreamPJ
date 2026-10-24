@@ -2776,18 +2776,18 @@ const App = () => {
                       </span>
                       <span className="text-sm text-indigo-700 font-black">฿{itemReceivable.toLocaleString()}</span>
                    </div>
-                   <div className="flex justify-between items-center mb-1">
-                      <span className="text-xs text-slate-500">ค่าจ้าง</span>
-                      <span className="text-xs text-emerald-600 font-bold flex items-center gap-1"><ArrowUpRight className="w-3 h-3" /> {item.wage.toLocaleString()}</span>
-                   </div>
                    {itemSupport > 0 && (
                        <div className="flex justify-between items-center mb-1">
-                          <span className="text-xs text-slate-500">ลูกค้าสนับสนุน</span>
+                          <span className="text-xs text-slate-500">เงินศิลปิน (สนับสนุน)</span>
                           <span className="text-xs text-blue-600 font-bold flex items-center gap-1">+ {itemSupport.toLocaleString()}</span>
                        </div>
                    )}
+                   <div className="flex justify-between items-center mb-1">
+                      <span className="text-xs text-slate-500">รายได้ (ค่าจ้าง)</span>
+                      <span className="text-xs text-emerald-600 font-bold flex items-center gap-1"><ArrowUpRight className="w-3 h-3" /> {item.wage.toLocaleString()}</span>
+                   </div>
                    <div className="flex justify-between items-center mb-2 border-b border-slate-200 pb-2">
-                      <span className="text-xs text-slate-500">รายจ่าย</span>
+                      <span className="text-xs text-slate-500">ค่าใช้จ่าย</span>
                       <span className="text-xs text-rose-500 font-bold flex items-center gap-1"><TrendingDown className="w-3 h-3" /> {itemExpenses.toLocaleString()}</span>
                    </div>
                    <div className="flex justify-between items-center">
@@ -2975,10 +2975,10 @@ const App = () => {
                                   ฿{itemReceivable.toLocaleString()}
                                 </span>
                                 <div className="text-xs text-slate-400 flex gap-1 items-center justify-end w-full whitespace-nowrap">
-                                    <span className="text-emerald-600" title="ค่าจ้าง">{item.wage.toLocaleString()}</span>
-                                    {itemSupport > 0 && <span className="text-blue-500" title="สนับสนุน">+{itemSupport.toLocaleString()}</span>}
+                                    {itemSupport > 0 && <span className="text-blue-500" title="เงินศิลปิน (สนับสนุน)">+{itemSupport.toLocaleString()}</span>}
+                                    <span className="text-emerald-600" title="รายได้ (ค่าจ้าง)">{item.wage.toLocaleString()}</span>
                                 </div>
-                                <span className="text-xs text-rose-500 font-medium flex items-center justify-end gap-1 w-full whitespace-nowrap" title="รายจ่าย">
+                                <span className="text-xs text-rose-500 font-medium flex items-center justify-end gap-1 w-full whitespace-nowrap" title="ค่าใช้จ่าย">
                                   <TrendingDown className="w-3 h-3 shrink-0" /> -{itemExpenses.toLocaleString()}
                                 </span>
                                 <span className={`text-xs font-bold ${itemProfit >= 0 ? 'text-indigo-600' : 'text-rose-600'} border-t border-slate-100 pt-1 mt-1 w-full text-right whitespace-nowrap`} title="กำไรสุทธิ">
@@ -5031,37 +5031,58 @@ const App = () => {
                          </div>
                      </div>
 
-                     {/* Summary Section - Redesigned */}
-                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
-                         <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100 flex flex-col justify-between">
-                            <div>
-                                <p className="text-sm font-bold text-indigo-800 mb-1">ยอดรวมสุทธิ</p>
-                                <p className="text-[10px] text-indigo-600 mb-2">(เรียกเก็บลูกค้า)</p>
-                            </div>
-                            <p className={`font-black text-indigo-900 tracking-tight break-all leading-tight ${((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) + (customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0))).toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
-                                ฿{((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) + (customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0))).toLocaleString()}
-                            </p>
+                     {/* Summary Section - Redesigned (Standard Financial Equation: 1.เงินศิลปิน -> 2.รายได้ -> 3.ค่าใช้จ่าย -> 4.กำไรสุทธิ) */}
+                     <div className="mt-6 space-y-2">
+                         <div className="flex justify-between items-center px-1">
+                             <span className="text-xs font-bold text-slate-500">สรุปการเงินโปรเจกต์</span>
+                             <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100">
+                                 ยอดเรียกเก็บสุทธิ: ฿{((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) + (customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0))).toLocaleString()}
+                             </span>
                          </div>
+                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                             {/* 1. เงินศิลปิน */}
+                             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col justify-between">
+                                <div>
+                                    <p className="text-sm font-bold text-slate-700 mb-1">1. เงินศิลปิน</p>
+                                    <p className="text-[10px] text-slate-500 mb-2">(ยอดสนับสนุน ไม่หักกำไร)</p>
+                                </div>
+                                <p className={`font-black text-slate-800 tracking-tight break-all leading-tight ${(customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)).toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
+                                    ฿{(customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)).toLocaleString()}
+                                </p>
+                             </div>
 
-                         <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 flex flex-col justify-between">
-                            <p className="text-sm font-bold text-emerald-600 mb-2">เสนอราคา</p>
-                            <p className={`font-black text-emerald-700 tracking-tight break-all leading-tight text-2xl`}>
-                                ฿{(quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)).toLocaleString()}
-                            </p>
-                         </div>
+                             {/* 2. รายได้ */}
+                             <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 flex flex-col justify-between">
+                                <div>
+                                    <p className="text-sm font-bold text-emerald-700 mb-1">2. รายได้</p>
+                                    <p className="text-[10px] text-emerald-600 mb-2">(รายการเสนอราคา)</p>
+                                </div>
+                                <p className={`font-black text-emerald-700 tracking-tight break-all leading-tight ${(quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)).toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
+                                    ฿{(quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)).toLocaleString()}
+                                </p>
+                             </div>
 
-                         <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col justify-between">
-                            <p className="text-sm font-bold text-slate-500 mb-2">รวมรายจ่ายจริง</p>
-                            <p className={`font-black text-rose-600 tracking-tight break-all leading-tight ${totalExpenses.toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
-                                ฿{totalExpenses.toLocaleString()}
-                            </p>
-                         </div>
-                         
-                         <div className="bg-indigo-600 text-white p-4 rounded-2xl shadow-lg shadow-indigo-200 flex flex-col justify-between">
-                            <p className="text-sm font-bold text-indigo-100 mb-2">กำไร (ไม่รวมเงินออเดอร์)</p>
-                            <p className={`font-black tracking-tight break-all leading-tight ${((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) - totalExpenses).toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
-                              {((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) - totalExpenses) >= 0 ? '+' : ''}฿{((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) - totalExpenses).toLocaleString()}
-                            </p>
+                             {/* 3. ค่าใช้จ่าย */}
+                             <div className="bg-rose-50 p-4 rounded-2xl border border-rose-100 flex flex-col justify-between">
+                                <div>
+                                    <p className="text-sm font-bold text-rose-700 mb-1">3. ค่าใช้จ่าย</p>
+                                    <p className="text-[10px] text-rose-500 mb-2">(รวมรายจ่ายจริง)</p>
+                                </div>
+                                <p className={`font-black text-rose-600 tracking-tight break-all leading-tight ${totalExpenses.toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
+                                    ฿{totalExpenses.toLocaleString()}
+                                </p>
+                             </div>
+                             
+                             {/* 4. กำไรสุทธิ */}
+                             <div className="bg-indigo-600 text-white p-4 rounded-2xl shadow-lg shadow-indigo-200 flex flex-col justify-between">
+                                <div>
+                                    <p className="text-sm font-bold text-indigo-100 mb-1">4. กำไรสุทธิ</p>
+                                    <p className="text-[10px] text-indigo-200 mb-2">(รายได้ - ค่าใช้จ่าย)</p>
+                                </div>
+                                <p className={`font-black tracking-tight break-all leading-tight ${((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) - totalExpenses).toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
+                                  {((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) - totalExpenses) >= 0 ? '+' : ''}฿{((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) - totalExpenses).toLocaleString()}
+                                </p>
+                             </div>
                          </div>
                      </div>
 

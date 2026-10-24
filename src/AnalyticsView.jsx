@@ -170,8 +170,21 @@ const AnalyticsView = ({
     <div className="space-y-8 flex flex-col min-h-full pb-24 md:pb-6">
       {renderFilterCard && renderFilterCard()}
       
-      {/* 4 Summary Cards */}
+      {/* 4 Summary Cards (Standard Financial Equation: 1.เงินศิลปิน -> 2.รายได้ -> 3.ค่าใช้จ่าย -> 4.กำไรสุทธิ) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 px-4 sm:px-8 lg:px-10">
+        {/* 1. เงินศิลปิน (ลูกค้าซัพพอร์ต) */}
+        <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-slate-200 rounded-xl text-slate-600 group-hover:scale-110 transition-transform">
+              <Gift className="w-6 h-6" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-700">เงินศิลปิน (ยอดสนับสนุน)</h3>
+          </div>
+          <p className="text-3xl font-black text-slate-800">฿{currentSupport.toLocaleString()}</p>
+          <p className="text-sm text-slate-600 mt-1 font-medium">ส่งต่อศิลปิน ไม่หักกำไร</p>
+        </div>
+
+        {/* 2. รายได้ (ค่าจ้าง) */}
         <div className="bg-emerald-50 p-6 rounded-[2rem] border border-emerald-100 shadow-sm relative overflow-hidden group hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 bg-emerald-100 rounded-xl text-emerald-600 group-hover:scale-110 transition-transform">
@@ -186,23 +199,13 @@ const AnalyticsView = ({
           <p className="text-sm text-emerald-600 mt-1 font-medium">จาก {totalProjects} งาน</p>
         </div>
 
-        <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-slate-200 rounded-xl text-slate-600 group-hover:scale-110 transition-transform">
-              <Gift className="w-6 h-6" />
-            </div>
-            <h3 className="text-lg font-bold text-slate-700">ลูกค้าซัพพอร์ต</h3>
-          </div>
-          <p className="text-3xl font-black text-slate-800">฿{currentSupport.toLocaleString()}</p>
-          <p className="text-sm text-slate-600 mt-1 font-medium">ยอดสนับสนุนศิลปิน</p>
-        </div>
-
+        {/* 3. ค่าใช้จ่าย (รวมรายจ่าย) */}
         <div className="bg-rose-50 p-6 rounded-[2rem] border border-rose-100 shadow-sm relative overflow-hidden group hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 bg-rose-100 rounded-xl text-rose-600 group-hover:scale-110 transition-transform">
               <TrendingDown className="w-6 h-6" />
             </div>
-            <h3 className="text-lg font-bold text-rose-700">รวมรายจ่าย</h3>
+            <h3 className="text-lg font-bold text-rose-700">ค่าใช้จ่าย (รวมรายจ่าย)</h3>
           </div>
           <p className="text-3xl font-black text-rose-800">฿{currentCost.toLocaleString()}</p>
           <p className="text-sm text-rose-600 mt-1 font-medium">
@@ -210,6 +213,7 @@ const AnalyticsView = ({
           </p>
         </div>
 
+        {/* 4. กำไรสุทธิ */}
         <div className="bg-indigo-50 p-6 rounded-[2rem] border border-indigo-100 shadow-sm relative overflow-hidden group hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 bg-indigo-100 rounded-xl text-indigo-600 group-hover:scale-110 transition-transform">

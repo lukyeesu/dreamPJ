@@ -18,15 +18,15 @@
     "semantic_hash": ""
   },
   "src/AnalyticsView.jsx": {
-    "mtime": 1792302780.7716503,
-    "seen": 1792457266.8763657,
-    "ast_hash": "15d717cad43c5cb910b831e34e839a19",
+    "mtime": 1792636632.5723524,
+    "seen": 1792636857.5506508,
+    "ast_hash": "8ca4d8b137b9efc9658f9c790e7630dd",
     "semantic_hash": ""
   },
   "src/App.jsx": {
-    "mtime": 1792564007.352424,
-    "seen": 1792565000.445194,
-    "ast_hash": "ab9f81f9f01ca03dd36872b511db7f75",
+    "mtime": 1792636709.4454598,
+    "seen": 1792636857.5506532,
+    "ast_hash": "2bc3df52de19046501c0ded2257d38ac",
     "semantic_hash": ""
   },
   "src/CalendarView.jsx": {
@@ -36,9 +36,9 @@
     "semantic_hash": ""
   },
   "src/FinanceView.jsx": {
-    "mtime": 1792572365.9347167,
-    "seen": 1792572450.1149278,
-    "ast_hash": "57f0766d217388e66eab61489fbf9ca8",
+    "mtime": 1792636642.0896044,
+    "seen": 1792636857.5506573,
+    "ast_hash": "cedb2953a32a7e35cf39d55dff758ecb",
     "semantic_hash": ""
   },
   "src/PlansView.jsx": {
@@ -126,9 +126,9 @@
     "semantic_hash": ""
   },
   "src/components/modals/SharePreviewModal.jsx": {
-    "mtime": 1792302794.9214973,
-    "seen": 1792457266.8764076,
-    "ast_hash": "02907ce8790cc8c26836c0aa2cc79206",
+    "mtime": 1792636727.977393,
+    "seen": 1792636857.5506854,
+    "ast_hash": "c5969b11818a36fec8346e46baae3643",
     "semantic_hash": ""
   },
   "src/constants/appConstants.js": {
@@ -174,9 +174,9 @@
     "semantic_hash": ""
   },
   "GEMINI.md": {
-    "mtime": 1792457509.273815,
-    "seen": 1792457880.1428316,
-    "ast_hash": "c7cd9e61bf7d8282ff8fdb8f0bbb43a6",
+    "mtime": 1792635892.7054076,
+    "seen": 1792636857.550702,
+    "ast_hash": "9080b44893d9f7c6b5f5a6c565219f5c",
     "semantic_hash": ""
   },
   "README.md": {
@@ -231,6 +231,12 @@
     "mtime": 1770496984.6878705,
     "seen": 1792457266.8764417,
     "ast_hash": "f0402b67b6ce880f65666bb49e841696",
+    "semantic_hash": ""
+  },
+  ".agents/memory/SESSION_LOG.md": {
+    "mtime": 1792636844.3444624,
+    "seen": 1792636857.5507002,
+    "ast_hash": "74996f734d086fd055847df19331d7de",
     "semantic_hash": ""
   }
 }

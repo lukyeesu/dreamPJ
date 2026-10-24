@@ -1,15 +1,16 @@
 {
   "0": "package.json",
-  "1": "App.jsx",
+  "1": "ShopFooter.jsx",
   "2": "processImageUrl",
   "3": "แผนพัฒนา: ระบบหน้าการเงินและตารางบันทึกกำไรขาดทุน (Flower2U)",
-  "4": "react",
+  "4": "App.jsx",
   "5": "devDependencies",
   "6": "Active Skills & Engineering Directives",
   "7": "SettingsView.jsx",
-  "8": "FinanceView.jsx",
+  "8": "Flower2U - Native Session Memory & Context Ledger",
   "9": "React + Vite",
   "10": "tailwind.config.js",
   "11": "vercel.json",
-  "12": "postcss.config.js"
+  "12": "postcss.config.js",
+  "13": "FinanceView.jsx"
 }

@@ -196,22 +196,22 @@ ${moneyOrderDetails}${quotationDetails}
       }
     }
 
-    // Prepare Items List
+    // Prepare Items List (Order: 1. Support / เงินศิลปิน, 2. Quotation / รายได้)
     const allItems = [];
-    if (data.quotationItems) {
-      data.quotationItems.forEach(item => {
-        allItems.push({ ...item, type: 'quotation' });
-      });
-    }
-    if (allItems.length === 0 && parseFloat(data.wage) > 0) {
-      allItems.push({ category: '', detail: 'ค่าบริการรวม', price: data.wage, type: 'quotation' });
-    }
     if (data.customerSupport) {
       data.customerSupport.forEach(item => {
         if (parseFloat(item.price) > 0) {
           allItems.push({ ...item, type: 'support' });
         }
       });
+    }
+    if (data.quotationItems) {
+      data.quotationItems.forEach(item => {
+        allItems.push({ ...item, type: 'quotation' });
+      });
+    }
+    if (allItems.filter(i => i.type === 'quotation').length === 0 && parseFloat(data.wage) > 0) {
+      allItems.push({ category: '', detail: 'ค่าบริการรวม', price: data.wage, type: 'quotation' });
     }
 
     // Totals Calculation

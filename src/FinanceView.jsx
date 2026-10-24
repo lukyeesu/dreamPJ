@@ -1346,8 +1346,8 @@ export default function FinanceView({
       "ลูกค้า",
       "ศิลปิน",
       "สถานะการชำระเงิน",
-      "ยอดใบเสนอราคา",
       "ยอดเงินสนับสนุนศิลปิน",
+      "ยอดใบเสนอราคา",
       "รายจ่ายจริง",
       "กำไรสุทธิ",
       "ยอดมัดจำ"
@@ -1379,8 +1379,8 @@ export default function FinanceView({
         `"${(item.customer || '').replace(/"/g, '""')}"`,
         `"${(item.artist || '').replace(/"/g, '""')}"`,
         `"${status}"`,
-        qTotal,
         sTotal,
+        qTotal,
         eTotal,
         profit,
         parseFloat(item.depositAmount) || 0
@@ -2454,31 +2454,31 @@ export default function FinanceView({
                         )}
                       </div>
 
-                      {/* --- ROW 3: Financial 4-Step Metric Strip (The Financial Equation: Revenue -> Support -> Expenses = Profit) --- */}
+                      {/* --- ROW 3: Financial 4-Step Metric Strip (The Financial Equation: Support -> Revenue -> Expenses = Profit) --- */}
                       <div className="mt-3.5 sm:mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 lg:gap-3.5 text-left">
-                        {/* 1. รายรับ (Quotation) */}
-                        <div className="bg-slate-50/80 p-3 sm:p-3.5 lg:p-4 rounded-xl sm:rounded-2xl border border-slate-100 flex flex-col justify-between">
-                          <span className="text-xs sm:text-sm lg:text-base font-bold text-slate-500 block truncate">
-                            1. รายรับ (ค่าจ้าง)
-                          </span>
-                          <span className="text-base sm:text-lg md:text-xl xl:text-2xl font-black text-slate-900 tracking-tight tabular-nums mt-1 sm:mt-1.5">
-                            ฿{formatCurrency(qTotal)}
-                          </span>
-                          <span className="text-[11px] sm:text-xs lg:text-sm text-slate-400 font-medium truncate mt-1">
-                            {hasQuotation ? `${item.quotationItems.length} รายการ` : 'ค่าจ้างรวม'}
-                          </span>
-                        </div>
-
-                        {/* 2. เงินส่งต่อศิลปิน (Support) */}
+                        {/* 1. เงินส่งต่อศิลปิน (Support) */}
                         <div className="bg-indigo-50/40 p-3 sm:p-3.5 lg:p-4 rounded-xl sm:rounded-2xl border border-indigo-100/70 flex flex-col justify-between">
                           <span className="text-xs sm:text-sm lg:text-base font-bold text-indigo-700 block truncate">
-                            2. ส่งต่อศิลปิน
+                            1. ส่งต่อศิลปิน
                           </span>
                           <span className="text-base sm:text-lg md:text-xl xl:text-2xl font-black text-indigo-700 tracking-tight tabular-nums mt-1 sm:mt-1.5">
                             {sTotal > 0 ? `฿${formatCurrency(sTotal)}` : '-'}
                           </span>
                           <span className="text-[11px] sm:text-xs lg:text-sm text-indigo-400 font-medium truncate mt-1">
                             {sTotal > 0 ? `${item.customerSupport?.length || 0} รายการ` : 'ไม่มียอดส่งต่อ'}
+                          </span>
+                        </div>
+
+                        {/* 2. รายรับ (Quotation) */}
+                        <div className="bg-slate-50/80 p-3 sm:p-3.5 lg:p-4 rounded-xl sm:rounded-2xl border border-slate-100 flex flex-col justify-between">
+                          <span className="text-xs sm:text-sm lg:text-base font-bold text-slate-500 block truncate">
+                            2. รายรับ
+                          </span>
+                          <span className="text-base sm:text-lg md:text-xl xl:text-2xl font-black text-slate-900 tracking-tight tabular-nums mt-1 sm:mt-1.5">
+                            ฿{formatCurrency(qTotal)}
+                          </span>
+                          <span className="text-[11px] sm:text-xs lg:text-sm text-slate-400 font-medium truncate mt-1">
+                            {hasQuotation ? `${item.quotationItems.length} รายการ` : 'ค่าจ้างรวม'}
                           </span>
                         </div>
 
@@ -2539,38 +2539,7 @@ export default function FinanceView({
                       {/* --- ROW 5: Detailed Breakdown Drawer (When Expanded) --- */}
                       {isExpanded && (
                         <div className="mt-3 sm:mt-5 pt-3 sm:pt-5 border-t border-slate-100 grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 lg:gap-5 animate-in fade-in duration-200">
-                          {/* 1. Quotation breakdown */}
-                          <div className="bg-slate-50/90 p-3.5 sm:p-5 rounded-xl sm:rounded-2xl border border-slate-200/70 flex flex-col justify-between">
-                            <div>
-                              <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-200 text-emerald-800 font-bold text-xs sm:text-sm lg:text-base">
-                                <span className="flex items-center gap-2">
-                                  <FileText className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-emerald-600 shrink-0" />
-                                  <span>รายการเสนอราคา</span>
-                                </span>
-                                <span className="tabular-nums font-black text-emerald-700 text-sm sm:text-base lg:text-lg">฿{formatCurrency(qTotal)}</span>
-                              </div>
-                              <div className="space-y-2">
-                                {hasQuotation ? (
-                                  item.quotationItems.map((q, idx) => (
-                                    <div key={idx} className="flex items-start justify-between gap-2.5 text-slate-600 text-xs sm:text-sm pb-1.5 border-b border-slate-100 last:border-b-0">
-                                      <div className="truncate flex-1">
-                                        <span className="font-semibold text-slate-700 block">{q.detail || 'รายการงาน'}</span>
-                                        <div className="flex items-center gap-2 text-[11px] sm:text-xs text-slate-400 mt-0.5">
-                                          {q.category && <span>({q.category})</span>}
-                                          {q.date && <span>{formatItemDate(q.date)}</span>}
-                                        </div>
-                                      </div>
-                                      <span className="font-bold text-slate-800 tabular-nums shrink-0 text-xs sm:text-sm lg:text-base">฿{formatCurrency(q.price)}</span>
-                                    </div>
-                                  ))
-                                ) : (
-                                  <p className="text-xs sm:text-sm text-slate-400 italic">ค่าจ้าง/บริการเหมา ฿{formatCurrency(qTotal)}</p>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* 2. Support breakdown */}
+                          {/* 1. Support breakdown */}
                           <div className="bg-indigo-50/50 p-3.5 sm:p-5 rounded-xl sm:rounded-2xl border border-indigo-100 flex flex-col justify-between">
                             <div>
                               <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-indigo-100 text-indigo-900 font-bold text-xs sm:text-sm lg:text-base">
@@ -2599,6 +2568,37 @@ export default function FinanceView({
                                   })
                                 ) : (
                                   <p className="text-xs sm:text-sm text-slate-400 italic">ไม่มีรายการส่งต่อศิลปิน</p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 2. Quotation breakdown */}
+                          <div className="bg-slate-50/90 p-3.5 sm:p-5 rounded-xl sm:rounded-2xl border border-slate-200/70 flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-200 text-emerald-800 font-bold text-xs sm:text-sm lg:text-base">
+                                <span className="flex items-center gap-2">
+                                  <FileText className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-emerald-600 shrink-0" />
+                                  <span>รายการเสนอราคา (รายรับ)</span>
+                                </span>
+                                <span className="tabular-nums font-black text-emerald-700 text-sm sm:text-base lg:text-lg">฿{formatCurrency(qTotal)}</span>
+                              </div>
+                              <div className="space-y-2">
+                                {hasQuotation ? (
+                                  item.quotationItems.map((q, idx) => (
+                                    <div key={idx} className="flex items-start justify-between gap-2.5 text-slate-600 text-xs sm:text-sm pb-1.5 border-b border-slate-100 last:border-b-0">
+                                      <div className="truncate flex-1">
+                                        <span className="font-semibold text-slate-700 block">{q.detail || 'รายการงาน'}</span>
+                                        <div className="flex items-center gap-2 text-[11px] sm:text-xs text-slate-400 mt-0.5">
+                                          {q.category && <span>({q.category})</span>}
+                                          {q.date && <span>{formatItemDate(q.date)}</span>}
+                                        </div>
+                                      </div>
+                                      <span className="font-bold text-slate-800 tabular-nums shrink-0 text-xs sm:text-sm lg:text-base">฿{formatCurrency(q.price)}</span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <p className="text-xs sm:text-sm text-slate-400 italic">ค่าจ้าง/บริการเหมา ฿{formatCurrency(qTotal)}</p>
                                 )}
                               </div>
                             </div>
