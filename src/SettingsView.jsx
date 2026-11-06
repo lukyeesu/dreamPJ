@@ -1,12 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Loader2,
   Camera,
   Trash2,
   Mail,
   Phone,
-  Users,
-  UserPlus,
   HardDrive,
   Folder,
   FolderPlus,
@@ -25,6 +23,9 @@ import {
   DollarSign,
   Briefcase,
   Truck,
+  MapPin,
+  Building2,
+  ExternalLink,
   LogOut,
   Facebook,
   Instagram,
@@ -34,8 +35,31 @@ import {
   GripVertical,
   Layers,
   Edit,
-  X
+  X,
+  User,
+  Shield,
+  Sliders,
+  Database,
+  Lock,
+  Eye,
+  EyeOff,
+  CreditCard,
+  HeartHandshake,
+  CheckCircle2,
+  AlertCircle,
+  RotateCcw,
+  Calendar,
+  UserPlus,
+  Crosshair
 } from 'lucide-react';
+import Toast from './components/common/Toast';
+import ConfirmDialog from './components/common/ConfirmDialog';
+import ModernDateTimePicker from './components/common/ModernDateTimePicker';
+import { saveStaffSync } from './services/syncService';
+import { getActiveClient } from './services/supabaseClient';
+import db from './services/db';
+import { applyThemeVariables, broadcastShopInfoSync } from './utils/themeManager';
+import { parseCoordinatesFromInput, DEFAULT_FLOWER2U_HUB } from './VenuesView';
 
 // Custom Social Icons
 const LineIcon = ({ className }) => (
@@ -68,17 +92,17 @@ const TelegramIcon = ({ className }) => (
 
 // Color and Theme Presets
 const defaultThemeColors = {
-  indigo: { 
-    label: 'Indigo', 
-    main: '#4f46e5', hover: '#4338ca', light: '#eef2ff', textLight: '#6366f1',
-    gradientFrom: '#4f46e5', gradientTo: '#7c3aed',
-    shadow: 'rgba(79, 70, 229, 0.4)'
+  violet: { 
+    label: 'Violet (ธีมหลัก #8B5CF6)', 
+    main: '#8b5cf6', hover: '#7c3aed', light: '#f5f3ff', textLight: '#8b5cf6',
+    gradientFrom: '#8b5cf6', gradientTo: '#7c3aed',
+    shadow: 'rgba(139, 92, 246, 0.35)' 
   },
-  blue: { 
-    label: 'Blue', 
-    main: '#2563eb', hover: '#1d4ed8', light: '#eff6ff', textLight: '#3b82f6',
-    gradientFrom: '#2563eb', gradientTo: '#06b6d4',
-    shadow: 'rgba(37, 99, 235, 0.4)' 
+  rose: { 
+    label: 'Rose', 
+    main: '#e11d48', hover: '#be123c', light: '#fff1f2', textLight: '#f43f5e',
+    gradientFrom: '#e11d48', gradientTo: '#db2777',
+    shadow: 'rgba(225, 29, 72, 0.4)' 
   },
   emerald: { 
     label: 'Emerald', 
@@ -86,11 +110,11 @@ const defaultThemeColors = {
     gradientFrom: '#059669', gradientTo: '#14b8a6',
     shadow: 'rgba(5, 150, 105, 0.4)' 
   },
-  rose: { 
-    label: 'Rose', 
-    main: '#e11d48', hover: '#be123c', light: '#fff1f2', textLight: '#f43f5e',
-    gradientFrom: '#e11d48', gradientTo: '#db2777',
-    shadow: 'rgba(225, 29, 72, 0.4)' 
+  blue: { 
+    label: 'Blue', 
+    main: '#2563eb', hover: '#1d4ed8', light: '#eff6ff', textLight: '#3b82f6',
+    gradientFrom: '#2563eb', gradientTo: '#06b6d4',
+    shadow: 'rgba(37, 99, 235, 0.4)' 
   },
   amber: { 
     label: 'Amber', 
@@ -104,6 +128,12 @@ const defaultThemeColors = {
     gradientFrom: '#475569', gradientTo: '#0f172a',
     shadow: 'rgba(71, 85, 105, 0.4)' 
   },
+  indigo: { 
+    label: 'Indigo', 
+    main: '#4f46e5', hover: '#4338ca', light: '#eef2ff', textLight: '#6366f1',
+    gradientFrom: '#4f46e5', gradientTo: '#7c3aed',
+    shadow: 'rgba(79, 70, 229, 0.4)'
+  },
   rainbow: { 
     label: 'Rainbow', 
     main: '#8b5cf6', hover: '#7c3aed', light: '#faf5ff', textLight: '#8b5cf6',
@@ -114,13 +144,13 @@ const defaultThemeColors = {
 };
 
 const colorPresets = [
+  { name: 'Violet', value: 'bg-violet-50 text-violet-700 border-violet-100', dot: 'bg-violet-500' },
+  { name: 'Rose', value: 'bg-rose-50 text-rose-700 border-rose-100', dot: 'bg-rose-500' },
   { name: 'Slate', value: 'bg-slate-50 text-slate-500 border-slate-200', dot: 'bg-slate-400' },
+  { name: 'Emerald', value: 'bg-emerald-50 text-emerald-700 border-emerald-100', dot: 'bg-emerald-500' },
+  { name: 'Amber', value: 'bg-amber-50 text-amber-700 border-amber-100', dot: 'bg-amber-500' },
   { name: 'Blue', value: 'bg-blue-50 text-blue-700 border-blue-100', dot: 'bg-blue-500' },
   { name: 'Indigo', value: 'bg-indigo-50 text-indigo-700 border-indigo-100', dot: 'bg-indigo-500' },
-  { name: 'Violet', value: 'bg-violet-50 text-violet-700 border-violet-100', dot: 'bg-violet-500' },
-  { name: 'Amber', value: 'bg-amber-50 text-amber-700 border-amber-100', dot: 'bg-amber-500' },
-  { name: 'Emerald', value: 'bg-emerald-50 text-emerald-700 border-emerald-100', dot: 'bg-emerald-500' },
-  { name: 'Rose', value: 'bg-rose-50 text-rose-700 border-rose-100', dot: 'bg-rose-500' },
   { name: 'Orange', value: 'bg-orange-50 text-orange-700 border-orange-100', dot: 'bg-orange-500' },
 ];
 
@@ -130,6 +160,75 @@ const systemStatusTypes = [
   { value: 'pending', label: 'รอดำเนินการ', color: 'text-amber-600 bg-amber-50' },
   { value: 'cancelled', label: 'ยกเลิก/มีปัญหา', color: 'text-rose-600 bg-rose-50' },
   { value: 'declined', label: 'ลูกค้าไม่อนุมัติ', color: 'text-gray-600 bg-gray-50' }
+];
+
+// Default Permission Matrix
+export const DEFAULT_PERMISSION_MATRIX = {
+  admin: {
+    label: 'แอดมิน (Admin)',
+    code: '11',
+    allowed_pages: ['Calendar', 'Plans', 'Finance', 'Quotations', 'Inventory', 'Venues', 'Artists', 'Customers', 'Staff', 'Analytics', 'Settings'],
+    can_edit_pricing: true,
+    can_delete_project: true,
+    can_borrow_tools: true,
+    can_manage_users: true
+  },
+  technician: {
+    label: 'ช่างจัดดอกไม้ (Technician)',
+    code: '21',
+    allowed_pages: ['Calendar', 'Plans', 'Inventory', 'Venues', 'Artists'],
+    can_edit_pricing: false,
+    can_delete_project: false,
+    can_borrow_tools: true,
+    can_manage_users: false
+  },
+  driver: {
+    label: 'พนักงานจัดส่ง (Driver)',
+    code: '31',
+    allowed_pages: ['Calendar', 'Plans', 'Venues'],
+    can_edit_pricing: false,
+    can_delete_project: false,
+    can_borrow_tools: false,
+    can_manage_users: false
+  },
+  accountant: {
+    label: 'ฝ่ายบัญชี/การเงิน (Accountant)',
+    code: '41',
+    allowed_pages: ['Calendar', 'Plans', 'Finance', 'Quotations', 'Customers', 'Analytics'],
+    can_edit_pricing: true,
+    can_delete_project: false,
+    can_borrow_tools: false,
+    can_manage_users: false
+  }
+};
+
+export const SYSTEM_MODULES = [
+  { id: 'Calendar', label: 'ปฏิทิน & คิวงาน (Calendar)', tag: 'calendar', desc: 'ตารางคิวงานจัดดอกไม้ ส่งมอบ นัดหมาย' },
+  { id: 'Plans', label: 'แผนงาน & โปรเจกต์ (Plans)', tag: 'plans', desc: 'การจัดการโปรเจกต์ สเปกจัดฉาก ช่างหน้างาน' },
+  { id: 'Finance', label: 'การเงิน & รายรับ-รายจ่าย (Finance)', tag: 'finance', desc: 'ยอดจ้าง เงินศิลปิน รายจ่ายจริง กำไรสุทธิ สลิป' },
+  { id: 'Quotations', label: 'ใบเสนอราคา (Quotations)', tag: 'quotations', desc: 'คำนวณต้นทุนฉาก/ดอกไม้ ออกใบเสนอราคา PDF' },
+  { id: 'Inventory', label: 'คลังพัสดุ & ยืม-คืน (Inventory)', tag: 'inventory', desc: 'สต็อกพัสดุ โฟม/ขาตั้ง และประวัติยืม-คืนอุปกรณ์' },
+  { id: 'Venues', label: 'สถานที่จัดส่ง & ลายแทง (Venues)', tag: 'venues', desc: 'พิกัดส่งลูกค้า จุดโหลดของ Loading Dock เบอร์ รปภ.' },
+  { id: 'Artists', label: 'ข้อมูลศิลปิน (Artists)', tag: 'artists', desc: 'ทำเนียบศิลปิน ดอกไม้ที่ชอบ ยอดซัพพอร์ตสะสม' },
+  { id: 'Customers', label: 'ข้อมูลลูกค้า (Customers)', tag: 'customers', desc: 'ทะเบียนลูกค้า บ้านเบสแฟนคลับ VIP และยอดซื้อ' },
+  { id: 'Staff', label: 'พนักงาน & ทีมงาน (Staff)', tag: 'staff', desc: 'บัญชีพนักงาน รหัสพนักงาน เบอร์โทร และสิทธิ์' },
+  { id: 'Analytics', label: 'วิเคราะห์ธุรกิจ (Analytics)', tag: 'analytics', desc: 'กราฟรายได้ ยอดขายเฉลี่ย ศิลปินยอดนิยม' },
+  { id: 'Settings', label: 'ตั้งค่าระบบ (Settings)', tag: 'settings', desc: 'ข้อมูลร้าน โลโก้ บอท และกำหนดสิทธิ์' }
+];
+
+export const ACTION_PERMISSIONS = [
+  { key: 'can_edit_pricing', label: 'แก้ไขราคา & ต้นทุน (Pricing/Quotes)', desc: 'อนุญาตให้กำหนดราคาขาย ปรับต้นทุน และแก้อัตรากำไร' },
+  { key: 'can_delete_project', label: 'ลบโปรเจกต์งาน (Delete Projects)', desc: 'อนุญาตให้ลบงานหรือโปรเจกต์ออกจากระบบ' },
+  { key: 'can_borrow_tools', label: 'เบิก-ยืมอุปกรณ์ในคลัง (Borrow Tools)', desc: 'อนุญาตให้ทำรายการยืม-คืนอุปกรณ์และพัสดุ' },
+  { key: 'can_manage_users', label: 'จัดการพนักงาน & สิทธิ์ (Manage Users)', desc: 'อนุญาตให้สร้าง/แก้ไขพนักงานและเปลี่ยนสิทธิ์การใช้งาน' }
+];
+
+const SETTINGS_CATEGORIES = [
+  { id: 'permissions', label: 'สิทธิ์และบทบาท', icon: Shield, desc: 'กำหนดสิทธิ์การเข้าถึงแต่ละหน้าจอของทุกตำแหน่ง' },
+  { id: 'shop', label: 'ข้อมูลร้าน & แบรนด์', icon: StoreIcon, desc: 'โลโก้ ชื่อร้าน ข้อมูลติดต่อ โซเชียล และธีมสี' },
+  { id: 'integrations', label: 'การเชื่อมต่อ & บอท', icon: Bot, desc: 'Google Drive, LINE Bot, Telegram' },
+  { id: 'options', label: 'ตัวเลือกระบบ', icon: Sliders, desc: 'หมวดหมู่งาน หมวดหมู่ค่าใช้จ่าย และสถานะงาน' },
+  { id: 'database', label: 'ฐานข้อมูล & ซิงค์', icon: Database, desc: 'สถานะ Supabase แคชในเครื่อง และการสำรอง' }
 ];
 
 const ListManager = ({ title, items = [], onAdd, onDelete, placeholder, icon: Icon, onSave }) => {
@@ -151,9 +250,9 @@ const ListManager = ({ title, items = [], onAdd, onDelete, placeholder, icon: Ic
   };
 
   return (
-    <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col h-full">
+    <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col h-full">
       <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold border-b border-slate-100 pb-3">
-        <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+        <div className="p-2 bg-violet-50 text-violet-600 rounded-lg">
           <Icon className="w-5 h-5" />
         </div>
         {title}
@@ -164,14 +263,14 @@ const ListManager = ({ title, items = [], onAdd, onDelete, placeholder, icon: Ic
           value={newItem}
           onChange={(e) => setNewItem(e.target.value)}
           placeholder={placeholder}
-          className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+          className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400 transition-all font-medium"
           onKeyDown={(e) => {
             if (e.key === 'Enter') handleAdd();
           }}
         />
         <button
           onClick={handleAdd}
-          className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition"
+          className="p-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl shadow-md shadow-violet-200/50 transition cursor-pointer active:scale-95"
         >
           <Plus className="w-5 h-5" />
         </button>
@@ -182,83 +281,86 @@ const ListManager = ({ title, items = [], onAdd, onDelete, placeholder, icon: Ic
             <span className="text-sm font-medium text-slate-700">{typeof item === 'string' ? item : item.label}</span>
             <button
               onClick={() => handleDelete(idx)}
-              className="text-slate-300 hover:text-rose-500 transition-colors p-1"
+              className="text-slate-400 hover:text-rose-500 transition-colors p-1"
             >
-              <XCircle className="w-4 h-4" />
+              <Trash2 className="w-4 h-4" />
             </button>
           </div>
         ))}
-        {items.length === 0 && <p className="text-center text-slate-400 text-xs py-4">ไม่มีรายการ</p>}
+        {items.length === 0 && (
+          <p className="text-sm text-slate-400 text-center py-4">ไม่มีรายการ</p>
+        )}
       </div>
     </div>
   );
 };
 
-const AdvancedListManager = ({ title, items = [], onUpdate, placeholder, icon: Icon, onSave }) => {
+const SortableListManager = ({ 
+  title, 
+  items = [], 
+  onUpdate, 
+  placeholder, 
+  icon: Icon, 
+  onSave,
+  type = 'status'
+}) => {
   const [newItemLabel, setNewItemLabel] = useState('');
+  const [newItemType, setNewItemType] = useState('active');
   const [selectedColor, setSelectedColor] = useState(colorPresets[0].value);
-  const [selectedType, setSelectedType] = useState('pending');
-  
-  const [isEditing, setIsEditing] = useState(false);
-  const [editIndex, setEditIndex] = useState(null);
+  const [editingIndex, setEditingIndex] = useState(-1);
   const [draggedItemIndex, setDraggedItemIndex] = useState(null);
 
   const handleAddOrUpdate = () => {
     if (!newItemLabel.trim()) return;
 
-    let updatedItems;
-    if (isEditing && editIndex !== null) {
-      updatedItems = [...items];
-      updatedItems[editIndex] = {
-        ...updatedItems[editIndex],
-        label: newItemLabel,
-        color: selectedColor,
-        type: selectedType
+    if (editingIndex >= 0) {
+      const updated = [...items];
+      updated[editingIndex] = {
+        ...updated[editingIndex],
+        label: newItemLabel.trim(),
+        type: type === 'transport' ? newItemType : undefined,
+        color: selectedColor
       };
-      setIsEditing(false);
-      setEditIndex(null);
+      onUpdate(updated);
+      onSave(updated);
+      setEditingIndex(-1);
     } else {
       const newItem = {
-        value: `custom-${Date.now()}`,
-        label: newItemLabel,
-        color: selectedColor,
-        type: selectedType
+        value: `custom_${Date.now()}`,
+        label: newItemLabel.trim(),
+        type: type === 'transport' ? newItemType : undefined,
+        color: selectedColor
       };
-      updatedItems = [...items, newItem];
+      const updated = [...items, newItem];
+      onUpdate(updated);
+      onSave(updated);
     }
-    
-    onUpdate(updatedItems);
-    onSave(updatedItems);
 
     setNewItemLabel('');
     setSelectedColor(colorPresets[0].value);
-    setSelectedType('pending');
+    setNewItemType('active');
   };
 
-  const startEdit = (index) => {
+  const handleEdit = (index) => {
     const item = items[index];
-    setNewItemLabel(item.label);
-    setSelectedColor(item.color);
-    setSelectedType(item.type || 'pending');
-    setIsEditing(true);
-    setEditIndex(index);
+    setEditingIndex(index);
+    setNewItemLabel(item.label || '');
+    setSelectedColor(item.color || colorPresets[0].value);
+    if (item.type) setNewItemType(item.type);
   };
 
-  const cancelEdit = () => {
-    setIsEditing(false);
-    setEditIndex(null);
+  const handleCancelEdit = () => {
+    setEditingIndex(-1);
     setNewItemLabel('');
     setSelectedColor(colorPresets[0].value);
-    setSelectedType('pending');
+    setNewItemType('active');
   };
 
   const handleDelete = (index) => {
     const updatedItems = items.filter((_, i) => i !== index);
     onUpdate(updatedItems);
     onSave(updatedItems);
-    if (isEditing && editIndex === index) {
-      cancelEdit();
-    }
+    if (editingIndex === index) handleCancelEdit();
   };
 
   const onDragStart = (e, index) => {
@@ -267,30 +369,28 @@ const AdvancedListManager = ({ title, items = [], onUpdate, placeholder, icon: I
   };
 
   const onDragOver = (e, index) => {
-    e.preventDefault(); 
+    e.preventDefault();
     if (draggedItemIndex === null || draggedItemIndex === index) return;
-
     const newItems = [...items];
     const draggedItem = newItems[draggedItemIndex];
     newItems.splice(draggedItemIndex, 1);
     newItems.splice(index, 0, draggedItem);
-
     setDraggedItemIndex(index);
     onUpdate(newItems);
   };
 
   const onDragEnd = () => {
-    if (draggedItemIndex !== null) {
-      onSave(items); 
-    }
     setDraggedItemIndex(null);
+    onSave(items);
   };
 
+  const isEditing = editingIndex >= 0;
+
   return (
-    <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col h-full">
+    <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col h-full">
       <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
         <div className="flex items-center gap-2 text-slate-800 font-bold">
-          <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+          <div className="p-2 bg-violet-50 text-violet-600 rounded-lg">
             <Icon className="w-5 h-5" />
           </div>
           {title}
@@ -308,7 +408,7 @@ const AdvancedListManager = ({ title, items = [], onUpdate, placeholder, icon: I
           value={newItemLabel}
           onChange={(e) => setNewItemLabel(e.target.value)}
           placeholder={placeholder}
-          className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+          className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400 transition-all font-medium"
           onKeyDown={(e) => {
             if (e.key === 'Enter') handleAddOrUpdate();
           }}
@@ -317,55 +417,61 @@ const AdvancedListManager = ({ title, items = [], onUpdate, placeholder, icon: I
         <div className="flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1 min-w-[140px]">
             <select
-              value={selectedType}
-              onChange={(e) => setSelectedType(e.target.value)}
-              className="w-full h-10 pl-3 pr-8 bg-white border border-slate-200 rounded-xl text-xs font-bold appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              value={selectedColor}
+              onChange={(e) => setSelectedColor(e.target.value)}
+              className="w-full pl-8 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400 transition-all cursor-pointer"
             >
-              {systemStatusTypes.map(t => (
-                <option key={t.value} value={t.value}>{t.label}</option>
+              {colorPresets.map(preset => (
+                <option key={preset.name} value={preset.value}>
+                  {preset.name}
+                </option>
               ))}
             </select>
-            <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-              <Layers className="w-3.5 h-3.5" />
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+              <span className={`w-3 h-3 rounded-full block ${colorPresets.find(p => p.value === selectedColor)?.dot || 'bg-slate-400'}`} />
             </div>
           </div>
 
-          {isEditing ? (
-            <div className="flex gap-1 shrink-0">
+          <div className="flex gap-2">
+            {isEditing ? (
+              <>
+                <button
+                  onClick={handleAddOrUpdate}
+                  className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition flex items-center justify-center font-bold text-xs cursor-pointer active:scale-95 shadow-sm"
+                  title="บันทึก"
+                >
+                  <Check className="w-4 h-4 mr-1" /> บันทึก
+                </button>
+                <button
+                  onClick={handleCancelEdit}
+                  className="p-2 bg-slate-200 text-slate-600 rounded-xl hover:bg-slate-300 transition flex items-center justify-center cursor-pointer active:scale-95"
+                  title="ยกเลิก"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </>
+            ) : (
               <button
                 onClick={handleAddOrUpdate}
-                className="h-10 px-3 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition shadow-sm flex items-center justify-center"
-                title="บันทึก"
+                className="w-full sm:w-auto px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl transition flex items-center justify-center font-bold text-xs shadow-md shadow-violet-200/50 cursor-pointer active:scale-95"
+                title="เพิ่ม"
               >
-                <Check className="w-5 h-5" />
+                <Plus className="w-4 h-4 mr-1" /> เพิ่ม
               </button>
-              <button
-                onClick={cancelEdit}
-                className="h-10 px-3 bg-slate-200 text-slate-500 rounded-xl hover:bg-slate-300 transition flex items-center justify-center"
-                title="ยกเลิก"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={handleAddOrUpdate}
-              className="h-10 px-4 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition shadow-indigo-200 shadow-sm font-bold flex items-center justify-center shrink-0"
-              title="เพิ่ม"
-            >
-              <Plus className="w-5 h-5 mr-1" /> เพิ่ม
-            </button>
-          )}
+            )}
+          </div>
         </div>
-        
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1 pt-2 border-t border-slate-100">
-          <Palette className="w-4 h-4 text-slate-400 shrink-0 mr-1" />
-          {colorPresets.map((preset) => (
+
+        {/* Color preview row */}
+        <div className="flex items-center gap-1.5 flex-wrap pt-1">
+          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mr-1">สีพรีเซ็ต:</span>
+          {colorPresets.map(preset => (
             <button
               key={preset.name}
+              type="button"
               onClick={() => setSelectedColor(preset.value)}
-              className={`w-6 h-6 rounded-full shrink-0 flex items-center justify-center transition-all ${preset.dot} ${
-                selectedColor === preset.value ? 'ring-2 ring-offset-2 ring-slate-400 scale-110' : 'hover:scale-110 opacity-70 hover:opacity-100'
+              className={`w-5 h-5 rounded-full ${preset.dot} transition-transform flex items-center justify-center cursor-pointer ${
+                selectedColor === preset.value ? 'scale-125 ring-2 ring-violet-500 ring-offset-1' : 'hover:scale-110 opacity-70 hover:opacity-100'
               }`}
               title={preset.name}
             >
@@ -376,77 +482,53 @@ const AdvancedListManager = ({ title, items = [], onUpdate, placeholder, icon: I
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar max-h-[300px] space-y-2 pr-1">
-        {items.map((item, idx) => {
-          const sysType = systemStatusTypes.find(t => t.value === item.type);
-          return (
-            <div 
-              key={item.value} 
-              draggable
-              onDragStart={(e) => onDragStart(e, idx)}
-              onDragOver={(e) => onDragOver(e, idx)}
-              onDragEnd={onDragEnd}
-              className={`flex justify-between items-center p-3 bg-white border border-slate-100 rounded-xl group hover:border-indigo-100 hover:shadow-sm transition-all ${
-                isEditing && editIndex === idx ? 'ring-2 ring-amber-400 border-transparent bg-amber-50' : ''
-              } ${draggedItemIndex === idx ? 'opacity-50 scale-[0.98]' : ''}`}
-            >
-              <div className="flex flex-col gap-1 overflow-hidden w-full">
-                <div className="flex items-center gap-3">
-                  <div className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 p-1">
-                    <GripVertical className="w-4 h-4" />
-                  </div>
-                  <div className={`w-3 h-3 rounded-full shrink-0 ${
-                    colorPresets.find(c => c.value === item.color)?.dot || 'bg-slate-300'
-                  }`}></div>
-                  <span className={`text-sm font-medium truncate ${isEditing && editIndex === idx ? 'text-amber-700' : 'text-slate-700'}`}>
-                    {item.label}
-                  </span>
-                </div>
-                <div className="pl-10">
-                  <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold inline-flex items-center ${sysType ? sysType.color : 'text-gray-500 bg-gray-100'}`}>
-                    <Layers className="w-3 h-3 mr-1" />
-                    {sysType ? sysType.label : 'ไม่ระบุ'}
-                  </span>
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity self-start">
-                <button
-                  onClick={() => startEdit(idx)}
-                  className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
-                  title="แก้ไข"
-                >
-                  <Edit className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => handleDelete(idx)}
-                  className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition"
-                  title="ลบ"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
+        {items.map((item, idx) => (
+          <div 
+            key={item.value || idx} 
+            draggable
+            onDragStart={(e) => onDragStart(e, idx)}
+            onDragOver={(e) => onDragOver(e, idx)}
+            onDragEnd={onDragEnd}
+            className={`flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-white hover:border-slate-300 transition-all cursor-move select-none shadow-sm ${
+              draggedItemIndex === idx ? 'opacity-40 border-dashed border-violet-400' : ''
+            } ${editingIndex === idx ? 'ring-2 ring-amber-400 bg-amber-50/20' : ''}`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <GripVertical className="w-4 h-4 text-slate-400 shrink-0" />
+              <span className={`text-xs px-2.5 py-1 rounded-lg border font-bold truncate ${item.color || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                {item.label}
+              </span>
             </div>
-          );
-        })}
-        {items.length === 0 && <p className="text-center text-slate-400 text-xs py-4">ไม่มีรายการ</p>}
+
+            <div className="flex items-center gap-1 shrink-0 ml-2">
+              <button
+                onClick={() => handleEdit(idx)}
+                className="p-1 text-slate-400 hover:text-violet-600 rounded-lg hover:bg-slate-50 transition cursor-pointer"
+                title="แก้ไข"
+              >
+                <Edit className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => handleDelete(idx)}
+                className="p-1 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-50 transition cursor-pointer"
+                title="ลบ"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
 };
 
-const SettingsView = ({
+function SettingsView({
   isSyncingSettings,
   isUploadingProfile,
   handleProfileImageUpload,
   userProfile,
   requestDeleteProfile,
-  authorizedUsers = [],
-  handleDeleteUser,
-  isAddingUser,
-  setIsAddingUser,
-  newUser,
-  setNewUser,
-  handleAddUser,
   driveFolderId,
   setDriveFolderId,
   driveFolders = [],
@@ -481,933 +563,1499 @@ const SettingsView = ({
   transportStatuses = [],
   setTransportStatuses,
   handleLogout,
-  processImageUrl = (url) => url
-}) => {
+  processImageUrl = (url) => url,
+  defaultCategory = 'permissions',
+  onUpdateUserProfile = null
+}) {
+  const [activeCategory, setActiveCategory] = useState(defaultCategory || 'permissions');
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+
+  // Theme Sync & Lag-free Debounced Save
+  const saveThemeTimeoutRef = useRef(null);
+  const rafThemeIdRef = useRef(null);
+  const customColorInputRef = useRef(null);
+  const customSwatchRef = useRef(null);
+  const shopInfoRef = useRef(shopInfo);
+  shopInfoRef.current = shopInfo;
+
+  // GPS Location Locator State & Handler
+  const [isLocatingGps, setIsLocatingGps] = useState(false);
+
+  const handleGetShopCurrentGps = () => {
+    if (!navigator.geolocation) {
+      showToast('เบราว์เซอร์ไม่รองรับ Geolocation', 'error');
+      return;
+    }
+    setIsLocatingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude.toFixed(6);
+        const lng = pos.coords.longitude.toFixed(6);
+        const coordsStr = `${lat}, ${lng}`;
+        const mapUrl = `https://maps.google.com/?q=${lat},${lng}`;
+        const updatedShop = {
+          ...shopInfo,
+          gpsLocation: coordsStr,
+          mapLink: shopInfo.mapLink || mapUrl
+        };
+        setShopInfo(updatedShop);
+        setIsLocatingGps(false);
+        showToast(`ดึงพิกัดร้านจาก GPS สำเร็จ: ${coordsStr}`, 'success');
+      },
+      (err) => {
+        setIsLocatingGps(false);
+        showToast(`ไม่สามารถดึงพิกัดได้: ${err.message}`, 'error');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  // Sync native input value when shopInfo.customColorValue updates externally
+  useEffect(() => {
+    if (customColorInputRef.current && shopInfo.customColorValue) {
+      customColorInputRef.current.value = shopInfo.customColorValue;
+    }
+    if (customSwatchRef.current && shopInfo.themeColor === 'custom' && shopInfo.customColorValue) {
+      customSwatchRef.current.style.background = shopInfo.customColorValue;
+    }
+  }, [shopInfo.customColorValue, shopInfo.themeColor]);
+
+  const applyThemeUpdate = (updatedShopInfo) => {
+    setShopInfo(updatedShopInfo);
+    applyThemeVariables(updatedShopInfo.themeColor, updatedShopInfo.themeMode, updatedShopInfo.customColorValue);
+    try {
+      localStorage.setItem('nexus_shop_info', JSON.stringify(updatedShopInfo));
+      broadcastShopInfoSync(updatedShopInfo);
+    } catch (e) {}
+
+    // 350ms Debounce for backend/network write to ensure silky-smooth 60fps color selection
+    if (saveThemeTimeoutRef.current) clearTimeout(saveThemeTimeoutRef.current);
+    saveThemeTimeoutRef.current = setTimeout(() => {
+      if (saveSystemSettings) {
+        saveSystemSettings('shop_info', updatedShopInfo, { silent: true });
+      }
+    }, 350);
+  };
+
+  const handleColorDrag = (val) => {
+    if (!val) return;
+    // 1. Instantly update custom swatch DOM directly (0ms, no React render)
+    if (customSwatchRef.current) {
+      customSwatchRef.current.style.background = val;
+    }
+    // 2. 60-120fps CSS variable update on :root (0.02ms)
+    if (rafThemeIdRef.current) cancelAnimationFrame(rafThemeIdRef.current);
+    rafThemeIdRef.current = requestAnimationFrame(() => {
+      applyThemeVariables('custom', shopInfoRef.current?.themeMode, val);
+    });
+    // 3. Debounce React state & storage sync to avoid re-rendering App.jsx during active drag
+    if (saveThemeTimeoutRef.current) clearTimeout(saveThemeTimeoutRef.current);
+    saveThemeTimeoutRef.current = setTimeout(() => {
+      applyThemeUpdate({
+        ...shopInfoRef.current,
+        themeColor: 'custom',
+        customColorValue: val
+      });
+    }, 180);
+  };
+
+  const handleColorCommit = (val) => {
+    if (!val) return;
+    if (rafThemeIdRef.current) cancelAnimationFrame(rafThemeIdRef.current);
+    if (saveThemeTimeoutRef.current) clearTimeout(saveThemeTimeoutRef.current);
+    if (customSwatchRef.current) {
+      customSwatchRef.current.style.background = val;
+    }
+    applyThemeVariables('custom', shopInfoRef.current?.themeMode, val);
+    applyThemeUpdate({
+      ...shopInfoRef.current,
+      themeColor: 'custom',
+      customColorValue: val
+    });
+  };
+
+  // Permissions Matrix State (matching Screenshot 2)
+  const [permissionMatrix, setPermissionMatrix] = useState(() => {
+    try {
+      const saved = localStorage.getItem('f2u_role_permissions');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return DEFAULT_PERMISSION_MATRIX;
+  });
+  const [isSavingPermissions, setIsSavingPermissions] = useState(false);
+
+  // Custom Role Modal & Delete State
+  const [isAddRoleModalOpen, setIsAddRoleModalOpen] = useState(false);
+  const [newRoleForm, setNewRoleForm] = useState({
+    label: '',
+    name: '',
+    code: '',
+    description: '',
+    allowed_pages: ['Calendar', 'Plans'],
+    can_edit_pricing: false,
+    can_delete_project: false,
+    can_borrow_tools: true,
+    can_manage_users: false
+  });
+  const [deleteRoleConfirm, setDeleteRoleConfirm] = useState({ isOpen: false, roleKey: null, roleLabel: '' });
+
+  // Load Cloud Roles from Supabase on mount
+  useEffect(() => {
+    const fetchCloudRoles = async () => {
+      try {
+        const client = getActiveClient();
+        if (!client) return;
+        const { data, error } = await client.from('roles').select('*');
+        if (!error && Array.isArray(data) && data.length > 0) {
+          const cloudMatrix = {};
+          data.forEach(r => {
+            const def = DEFAULT_PERMISSION_MATRIX[r.name] || {};
+            cloudMatrix[r.name] = {
+              label: r.label || def.label || r.name,
+              code: r.code || def.code || '99',
+              description: r.description || def.description || '',
+              allowed_pages: Array.isArray(r.allowed_pages) && r.allowed_pages.length > 0 ? r.allowed_pages : (def.allowed_pages || []),
+              can_edit_pricing: r.can_edit_pricing !== undefined ? !!r.can_edit_pricing : !!def.can_edit_pricing,
+              can_delete_project: r.can_delete_project !== undefined ? !!r.can_delete_project : !!def.can_delete_project,
+              can_borrow_tools: r.can_borrow_tools !== undefined ? !!r.can_borrow_tools : (def.can_borrow_tools !== undefined ? def.can_borrow_tools : true),
+              can_manage_users: r.can_manage_users !== undefined ? !!r.can_manage_users : !!def.can_manage_users,
+              is_system_role: ['admin', 'technician', 'driver', 'accountant'].includes(r.name) || !!r.is_system_role
+            };
+          });
+          setPermissionMatrix(prev => {
+            const merged = { ...DEFAULT_PERMISSION_MATRIX, ...prev, ...cloudMatrix };
+            localStorage.setItem('f2u_role_permissions', JSON.stringify(merged));
+            return merged;
+          });
+        }
+      } catch (err) {
+        console.warn('Could not load roles from Supabase:', err);
+      }
+    };
+    fetchCloudRoles();
+  }, []);
+
+  // Update defaultCategory when passed from parent
+  useEffect(() => {
+    if (defaultCategory) setActiveCategory(defaultCategory);
+  }, [defaultCategory]);
+
+  const showToast = (message, type = 'success') => {
+    setToast({ show: true, message, type });
+  };
+
+  // Toggle Page in Permission Matrix
+  const handleTogglePage = (roleKey, pageId) => {
+    setPermissionMatrix(prev => {
+      const currentRole = prev[roleKey] || { allowed_pages: [] };
+      const pages = currentRole.allowed_pages || [];
+      const updatedPages = pages.includes(pageId)
+        ? pages.filter(p => p !== pageId)
+        : [...pages, pageId];
+      return {
+        ...prev,
+        [roleKey]: {
+          ...currentRole,
+          allowed_pages: updatedPages
+        }
+      };
+    });
+  };
+
+  // Toggle Action Permission in Permission Matrix
+  const handleToggleAction = (roleKey, actionKey) => {
+    setPermissionMatrix(prev => {
+      const currentRole = prev[roleKey] || {};
+      return {
+        ...prev,
+        [roleKey]: {
+          ...currentRole,
+          [actionKey]: !currentRole[actionKey]
+        }
+      };
+    });
+  };
+
+  // Save Permission Matrix to LocalStorage & Supabase
+  const handleSavePermissionMatrix = async () => {
+    setIsSavingPermissions(true);
+    try {
+      localStorage.setItem('f2u_role_permissions', JSON.stringify(permissionMatrix));
+      window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: permissionMatrix }));
+
+      // Upsert all roles to Supabase roles table
+      try {
+        const client = getActiveClient();
+        if (client) {
+          for (const [roleName, p] of Object.entries(permissionMatrix)) {
+            await client.from('roles').upsert({
+              name: roleName,
+              label: p.label || roleName,
+              code: p.code || '99',
+              description: p.description || '',
+              allowed_pages: p.allowed_pages || [],
+              can_edit_pricing: !!p.can_edit_pricing,
+              can_delete_project: !!p.can_delete_project,
+              can_borrow_tools: !!p.can_borrow_tools,
+              can_manage_users: !!p.can_manage_users,
+              is_system_role: p.is_system_role !== undefined ? p.is_system_role : ['admin', 'technician', 'driver', 'accountant'].includes(roleName)
+            }, { onConflict: 'name' });
+          }
+        }
+      } catch (cErr) {
+        console.warn('Could not sync roles to Supabase:', cErr);
+      }
+
+      showToast('บันทึกการตั้งค่าสิทธิ์และบทบาทเรียบร้อยแล้ว', 'success');
+    } catch (err) {
+      showToast('เกิดข้อผิดพลาดในการบันทึกสิทธิ์', 'error');
+    } finally {
+      setIsSavingPermissions(false);
+    }
+  };
+
+  // Reset Permission Matrix to Defaults
+  const handleResetPermissions = () => {
+    setPermissionMatrix(DEFAULT_PERMISSION_MATRIX);
+    showToast('รีเซ็ตสิทธิ์เป็นค่าเริ่มต้นแล้ว (กรุณากดบันทึก)', 'info');
+  };
+
+  // Helper to open Add Role modal with auto-suggested 2-digit code
+  const handleOpenAddRole = () => {
+    const existingCodes = Object.values(permissionMatrix)
+      .map(r => parseInt(r.code, 10))
+      .filter(n => !isNaN(n) && n >= 10 && n < 90);
+    const maxCode = existingCodes.length > 0 ? Math.max(...existingCodes) : 41;
+    const nextCode = String(maxCode >= 41 ? maxCode + 10 : 51);
+
+    setNewRoleForm({
+      label: '',
+      name: '',
+      code: nextCode,
+      description: '',
+      allowed_pages: ['Calendar', 'Plans'],
+      can_edit_pricing: false,
+      can_delete_project: false,
+      can_borrow_tools: true,
+      can_manage_users: false
+    });
+    setIsAddRoleModalOpen(true);
+  };
+
+  // Create new Custom Role
+  const handleCreateRole = async (e) => {
+    if (e) e.preventDefault();
+    if (!newRoleForm.label.trim()) {
+      showToast('กรุณาระบุชื่อตำแหน่ง (ภาษาไทย)', 'error');
+      return;
+    }
+    
+    // Auto generate role key if blank
+    let roleKey = newRoleForm.name.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    if (!roleKey) {
+      roleKey = 'role_' + Date.now().toString(36);
+    }
+
+    if (permissionMatrix[roleKey]) {
+      showToast(`รหัสบทบาท "${roleKey}" มีอยู่ในระบบแล้ว กรุณาใช้ชื่ออื่น`, 'error');
+      return;
+    }
+
+    const newRole = {
+      label: newRoleForm.label.trim(),
+      code: newRoleForm.code.trim() || '51',
+      description: newRoleForm.description.trim(),
+      allowed_pages: newRoleForm.allowed_pages || ['Calendar', 'Plans'],
+      can_edit_pricing: !!newRoleForm.can_edit_pricing,
+      can_delete_project: !!newRoleForm.can_delete_project,
+      can_borrow_tools: !!newRoleForm.can_borrow_tools,
+      can_manage_users: !!newRoleForm.can_manage_users,
+      is_system_role: false
+    };
+
+    const updated = {
+      ...permissionMatrix,
+      [roleKey]: newRole
+    };
+
+    setPermissionMatrix(updated);
+    localStorage.setItem('f2u_role_permissions', JSON.stringify(updated));
+    window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: updated }));
+
+    // Persist to Supabase if connected
+    try {
+      const client = getActiveClient();
+      if (client) {
+        await client.from('roles').upsert({
+          name: roleKey,
+          label: newRole.label,
+          code: newRole.code,
+          description: newRole.description,
+          allowed_pages: newRole.allowed_pages,
+          can_edit_pricing: newRole.can_edit_pricing,
+          can_delete_project: newRole.can_delete_project,
+          can_borrow_tools: newRole.can_borrow_tools,
+          can_manage_users: newRole.can_manage_users,
+          is_system_role: false
+        }, { onConflict: 'name' });
+      }
+    } catch (err) {
+      console.warn('Could not save new role to Supabase:', err);
+    }
+
+    setIsAddRoleModalOpen(false);
+    showToast(`เพิ่มบทบาท "${newRole.label}" เรียบร้อยแล้ว`, 'success');
+  };
+
+  // Delete Custom Role Confirmation
+  const handleConfirmDeleteRole = async () => {
+    if (!deleteRoleConfirm.roleKey) return;
+    const roleKey = deleteRoleConfirm.roleKey;
+
+    const copy = { ...permissionMatrix };
+    delete copy[roleKey];
+
+    setPermissionMatrix(copy);
+    localStorage.setItem('f2u_role_permissions', JSON.stringify(copy));
+    window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: copy }));
+
+    try {
+      const client = getActiveClient();
+      if (client) {
+        await client.from('roles').delete().eq('name', roleKey);
+      }
+    } catch (err) {
+      console.warn('Could not delete role from Supabase:', err);
+    }
+
+    setDeleteRoleConfirm({ isOpen: false, roleKey: null, roleLabel: '' });
+    showToast('ลบบทบาทเรียบร้อยแล้ว', 'success');
+  };
+
   return (
-    <div className="space-y-8 px-4 sm:px-8 lg:px-10 pt-6 pb-24 md:pb-6">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center gap-4 mb-6">
-          <h2 className="text-3xl font-extrabold text-slate-900">ตั้งค่าระบบ</h2>
-          {isSyncingSettings && (
-            <span className="flex items-center gap-1.5 text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-full animate-pulse border border-indigo-100 shadow-sm">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ซิงค์ข้อมูลล่าสุด...
-            </span>
-          )}
+    <div className="w-full flex-1 px-4 sm:px-8 lg:px-10 pt-4 pb-24 md:pb-12 min-h-full space-y-6">
+      
+      {/* Settings Top Context Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200/80">
+        <div className="flex items-center gap-2 text-xs sm:text-sm text-slate-500 font-medium">
+          <span className="text-slate-400">ระบบ Flower2U</span>
+          <span className="text-slate-300">/</span>
+          <span className="text-violet-700 font-bold bg-violet-50 px-2.5 py-1 rounded-xl border border-violet-100/80 flex items-center gap-1.5">
+            {(() => {
+              const currentCat = SETTINGS_CATEGORIES.find(c => c.id === activeCategory);
+              if (!currentCat) return <span>ตั้งค่าระบบ</span>;
+              const IconComp = currentCat.icon;
+              return (
+                <>
+                  <IconComp className="w-3.5 h-3.5 text-violet-600" />
+                  <span>{currentCat.label}</span>
+                </>
+              );
+            })()}
+          </span>
+          <span className="hidden md:inline text-slate-400 text-xs">
+            — {SETTINGS_CATEGORIES.find(c => c.id === activeCategory)?.desc}
+          </span>
         </div>
 
-        {/* Profile Card */}
-        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden mb-8">
-          <div className="h-48 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 relative">
-            <div className="absolute right-6 top-6">
-              <label className={`p-2 bg-white/20 backdrop-blur-md text-white rounded-xl hover:bg-white/30 transition shadow-sm cursor-pointer flex items-center justify-center ${isUploadingProfile ? 'opacity-50 pointer-events-none' : ''}`}>
-                {isUploadingProfile ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
-                <input 
-                  type="file" 
-                  accept="image/*" 
-                  className="hidden" 
-                  onChange={(e) => e.target.files[0] && handleProfileImageUpload(e.target.files[0])}
-                />
-              </label>
+        {isSyncingSettings && (
+          <span className="flex items-center gap-1.5 text-xs font-bold bg-violet-50 text-violet-700 px-3 py-1 rounded-full animate-pulse border border-violet-100 shadow-sm">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            กำลังซิงค์การตั้งค่า...
+          </span>
+        )}
+      </div>
+
+      {/* Main 2-Column Responsive Layout */}
+      <div className="flex flex-col lg:flex-row gap-6 items-start">
+        
+        {/* Left Column: Categorized Navigation (Sticky on Desktop) */}
+        <aside className="w-full lg:w-64 xl:w-72 shrink-0 lg:sticky lg:top-16 self-start space-y-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200/80 shadow-sm p-2 sm:p-3 overflow-hidden">
+            <div className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider px-3 py-2 hidden lg:block">
+              หมวดหมู่การตั้งค่า
             </div>
-          </div>
-          <div className="px-8 pb-8">
-            <div className="flex flex-col items-center sm:items-start relative">
-              <div className="-mt-16 mb-6 relative z-10">
-                <div className="w-32 h-32 bg-white p-1.5 rounded-full shadow-2xl ring-4 ring-white/50 relative group">
-                  <div className="w-full h-full bg-slate-100 text-slate-600 rounded-full flex items-center justify-center text-4xl font-black border border-slate-200 overflow-hidden relative">
-                    {userProfile?.image ? (
-                      <img 
-                        src={processImageUrl(userProfile.image)} 
-                        alt="Profile" 
-                        className="w-full h-full object-cover" 
-                        referrerPolicy="no-referrer"
-                        onError={(e) => {
-                          e.target.onerror = null; 
-                          e.target.style.display = 'none';
-                          e.target.parentElement.classList.add('bg-slate-200');
-                          e.target.parentElement.innerHTML = `<span class="text-4xl text-slate-400">${userProfile?.name?.charAt(0) || 'U'}</span>`;
-                        }}
-                      />
-                    ) : (
-                      userProfile?.name?.charAt(0) || 'U'
-                    )}
-                    
-                    <label className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer z-10">
-                      <Camera className="w-8 h-8 text-white drop-shadow-md" />
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        className="hidden" 
-                        onChange={(e) => e.target.files[0] && handleProfileImageUpload(e.target.files[0])}
-                      />
-                    </label>
-                  </div>
-                  
-                  {isUploadingProfile && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-white/50 rounded-full z-20 backdrop-blur-sm">
-                      <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
-                    </div>
-                  )}
-
-                  {/* Upload Button */}
-                  <label className={`absolute bottom-0 left-0 p-2.5 bg-white text-indigo-600 rounded-full shadow-lg border border-slate-100 cursor-pointer hover:bg-indigo-50 transition-all z-30 ${isUploadingProfile ? 'pointer-events-none opacity-80' : ''}`}>
-                    {isUploadingProfile ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      className="hidden" 
-                      disabled={isUploadingProfile}
-                      onChange={(e) => e.target.files[0] && handleProfileImageUpload(e.target.files[0])}
-                    />
-                  </label>
-
-                  {/* Delete Button */}
-                  {userProfile?.image && !isUploadingProfile && (
-                    <button
-                      onClick={requestDeleteProfile}
-                      className="absolute bottom-0 right-0 p-2.5 bg-white text-rose-500 border border-slate-200 rounded-full shadow-md hover:bg-rose-50 hover:text-rose-600 transition-all z-30 group/delete"
-                      title="ลบรูปโปรไฟล์"
-                    >
-                      <Trash2 className="w-5 h-5" />
-                    </button>
-                  )}
-                </div>
-              </div>
-              
-              <div className="w-full">
-                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6">
-                  <div className="text-center sm:text-left">
-                    <h3 className="text-3xl font-black text-slate-900 tracking-tight mb-1">{userProfile?.name || 'Guest'}</h3>
-                    <p className="text-lg text-slate-500 font-medium">{userProfile?.role || 'No Role'}</p>
-                  </div>
-
-                  <div className="flex flex-col sm:items-end gap-2 w-full sm:w-auto">
-                    {userProfile?.email && (
-                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100 w-full sm:w-auto">
-                        <div className="p-2 bg-white rounded-xl shadow-sm text-indigo-500">
-                          <Mail className="w-4 h-4" />
-                        </div>
-                        <span className="text-sm font-bold text-slate-600 pr-2">{userProfile.email}</span>
-                      </div>
-                    )}
-                    {userProfile?.phone && (
-                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100 w-full sm:w-auto">
-                        <div className="p-2 bg-white rounded-xl shadow-sm text-emerald-500">
-                          <Phone className="w-4 h-4" />
-                        </div>
-                        <span className="text-sm font-bold text-slate-600 pr-2">{userProfile.phone}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* User Management */}
-        <div className="mb-8">
-          <h3 className="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
-            <Users className="w-5 h-5 text-indigo-600" />
-            จัดการผู้ใช้งาน (User Management)
-          </h3>
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-            <div className="space-y-4">
-              {authorizedUsers.map((user, idx) => (
-                <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 gap-4">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-700 font-bold border border-slate-200 shadow-sm shrink-0 overflow-hidden relative">
-                      {user.image ? (
-                        <>
-                          <img 
-                            src={processImageUrl(user.image)} 
-                            alt={user.name} 
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                            onError={(e) => { 
-                              e.target.style.display = 'none'; 
-                              if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
-                            }}
-                          />
-                          <div className="hidden absolute inset-0 w-full h-full items-center justify-center bg-white text-slate-700">
-                            {user.name.charAt(0).toUpperCase()}
-                          </div>
-                        </>
-                      ) : (
-                        user.name.charAt(0).toUpperCase()
-                      )}
-                    </div>
-                    <div>
-                      <div className="font-bold text-slate-800 flex items-center gap-2">
-                        {user.username}
-                        <span className="text-xs font-normal text-slate-400 bg-white px-2 py-0.5 rounded-md border border-slate-100">
-                          {user.role}
-                        </span>
-                      </div>
-                      <div className="text-sm text-slate-500">{user.name}</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 self-end sm:self-auto">
-                    <button 
-                      onClick={() => handleDeleteUser(user.username)}
-                      className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition"
-                      title="ลบผู้ใช้"
-                      disabled={authorizedUsers.length <= 1}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-6 pt-6 border-t border-slate-100">
-              {!isAddingUser ? (
-                <button 
-                  onClick={() => setIsAddingUser(true)}
-                  className="w-full py-3 bg-indigo-50 text-indigo-600 font-bold rounded-xl hover:bg-indigo-100 transition flex items-center justify-center gap-2 border border-indigo-100"
-                >
-                  <UserPlus className="w-5 h-5" />
-                  เพิ่มผู้ใช้งานใหม่
-                </button>
-              ) : (
-                <div className="bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100 animate-in fade-in slide-in-from-top-2">
-                  <h4 className="font-bold text-indigo-900 mb-4">เพิ่มผู้ใช้งานใหม่</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-                    <input 
-                      type="text" 
-                      placeholder="Username (สำหรับ Login)" 
-                      value={newUser.username}
-                      onChange={e => setNewUser({...newUser, username: e.target.value})}
-                      className="px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    />
-                    <input 
-                      type="text" 
-                      placeholder="Password" 
-                      value={newUser.password}
-                      onChange={e => setNewUser({...newUser, password: e.target.value})}
-                      className="px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    />
-                    <input 
-                      type="text" 
-                      placeholder="ชื่อ-นามสกุล" 
-                      value={newUser.name}
-                      onChange={e => setNewUser({...newUser, name: e.target.value})}
-                      className="px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    />
-                    <input 
-                      type="text" 
-                      placeholder="ตำแหน่ง (Role)" 
-                      value={newUser.role}
-                      onChange={e => setNewUser({...newUser, role: e.target.value})}
-                      className="px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    />
-                    <input 
-                      type="email" 
-                      placeholder="Email (Optional)" 
-                      value={newUser.email}
-                      onChange={e => setNewUser({...newUser, email: e.target.value})}
-                      className="px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    />
-                    <input 
-                      type="tel" 
-                      placeholder="เบอร์โทร (Optional)" 
-                      value={newUser.phone}
-                      onChange={e => setNewUser({...newUser, phone: e.target.value})}
-                      className="px-4 py-2 bg-white border border-indigo-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    />
-                  </div>
-                  <div className="flex justify-end gap-3">
-                    <button 
-                      onClick={() => setIsAddingUser(false)}
-                      className="px-4 py-2 text-slate-500 font-bold hover:bg-slate-100 rounded-xl transition"
-                    >
-                      ยกเลิก
-                    </button>
-                    <button 
-                      onClick={handleAddUser}
-                      className="px-6 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition"
-                    >
-                      บันทึก
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Google Drive Settings (Multi-Folder Management) */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-              <HardDrive className="w-5 h-5 text-blue-600" />
-              ตั้งค่า Google Drive (แยกโฟลเดอร์ตามหมวดหมู่)
-            </h3>
-            <button
-              type="button"
-              onClick={() => {
-                const newId = `folder_${Date.now()}`;
-                const newFolder = {
-                  id: newId,
-                  name: `โฟลเดอร์ใหม่ ${(driveFolders || []).length + 1}`,
-                  folderId: '',
-                  type: 'custom'
-                };
-                if (setDriveFolders) setDriveFolders([...(driveFolders || []), newFolder]);
-              }}
-              className="px-3.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-2xs"
-            >
-              <FolderPlus className="w-4 h-4" />
-              เพิ่มโฟลเดอร์
-            </button>
-          </div>
-
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm space-y-4">
-            <p className="text-xs text-slate-500">
-              ระบุ Folder ID จาก Google Drive เพื่อแยกจัดเก็บไฟล์ตามหมวดหมู่ (เช่น สลิปโอนเงิน, รูปภาพงาน, โลโก้/Assets) ทำให้ค้นหาและเป็นระเบียบยิ่งขึ้น
-            </p>
-
-            <div className="space-y-3">
-              {(driveFolders && driveFolders.length > 0 ? driveFolders : [
-                { id: 'f_ref', name: 'รูปภาพอ้างอิงงาน', folderId: driveFolderId || '', type: 'reference' },
-                { id: 'f_slips', name: 'สลิปโอนเงินลูกค้า', folderId: '', type: 'slips' },
-                { id: 'f_assets', name: 'ไฟล์ตกแต่งและ Assets', folderId: assetsDriveFolderId || '', type: 'assets' }
-              ]).map((folder, index) => {
-                const folderType = folder.type || 'custom';
-                const typeConfig = {
-                  slips: { label: 'สลิปโอนเงิน (Payment Slips)', icon: Receipt, color: 'text-amber-600 bg-amber-50 border-amber-200' },
-                  reference: { label: 'รูปภาพอ้างอิงงาน (Reference)', icon: ImageIcon, color: 'text-indigo-600 bg-indigo-50 border-indigo-200' },
-                  assets: { label: 'ไฟล์ตกแต่ง / Assets ร้าน', icon: Palette, color: 'text-blue-600 bg-blue-50 border-blue-200' },
-                  custom: { label: 'กำหนดเอง (Custom)', icon: Folder, color: 'text-emerald-600 bg-emerald-50 border-emerald-200' }
-                }[folderType] || { label: 'กำหนดเอง (Custom)', icon: Folder, color: 'text-emerald-600 bg-emerald-50 border-emerald-200' };
-                const IconComponent = typeConfig.icon;
-
+            
+            {/* Nav list / horizontal scroll on mobile */}
+            <div className="flex lg:flex-col gap-1.5 overflow-x-auto lg:overflow-visible custom-scrollbar pb-1 lg:pb-0">
+              {SETTINGS_CATEGORIES.map(cat => {
+                const Icon = cat.icon;
+                const isActive = activeCategory === cat.id;
                 return (
-                  <div
-                    key={folder.id || index}
-                    className="p-4 rounded-2xl border border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition space-y-3"
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setActiveCategory(cat.id)}
+                    className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all text-left shrink-0 lg:shrink cursor-pointer ${
+                      isActive
+                        ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-md shadow-violet-200/60'
+                        : 'text-slate-600 hover:bg-violet-50/50 hover:text-slate-900'
+                    }`}
                   >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                      <div className="flex items-center gap-2">
-                        <span className={`p-1.5 rounded-lg border flex items-center justify-center ${typeConfig.color}`}>
-                          <IconComponent className="w-4 h-4" />
-                        </span>
-                        <input
-                          type="text"
-                          value={folder.name || ''}
-                          onChange={(e) => {
-                            const updated = (driveFolders || []).map(f => f.id === folder.id ? { ...f, name: e.target.value } : f);
-                            if (setDriveFolders) setDriveFolders(updated);
-                          }}
-                          placeholder="ชื่อโฟลเดอร์"
-                          className="font-bold text-sm text-slate-800 bg-transparent border-b border-dashed border-slate-300 focus:border-indigo-500 focus:outline-none px-1 py-0.5"
-                        />
-                      </div>
-
-                      <div className="flex items-center gap-2 self-end sm:self-auto">
-                        <select
-                          value={folder.type || 'custom'}
-                          onChange={(e) => {
-                            const updated = (driveFolders || []).map(f => f.id === folder.id ? { ...f, type: e.target.value } : f);
-                            if (setDriveFolders) setDriveFolders(updated);
-                          }}
-                          className="px-2.5 py-1 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                        >
-                          <option value="slips">สลิปโอนเงิน (Payment Slips)</option>
-                          <option value="reference">รูปภาพอ้างอิงงาน (Reference)</option>
-                          <option value="assets">ไฟล์ตกแต่ง / Assets</option>
-                          <option value="custom">กำหนดเอง (Custom)</option>
-                        </select>
-
-                        {(driveFolders || []).length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const updated = (driveFolders || []).filter(f => f.id !== folder.id);
-                              if (setDriveFolders) setDriveFolders(updated);
-                            }}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                            title="ลบโฟลเดอร์นี้"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                    <div className={`p-1.5 rounded-lg shrink-0 ${isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                      <Icon className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate">{cat.label}</div>
+                      <div className={`text-[10px] font-normal truncate hidden lg:block ${isActive ? 'text-violet-100' : 'text-slate-400'}`}>
+                        {cat.desc}
                       </div>
                     </div>
-
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <input
-                        type="text"
-                        placeholder="Google Drive Folder ID (e.g., 1xYz...)"
-                        value={folder.folderId || ''}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          const updated = (driveFolders || []).map(f => f.id === folder.id ? { ...f, folderId: val } : f);
-                          if (setDriveFolders) setDriveFolders(updated);
-                          if (folder.type === 'reference' && setDriveFolderId) setDriveFolderId(val);
-                          if (folder.type === 'assets' && setAssetsDriveFolderId) setAssetsDriveFolderId(val);
-                        }}
-                        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition min-w-0"
-                      />
-                    </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
-
-            <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  const newId = `folder_${Date.now()}`;
-                  const newFolder = {
-                    id: newId,
-                    name: `โฟลเดอร์ใหม่ ${(driveFolders || []).length + 1}`,
-                    folderId: '',
-                    type: 'custom'
-                  };
-                  if (setDriveFolders) setDriveFolders([...(driveFolders || []), newFolder]);
-                }}
-                className="w-full sm:w-auto px-4 py-2 border-2 border-dashed border-slate-200 hover:border-blue-400 hover:bg-blue-50/20 text-slate-600 hover:text-blue-600 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5"
-              >
-                <Plus className="w-4 h-4" />
-                เพิ่มโฟลเดอร์อีก
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const refFolder = (driveFolders || []).find(f => f.type === 'reference');
-                  const assetsFolder = (driveFolders || []).find(f => f.type === 'assets');
-                  const payload = {
-                    drive_folders: driveFolders
-                  };
-                  if (refFolder && refFolder.folderId) {
-                    payload.drive_folder_id = refFolder.folderId.trim();
-                  }
-                  if (assetsFolder && assetsFolder.folderId) {
-                    payload.assets_drive_folder_id = assetsFolder.folderId.trim();
-                  }
-                  if (saveSystemSettings) {
-                    saveSystemSettings(payload);
-                  }
-                }}
-                className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-sm transition flex items-center justify-center gap-2 text-sm"
-              >
-                <Save className="w-4 h-4" />
-                บันทึกการตั้งค่า Google Drive
-              </button>
-            </div>
           </div>
-        </div>
+        </aside>
 
-        {/* Chatbot AI Settings */}
-        <div className="mb-8">
-          <h3 className="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
-            <Bot className="w-5 h-5 text-sky-600" />
-            เชื่อมต่อ Chatbot AI (Access Tokens)
-          </h3>
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-            <div className="grid grid-cols-1 gap-6">
-              {/* LINE Bot Token */}
-              <div className="space-y-2">
-                <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
-                  <MessageCircle className="w-4 h-4 text-[#06C755]" />
-                  LINE Channel Access Token
-                </label>
-                <input 
-                  type="text" 
-                  placeholder="วาง Long-lived Access Token จาก LINE Developers ที่นี่..." 
-                  value={lineBotToken}
-                  onChange={e => setLineBotToken(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
-                />
+        {/* Right Column: Active Category Content */}
+        <main className="flex-1 w-full min-w-0 space-y-6">
+
+          {/* ============================================================ */}
+          {/* TAB: ROLES & PERMISSIONS MATRIX */}
+          {/* ============================================================ */}
+          {activeCategory === 'permissions' && (
+            <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden p-5 sm:p-7 space-y-6">
+              
+              <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+                <div className="flex items-start gap-3">
+                  <div className="p-2.5 bg-violet-50 text-violet-600 rounded-2xl shrink-0 mt-0.5 border border-violet-100/80">
+                    <Shield className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
+                      ตารางสิทธิ์การใช้งานของแต่ละตำแหน่ง (Roles &amp; Permissions Matrix)
+                    </h3>
+                    <p className="text-xs sm:text-sm text-slate-500 font-medium mt-0.5">
+                      กำหนดการเข้าถึงหน้าจอและฟังก์ชันพิเศษของแต่ละตำแหน่งในร้านค้า เพิ่มบทบาทใหม่ หรือปรับแต่งสิทธิ์
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 sm:gap-2.5 shrink-0 self-start xl:self-center">
+                  <button
+                    type="button"
+                    onClick={handleOpenAddRole}
+                    className="px-3.5 py-2 bg-violet-50 hover:bg-violet-100 text-violet-700 text-xs font-bold rounded-xl border border-violet-200/80 transition flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>+ เพิ่มบทบาทใหม่</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetPermissions}
+                    className="px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                    title="รีเซ็ตเป็นค่าเริ่มต้น"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    <span>ค่าเริ่มต้น</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSavePermissionMatrix}
+                    disabled={isSavingPermissions}
+                    className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white text-xs font-bold rounded-xl shadow-md shadow-violet-200/50 transition flex items-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50"
+                  >
+                    {isSavingPermissions ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Save className="w-4 h-4" />
+                    )}
+                    <span>บันทึกสิทธิ์</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Telegram Settings */}
-              <div className="space-y-4 pt-4 border-t border-slate-100">
-                <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
-                  <Send className="w-4 h-4 text-[#0088cc]" />
-                  Telegram Settings
-                </label>
-                
-                {/* 1. Bot Token Input */}
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 ml-1">Telegram Bot Token</span>
-                  <div className="flex flex-col gap-2">
-                    <input 
-                      type="text" 
-                      placeholder="วาง Token จาก BotFather (เช่น 12345:ABCdef...)" 
-                      value={telegramBotToken}
-                      onChange={e => setTelegramBotToken(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
-                    />
-                    
-                    {/* Deploy Link Input for Webhook */}
-                    <div className="space-y-1 pt-1">
-                      <span className="text-[10px] font-bold text-slate-400 ml-1">Google Apps Script URL (Deploy Link สำหรับ Webhook)</span>
-                      <input 
-                        type="text" 
-                        placeholder="https://script.google.com/macros/s/.../exec" 
-                        value={deployUrl}
-                        onChange={e => setDeployUrl(e.target.value)}
-                        className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono text-slate-600"
-                      />
+              {/* Matrix Table with Sticky Row Label Column & Centered Toggle Cells */}
+              <div className="overflow-x-auto border border-slate-200/80 rounded-2xl shadow-sm">
+                <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                  <thead>
+                    <tr className="bg-slate-50/90 border-b border-slate-200 text-slate-700">
+                      <th className="py-3.5 px-5 font-extrabold min-w-[240px] sm:min-w-[280px] sticky left-0 z-20 bg-slate-50 border-r border-slate-200/80 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                        <span className="text-xs uppercase tracking-wider text-slate-600">ส่วนของระบบ / ฟังก์ชันการใช้งาน</span>
+                      </th>
+                      {Object.keys(permissionMatrix).map(roleKey => {
+                        const r = permissionMatrix[roleKey] || DEFAULT_PERMISSION_MATRIX[roleKey] || {};
+                        const isProtected = roleKey === 'admin' || r.is_system_role;
+                        return (
+                          <th key={roleKey} className="py-3.5 px-4 font-bold text-center min-w-[140px] sm:min-w-[160px] border-r border-slate-100 last:border-r-0 relative group">
+                            <div className="flex flex-col items-center justify-center gap-1">
+                              <div className="flex items-center gap-1.5 justify-center">
+                                <span className="text-slate-900 font-black text-xs sm:text-sm text-center line-clamp-1">{r.label}</span>
+                                {!isProtected && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setDeleteRoleConfirm({ isOpen: true, roleKey, roleLabel: r.label })}
+                                    className="opacity-40 group-hover:opacity-100 p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                    title={`ลบบทบาท ${r.label}`}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                              <span className="font-mono text-[10px] font-bold text-violet-700 bg-violet-100/70 px-2 py-0.5 rounded-full border border-violet-200/60 shadow-xs">
+                                รหัส {r.code || '99'}
+                              </span>
+                            </div>
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-100">
+                    {/* Section 1: Modules / Pages */}
+                    <tr className="bg-slate-100/70 border-y border-slate-200/80">
+                      <td colSpan={Object.keys(permissionMatrix).length + 1} className="py-2.5 px-5 text-[11px] font-extrabold text-slate-600 uppercase tracking-wider">
+                        <div className="flex items-center gap-2">
+                          <Layers className="w-3.5 h-3.5 text-violet-600" />
+                          <span>การเข้าถึงหน้าจอและเมนูนำทาง (Navigation Access)</span>
+                        </div>
+                      </td>
+                    </tr>
+
+                    {SYSTEM_MODULES.map((mod) => (
+                      <tr key={mod.id} className="hover:bg-violet-50/20 transition-colors group">
+                        <td className="py-3 px-5 font-medium sticky left-0 z-10 bg-white group-hover:bg-violet-50/20 border-r border-slate-200/80 shadow-[2px_0_5px_rgba(0,0,0,0.02)] transition-colors">
+                          <div className="text-slate-800 font-bold text-xs sm:text-sm">{mod.label}</div>
+                          <div className="text-[11px] text-slate-400 font-normal mt-0.5 leading-snug">{mod.desc}</div>
+                        </td>
+
+                        {Object.keys(permissionMatrix).map(roleKey => {
+                          const isAllowed = permissionMatrix[roleKey]?.allowed_pages?.includes(mod.id);
+                          return (
+                            <td 
+                              key={roleKey} 
+                              onClick={() => handleTogglePage(roleKey, mod.id)}
+                              className="py-3 px-4 text-center cursor-pointer border-r border-slate-100 last:border-r-0 hover:bg-violet-50/40 transition-colors select-none"
+                            >
+                              <div className="flex items-center justify-center">
+                                <div className={`w-5 h-5 rounded-lg flex items-center justify-center transition-all ${
+                                  isAllowed 
+                                    ? 'bg-violet-600 text-white shadow-xs shadow-violet-300' 
+                                    : 'border-2 border-slate-200 hover:border-slate-300 bg-white'
+                                }`}>
+                                  {isAllowed && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                                </div>
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+
+                    {/* Section 2: Special Actions */}
+                    <tr className="bg-slate-100/70 border-y border-slate-200/80">
+                      <td colSpan={Object.keys(permissionMatrix).length + 1} className="py-2.5 px-5 text-[11px] font-extrabold text-slate-600 uppercase tracking-wider">
+                        <div className="flex items-center gap-2">
+                          <Lock className="w-3.5 h-3.5 text-violet-600" />
+                          <span>สิทธิ์การทำรายการพิเศษ (Action Permissions)</span>
+                        </div>
+                      </td>
+                    </tr>
+
+                    {ACTION_PERMISSIONS.map((action) => (
+                      <tr key={action.key} className="hover:bg-violet-50/20 transition-colors group">
+                        <td className="py-3 px-5 font-medium sticky left-0 z-10 bg-white group-hover:bg-violet-50/20 border-r border-slate-200/80 shadow-[2px_0_5px_rgba(0,0,0,0.02)] transition-colors">
+                          <div className="text-slate-800 font-bold text-xs sm:text-sm">{action.label}</div>
+                          <div className="text-[11px] text-slate-400 font-normal mt-0.5 leading-snug">{action.desc}</div>
+                        </td>
+
+                        {Object.keys(permissionMatrix).map(roleKey => {
+                          const isGranted = permissionMatrix[roleKey]?.[action.key];
+                          return (
+                            <td 
+                              key={roleKey} 
+                              onClick={() => handleToggleAction(roleKey, action.key)}
+                              className="py-3 px-4 text-center cursor-pointer border-r border-slate-100 last:border-r-0 hover:bg-violet-50/40 transition-colors select-none"
+                            >
+                              <div className="flex items-center justify-center">
+                                <div className={`w-5 h-5 rounded-lg flex items-center justify-center transition-all ${
+                                  isGranted 
+                                    ? 'bg-violet-600 text-white shadow-xs shadow-violet-300' 
+                                    : 'border-2 border-slate-200 hover:border-slate-300 bg-white'
+                                }`}>
+                                  {isGranted && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                                </div>
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Bottom Notice */}
+              <div className="p-4 bg-violet-50/70 rounded-2xl border border-violet-100/90 flex items-start gap-3 text-xs text-violet-950">
+                <CheckCircle2 className="w-4 h-4 text-violet-600 shrink-0 mt-0.5" />
+                <div className="leading-relaxed">
+                  <span className="font-bold">การมีผลบังคับใช้:</span> เมื่อบันทึกสิทธิ์ พนักงานในระบบจะเห็นเฉพาะเมนูที่ตำแหน่งตนเองได้รับอนุญาตทันที สำหรับผู้ดูแลระบบ (Admin) จะมีสิทธิ์เข้าถึงทุกหน้าโดยสมบูรณ์
+                </div>
+              </div>
+
+              {/* Modal: Add New Role */}
+              {isAddRoleModalOpen && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-4">
+                  <div
+                    className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
+                    onClick={() => setIsAddRoleModalOpen(false)}
+                  />
+                  <div className="bg-white w-full max-w-lg rounded-2xl sm:rounded-[2rem] shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[90vh] relative z-10 modal-animate-in">
+                    <div className="px-5 py-4 border-b border-slate-100 bg-white sticky top-0 z-20 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2 bg-violet-50 text-violet-600 rounded-xl">
+                          <UserPlus className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-base font-black text-slate-900">เพิ่มบทบาท / ตำแหน่งใหม่</h4>
+                          <p className="text-xs text-slate-500">สร้างตำแหน่งใหม่และกำหนดสิทธิ์เข้าถึงหน้าจอ</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddRoleModalOpen(false)}
+                        className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
                     </div>
 
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      {telegramBotToken && deployUrl && (
-                        <a 
-                          href={`https://api.telegram.org/bot${telegramBotToken}/setWebhook?url=${deployUrl}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="px-3 py-2 bg-sky-50 text-sky-600 font-bold rounded-lg hover:bg-sky-100 transition flex items-center justify-center gap-2 text-xs border border-sky-100"
-                          title="กด 1 ครั้งเพื่อเริ่มใช้งาน (Set Webhook)"
+                    <form onSubmit={handleCreateRole} className="flex flex-col flex-1 overflow-hidden">
+                      <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4 custom-scrollbar">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                              ชื่อตำแหน่ง (ภาษาไทย) *
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={newRoleForm.label}
+                              onChange={(e) => setNewRoleForm({ ...newRoleForm, label: e.target.value })}
+                              placeholder="เช่น ผู้จัดการสาขา, ช่างภาพ"
+                              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                              รหัส 2 หลัก *
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              maxLength={3}
+                              value={newRoleForm.code}
+                              onChange={(e) => setNewRoleForm({ ...newRoleForm, code: e.target.value })}
+                              placeholder="เช่น 51"
+                              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono font-bold text-center focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+                            <span>Key ระบบ (ภาษาอังกฤษพิมพ์เล็ก)</span>
+                            <span className="text-[10px] text-slate-400">เว้นว่างไว้เพื่อสร้างอัตโนมัติ</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={newRoleForm.name}
+                            onChange={(e) => setNewRoleForm({ ...newRoleForm, name: e.target.value })}
+                            placeholder="เช่น branch_manager, photographer"
+                            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">
+                            คำอธิบายบทบาทและหน้าที่
+                          </label>
+                          <textarea
+                            rows={2}
+                            value={newRoleForm.description}
+                            onChange={(e) => setNewRoleForm({ ...newRoleForm, description: e.target.value })}
+                            placeholder="ระบุหน้าที่ความรับผิดชอบของตำแหน่งนี้..."
+                            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
+                          />
+                        </div>
+
+                        {/* Page Permissions Checklist */}
+                        <div className="pt-2 border-t border-slate-100">
+                          <div className="flex items-center justify-between mb-2">
+                            <label className="text-xs font-bold text-slate-800">
+                              กำหนดหน้าจอที่มองเห็นได้:
+                            </label>
+                            <div className="flex items-center gap-2 text-[11px]">
+                              <button
+                                type="button"
+                                onClick={() => setNewRoleForm({ ...newRoleForm, allowed_pages: SYSTEM_MODULES.map(m => m.id) })}
+                                className="text-violet-600 font-bold hover:underline cursor-pointer"
+                              >
+                                เลือกทั้งหมด
+                              </button>
+                              <span>|</span>
+                              <button
+                                type="button"
+                                onClick={() => setNewRoleForm({ ...newRoleForm, allowed_pages: [] })}
+                                className="text-slate-400 font-bold hover:underline cursor-pointer"
+                              >
+                                ล้าง
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 max-h-44 overflow-y-auto custom-scrollbar p-2 bg-slate-50 rounded-xl border border-slate-200/60">
+                            {SYSTEM_MODULES.map(mod => {
+                              const checked = (newRoleForm.allowed_pages || []).includes(mod.id);
+                              return (
+                                <label
+                                  key={mod.id}
+                                  className={`flex items-center gap-2 p-2 rounded-lg text-xs cursor-pointer transition select-none ${
+                                    checked ? 'bg-violet-50/90 text-violet-900 font-bold border border-violet-200/80' : 'text-slate-600 hover:bg-white'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => {
+                                      const cur = newRoleForm.allowed_pages || [];
+                                      const next = cur.includes(mod.id)
+                                        ? cur.filter(id => id !== mod.id)
+                                        : [...cur, mod.id];
+                                      setNewRoleForm({ ...newRoleForm, allowed_pages: next });
+                                    }}
+                                    className="rounded border-slate-300 text-violet-600 focus:ring-violet-500 accent-violet-600"
+                                  />
+                                  <span className="truncate">{mod.label.split('(')[0].trim()}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Action Permissions */}
+                        <div className="pt-2 border-t border-slate-100 space-y-2">
+                          <label className="text-xs font-bold text-slate-800 block">
+                            สิทธิ์การทำรายการพิเศษ:
+                          </label>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                            {ACTION_PERMISSIONS.map(act => (
+                              <label
+                                key={act.key}
+                                className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer transition select-none border ${
+                                  newRoleForm[act.key]
+                                    ? 'bg-violet-50/90 text-violet-900 font-bold border-violet-200/80'
+                                    : 'text-slate-600 border-slate-100 hover:bg-slate-50'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={!!newRoleForm[act.key]}
+                                  onChange={() => setNewRoleForm({ ...newRoleForm, [act.key]: !newRoleForm[act.key] })}
+                                  className="rounded border-slate-300 text-violet-600 focus:ring-violet-500 accent-violet-600"
+                                />
+                                <span className="truncate">{act.label.split('(')[0].trim()}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50/50 flex items-center justify-end gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => setIsAddRoleModalOpen(false)}
+                          className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200 transition cursor-pointer"
                         >
-                          <LinkIcon className="w-3.5 h-3.5" />
-                          เชื่อมต่อ Webhook
-                        </a>
-                      )}
-                      {telegramBotToken && (
-                        <a 
-                          href={`https://api.telegram.org/bot${telegramBotToken}/deleteWebhook`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="px-3 py-2 bg-rose-50 text-rose-600 font-bold rounded-lg hover:bg-rose-100 transition flex items-center justify-center gap-2 text-xs border border-rose-100"
-                          title="กดเมื่อบอทค้าง หรือส่งรัวๆ"
+                          ยกเลิก
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-5 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs font-bold shadow-md shadow-violet-200/60 transition cursor-pointer active:scale-95"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          ยกเลิก Webhook
-                        </a>
+                          สร้างบทบาทใหม่
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* Delete Role Confirm Dialog */}
+              <ConfirmDialog
+                isOpen={deleteRoleConfirm.isOpen}
+                title="ยืนยันการลบบทบาท"
+                message={`คุณต้องการลบบทบาท "${deleteRoleConfirm.roleLabel}" หรือไม่? หากลบแล้วพนักงานในบทบาทนี้จะถูกนำทางตามค่าเริ่มต้นของระบบ`}
+                confirmText="ลบบทบาท"
+                cancelText="ยกเลิก"
+                type="danger"
+                onConfirm={handleConfirmDeleteRole}
+                onCancel={() => setDeleteRoleConfirm({ isOpen: false, roleKey: null, roleLabel: '' })}
+              />
+
+            </div>
+          )}
+
+          {/* ============================================================ */}
+          {/* TAB 3: SHOP & BRANDING (ข้อมูลร้าน & แบรนด์) */}
+          {/* ============================================================ */}
+          {activeCategory === 'shop' && (
+            <div className="space-y-6">
+              {/* Shop Profile & Logo */}
+              <div className="bg-white p-6 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-slate-200/80 shadow-sm space-y-6">
+                <h3 className="text-xl font-black text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-4">
+                  <StoreIcon className="w-5 h-5 text-violet-600" />
+                  <span>ข้อมูลร้านและช่องทางติดต่อ (Shop Branding)</span>
+                </h3>
+
+                {/* Logo Uploader */}
+                <div className="flex flex-col sm:flex-row items-center gap-5 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <div className="w-20 h-20 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center overflow-hidden shrink-0">
+                    {shopInfo.logoUrl ? (
+                      <img src={processImageUrl(shopInfo.logoUrl)} alt="Logo" className="w-full h-full object-contain p-2" />
+                    ) : (
+                      <ImageIcon className="w-8 h-8 text-slate-300" />
+                    )}
+                  </div>
+
+                  <div className="space-y-2 text-center sm:text-left flex-1">
+                    <h4 className="font-bold text-sm text-slate-800">โลโก้ร้านค้า (Shop Logo)</h4>
+                    <p className="text-xs text-slate-500">สำหรับแสดงบนหัวบิล หัวเอกสารเสนอราคา และหัวตาราง</p>
+                    <div className="flex items-center justify-center sm:justify-start gap-2 pt-1">
+                      <label className="px-3.5 py-1.5 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-violet-200/40">
+                        {isUploadingLogo ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+                        <span>อัปโหลดโลโก้</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => e.target.files[0] && handleLogoUpload(e.target.files[0])}
+                        />
+                      </label>
+                      {shopInfo.logoUrl && (
+                        <button
+                          type="button"
+                          onClick={requestDeleteLogo}
+                          className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-bold border border-rose-100 transition cursor-pointer"
+                        >
+                          ลบโลโก้
+                        </button>
                       )}
                     </div>
                   </div>
                 </div>
 
-                {/* 2. Chat ID Input */}
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 ml-1">Telegram Chat ID (สำหรับแจ้งเตือน Admin)</span>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      placeholder="ระบุ Chat ID (เช่น -100xxxx หรือ User ID)" 
-                      value={telegramChatId}
-                      onChange={e => setTelegramChatId(e.target.value)}
-                      className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 transition-all font-mono"
+                {/* Shop Details */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">ชื่อร้าน / แบรนด์</label>
+                    <input
+                      type="text"
+                      value={shopInfo.shopName || ''}
+                      onChange={(e) => setShopInfo({ ...shopInfo, shopName: e.target.value })}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400"
                     />
-                    <button
-                      onClick={handleFetchTelegramId}
-                      className="px-4 py-2 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-sky-50 hover:text-sky-600 hover:border-sky-100 transition flex items-center justify-center gap-2 text-xs border border-slate-200 whitespace-nowrap"
-                      title="ดึง ID ล่าสุดที่ทักบอทมา"
-                    >
-                      <Bot className="w-4 h-4" />
-                      ดึง ID ล่าสุด
-                    </button>
                   </div>
-                  <p className="text-[10px] text-slate-400 ml-1">
-                    *วิธีใช้: ทักบอทด้วยคำว่า <code>/id</code> แล้วกดปุ่ม &quot;ดึง ID ล่าสุด&quot; ระบบจะใส่เลขให้อัตโนมัติ
-                  </p>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">เบอร์โทรศัพท์ร้าน</label>
+                    <input
+                      type="tel"
+                      value={shopInfo.phone || ''}
+                      onChange={(e) => setShopInfo({ ...shopInfo, phone: e.target.value })}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">อีเมลร้าน</label>
+                    <input
+                      type="email"
+                      value={shopInfo.email || ''}
+                      onChange={(e) => setShopInfo({ ...shopInfo, email: e.target.value })}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">LINE ID</label>
+                    <input
+                      type="text"
+                      value={shopInfo.line || ''}
+                      onChange={(e) => setShopInfo({ ...shopInfo, line: e.target.value })}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400"
+                    />
+                  </div>
                 </div>
-              </div>
 
-              {/* Web App URL */}
-              <div className="space-y-2 pt-4 border-t border-slate-100">
-                <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-2">
-                  <LinkIcon className="w-4 h-4 text-indigo-600" />
-                  ลิงก์หน้าเว็บของคุณ (Web App URL)
-                </label>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <input 
-                    type="url" 
-                    placeholder="เช่น https://flower2youlukyee.vercel.app" 
-                    value={webAppUrl}
-                    onChange={e => setWebAppUrl(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">ที่อยู่หน้าร้าน / สตูดิโอ</label>
+                  <textarea
+                    rows={2}
+                    value={shopInfo.address || ''}
+                    onChange={(e) => setShopInfo({ ...shopInfo, address: e.target.value })}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400"
                   />
                 </div>
-                <p className="text-[10px] text-slate-400 ml-1">
-                  *สำคัญ: ระบุ URL ของเว็บไซต์นี้ เพื่อให้บอทสร้างปุ่ม &quot;ดูสถานะงาน&quot; ได้ถูกต้อง
-                </p>
-              </div>
-            </div>
 
-            <div className="mt-6 pt-6 border-t border-slate-100 flex justify-end">
-              <button
-                onClick={() => saveSystemSettings({ 
-                  line_bot_token: lineBotToken, 
-                  telegram_bot_token: telegramBotToken,
-                  telegram_chat_id: telegramChatId,
-                  web_app_url: webAppUrl
-                })}
-                className="px-6 py-3 bg-sky-600 text-white font-bold rounded-xl hover:bg-sky-700 shadow-sm transition flex items-center justify-center gap-2 shrink-0"
-              >
-                <Save className="w-4 h-4" /> บันทึกการตั้งค่า Chatbot
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Shop Contact Settings */}
-        <div className="mb-8">
-          <h3 className="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
-            <StoreIcon className="w-5 h-5 text-indigo-600" />
-            ข้อมูลติดต่อร้านค้า (Shop Contact)
-          </h3>
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-              
-              {/* Logo Upload */}
-              <div className="sm:col-span-2 flex items-center justify-center mb-4">
-                <div className="relative group">
-                  <div className="w-24 h-24 rounded-2xl bg-white border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden hover:border-indigo-300 transition-colors relative shadow-sm cursor-pointer">
-                    {shopInfo.logo ? (
-                      <img 
-                        src={processImageUrl(shopInfo.logo)} 
-                        alt="Shop Logo" 
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                        onError={(e) => { e.target.style.display = 'none'; if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex'; }}
-                      />
-                    ) : null}
-                    
-                    <div className={`flex-col items-center justify-center text-slate-400 ${shopInfo.logo ? 'hidden' : 'flex'}`}>
-                      {isUploadingLogo ? <Loader2 className="w-6 h-6 animate-spin text-indigo-500" /> : <ImageIcon className="w-8 h-8 opacity-50" />}
-                      <span className="text-[10px] font-bold mt-1 text-slate-300">{isUploadingLogo ? '...' : 'LOGO'}</span>
+                {/* GPS Location & Coordinates for Logistics Map */}
+                <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-indigo-50/70 via-violet-50/40 to-slate-50 border border-indigo-100 space-y-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-indigo-600 text-white shadow-xs">
+                        <MapPin className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs sm:text-sm font-black text-slate-900">
+                          พิกัด GPS หน้าร้าน / คลังกระจายสินค้า (Logistics Hub)
+                        </h4>
+                        <p className="text-[11px] text-slate-500">
+                          พิกัดนี้จะใช้เป็นจุดเริ่มต้นคำนวณระยะทางและเส้นทางในหน้า <b>"สถานที่จัดส่ง"</b> โดยอัตโนมัติ
+                        </p>
+                      </div>
                     </div>
 
-                    <label className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer z-10">
-                      <Camera className="w-6 h-6 mb-1 drop-shadow-md" />
-                      <span className="text-[10px] font-bold drop-shadow-md">เปลี่ยนรูป</span>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        className="hidden" 
-                        onChange={(e) => e.target.files[0] && handleLogoUpload(e.target.files[0])}
-                        disabled={isUploadingLogo}
-                      />
-                    </label>
+                    <button
+                      type="button"
+                      onClick={handleGetShopCurrentGps}
+                      disabled={isLocatingGps}
+                      className="px-3 py-1.5 bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer active:scale-95 disabled:opacity-50"
+                      title="กดเพื่อดึงพิกัด GPS จากตำแหน่งเครื่องของคุณปัจจุบัน"
+                    >
+                      <Crosshair className={`w-3.5 h-3.5 ${isLocatingGps ? 'animate-spin text-indigo-600' : 'text-indigo-600'}`} />
+                      <span>{isLocatingGps ? 'กำลังระบุพิกัด...' : '📍 ดึงพิกัดจาก GPS ปัจจุบัน'}</span>
+                    </button>
                   </div>
 
-                  {shopInfo.logo && (
-                    <button
-                      onClick={requestDeleteLogo}
-                      className="absolute -bottom-2 -right-2 p-1.5 bg-white text-rose-500 border border-slate-200 rounded-full shadow-md hover:bg-rose-50 hover:text-rose-600 transition-all z-20 group/delete"
-                      title="ลบโลโก้"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-1 sm:col-span-2">
-                <label className="text-xs font-bold text-slate-500 ml-1">ชื่อร้านค้า</label>
-                <input 
-                  type="text" 
-                  placeholder="ชื่อร้านของคุณ" 
-                  value={shopInfo.shopName || ''}
-                  onChange={e => setShopInfo({...shopInfo, shopName: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-              
-              <div className="space-y-1 sm:col-span-2">
-                <label className="text-xs font-bold text-slate-500 ml-1">เลขประจำตัวผู้เสียภาษี (Tax ID)</label>
-                <input 
-                  type="text" 
-                  placeholder="เลขผู้เสียภาษีร้านค้า..." 
-                  value={shopInfo.taxId || ''}
-                  onChange={e => setShopInfo({...shopInfo, taxId: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 ml-1">เบอร์โทรศัพท์</label>
-                <input 
-                  type="tel" 
-                  placeholder="เบอร์โทรร้าน" 
-                  value={shopInfo.phone || ''}
-                  onChange={e => setShopInfo({...shopInfo, phone: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 ml-1">อีเมล</label>
-                <input 
-                  type="email" 
-                  placeholder="อีเมลร้าน" 
-                  value={shopInfo.email || ''}
-                  onChange={e => setShopInfo({...shopInfo, email: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-              <div className="space-y-1 sm:col-span-2">
-                <label className="text-xs font-bold text-slate-500 ml-1">ที่อยู่ / สำนักงาน</label>
-                <textarea 
-                  rows={2}
-                  placeholder="ที่อยู่ร้านค้า..." 
-                  value={shopInfo.address || ''}
-                  onChange={e => setShopInfo({...shopInfo, address: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 resize-none"
-                />
-              </div>
-              
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><LineIcon className="w-3 h-3 text-[#06C755]"/> Line URL</label>
-                <input 
-                  type="text" 
-                  placeholder="https://line.me/ti/p/..." 
-                  value={shopInfo.line || ''}
-                  onChange={e => setShopInfo({...shopInfo, line: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><Facebook className="w-3 h-3 text-[#1877F2]"/> Facebook URL</label>
-                <input 
-                  type="text" 
-                  placeholder="https://facebook.com/..." 
-                  value={shopInfo.facebook || ''}
-                  onChange={e => setShopInfo({...shopInfo, facebook: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><Instagram className="w-3 h-3 text-[#C13584]"/> Instagram URL</label>
-                <input 
-                  type="text" 
-                  placeholder="https://instagram.com/..." 
-                  value={shopInfo.instagram || ''}
-                  onChange={e => setShopInfo({...shopInfo, instagram: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><Music2 className="w-3 h-3 text-black"/> TikTok URL</label>
-                <input 
-                  type="text" 
-                  placeholder="https://tiktok.com/@..." 
-                  value={shopInfo.tiktok || ''}
-                  onChange={e => setShopInfo({...shopInfo, tiktok: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><XIcon className="w-3 h-3 text-black"/> Twitter (X) URL</label>
-                <input 
-                  type="text" 
-                  placeholder="https://x.com/..." 
-                  value={shopInfo.twitter || ''}
-                  onChange={e => setShopInfo({...shopInfo, twitter: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><WeChatIcon className="w-3 h-3 text-[#07C160]"/> WeChat URL / ID</label>
-                <input 
-                  type="text" 
-                  placeholder="WeChat ID หรือ Link" 
-                  value={shopInfo.wechat || ''}
-                  onChange={e => setShopInfo({...shopInfo, wechat: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-              
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1"><TelegramIcon className="w-3 h-3 text-[#0088cc]"/> Telegram Contact URL</label>
-                <input 
-                  type="text" 
-                  placeholder="https://t.me/..." 
-                  value={shopInfo.telegram || ''}
-                  onChange={e => setShopInfo({...shopInfo, telegram: e.target.value})}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                onClick={() => saveSystemSettings('shop_info', shopInfo)}
-                disabled={isSaving || isUploadingLogo}
-                className={`px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-sm transition flex items-center justify-center gap-2 ${isSaving || isUploadingLogo ? 'opacity-50 cursor-not-allowed' : 'hover:bg-indigo-700'}`}
-              >
-                {isUploadingLogo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                {isUploadingLogo ? 'กำลังอัปโหลด...' : 'บันทึกข้อมูล'}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Theme Customization */}
-        <div className="mb-8">
-          <h3 className="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
-            <Palette className="w-5 h-5 text-indigo-600" />
-            ปรับแต่งธีม (Theme & Appearance)
-          </h3>
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
-            <div className="flex flex-col gap-6">
-              
-              {/* Primary Color Selection */}
-              <div>
-                <label className="text-sm font-bold text-slate-700 mb-3 block">เลือกสีหลัก (Primary Color)</label>
-                <div className="flex flex-wrap gap-3 items-center">
-                  {Object.entries(themeColors).map(([key, theme]) => (
-                    <button
-                      key={key}
-                      onClick={() => setShopInfo({...shopInfo, themeColor: key})}
-                      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${
-                        shopInfo.themeColor === key 
-                        ? 'ring-4 ring-offset-2 ring-slate-200 scale-110 shadow-md' 
-                        : 'hover:scale-105 hover:shadow-sm opacity-80 hover:opacity-100'
-                      }`}
-                      style={{ background: key === 'rainbow' ? 'linear-gradient(135deg, #ef4444, #eab308, #3b82f6, #a855f7)' : theme.main }}
-                      title={theme.label}
-                    >
-                      {shopInfo.themeColor === key && <Check className="w-6 h-6 text-white drop-shadow-sm" strokeWidth={3} />}
-                    </button>
-                  ))}
-
-                  <div className="w-px h-8 bg-slate-200 mx-1"></div>
-
-                  {/* Custom Color Button */}
-                  <div className="relative group">
-                    <label 
-                      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all cursor-pointer shadow-sm relative overflow-hidden ${
-                        shopInfo.themeColor === 'custom' 
-                        ? 'ring-4 ring-offset-2 ring-slate-200 scale-110' 
-                        : 'hover:scale-105 hover:shadow-md border border-slate-100'
-                      }`}
-                      style={{ 
-                        background: shopInfo.themeColor === 'custom' 
-                          ? shopInfo.customColorValue 
-                          : 'conic-gradient(from 90deg, #FF0000, #FFFF00, #00FF00, #00FFFF, #0000FF, #FF00FF, #FF0000)'
-                      }}
-                      title="สีที่กำหนดเอง (Custom)"
-                    >
-                      <input 
-                        type="color" 
-                        className="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10"
-                        value={shopInfo.customColorValue || '#000000'}
-                        onChange={(e) => setShopInfo({
-                          ...shopInfo, 
-                          themeColor: 'custom',
-                          customColorValue: e.target.value
-                        })}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        พิกัดละติจูด, ลองจิจูด (Latitude, Longitude)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="เช่น 13.736717, 100.523186 หรือวางลิงก์ Google Maps"
+                        value={shopInfo.gpsLocation || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setShopInfo(prev => ({ ...prev, gpsLocation: val }));
+                        }}
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400"
                       />
-                      <div className={`pointer-events-none z-0 ${shopInfo.themeColor === 'custom' ? 'text-white drop-shadow-md' : 'text-slate-700 bg-white/80 p-2 rounded-full backdrop-blur-sm shadow-sm'}`}>
-                        {shopInfo.themeColor === 'custom' ? (
-                          <Check className="w-6 h-6" strokeWidth={3} />
-                        ) : (
-                          <Pipette className="w-5 h-5" />
+                      <span className="text-[10px] text-slate-400 mt-1 block">
+                        รองรับทั้งตัวเลขพิกัด หรือวางลิงก์ Google Maps ทุกรูปแบบ
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-bold text-slate-700">
+                          ลิงก์ Google Maps ของร้าน
+                        </label>
+                        {shopInfo.mapLink && (
+                          <a
+                            href={shopInfo.mapLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+                          >
+                            <span>ทดสอบเปิดแผนที่</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
                         )}
                       </div>
-                    </label>
-                    <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-20">
-                      กำหนดเอง
+                      <input
+                        type="url"
+                        placeholder="https://maps.google.com/?q=..."
+                        value={shopInfo.mapLink || ''}
+                        onChange={(e) => setShopInfo(prev => ({ ...prev, mapLink: e.target.value }))}
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400"
+                      />
+                      <span className="text-[10px] text-slate-400 mt-1 block">
+                        ลิงก์ Google Maps สำหรับให้ทีมงานหรือลูกค้าเปิดดูพิกัดร้าน
+                      </span>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="w-full h-px bg-slate-100"></div>
+                {/* Social media inputs */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2">ช่องทางโซเชียลมีเดีย</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl">
+                      <Facebook className="w-4 h-4 text-blue-600 shrink-0" />
+                      <input
+                        type="text"
+                        placeholder="Facebook Page"
+                        value={shopInfo.facebook || ''}
+                        onChange={(e) => setShopInfo({ ...shopInfo, facebook: e.target.value })}
+                        className="w-full bg-transparent text-xs font-medium focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl">
+                      <Instagram className="w-4 h-4 text-pink-600 shrink-0" />
+                      <input
+                        type="text"
+                        placeholder="Instagram Account"
+                        value={shopInfo.instagram || ''}
+                        onChange={(e) => setShopInfo({ ...shopInfo, instagram: e.target.value })}
+                        className="w-full bg-transparent text-xs font-medium focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl">
+                      <Music2 className="w-4 h-4 text-slate-900 shrink-0" />
+                      <input
+                        type="text"
+                        placeholder="TikTok"
+                        value={shopInfo.tiktok || ''}
+                        onChange={(e) => setShopInfo({ ...shopInfo, tiktok: e.target.value })}
+                        className="w-full bg-transparent text-xs font-medium focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl">
+                      <XIcon className="w-4 h-4 text-slate-800 shrink-0" />
+                      <input
+                        type="text"
+                        placeholder="X / Twitter"
+                        value={shopInfo.twitter || ''}
+                        onChange={(e) => setShopInfo({ ...shopInfo, twitter: e.target.value })}
+                        className="w-full bg-transparent text-xs font-medium focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
 
-              {/* Mode Selection */}
-              <div>
-                <label className="text-sm font-bold text-slate-700 mb-3 block">รูปแบบการแสดงผล (Display Mode)</label>
-                <div className="flex gap-4">
+                {/* Theme Selector (ตรงตาม Screenshot 183053: Swatches ทรงกลม + ตัวดูดสี + เลือก Gradient/Solid) */}
+                <div className="pt-4 border-t border-slate-100 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                      <Palette className="w-4 h-4 text-violet-600" />
+                      <span>ธีมสีหลักของระบบ (Theme Color)</span>
+                    </h4>
+                    <span className="text-[11px] text-slate-400 font-medium">
+                      เลือกสีสำเร็จรูป หรือคลิกหลอดดูดเพื่อเลือกสีเองแบบ Real-time
+                    </span>
+                  </div>
+
+                  {/* Circular Color Swatches */}
+                  <div className="flex flex-wrap items-center gap-3.5 py-1">
+                    {Object.entries(themeColors).map(([key, theme]) => {
+                      const isSelected = shopInfo.themeColor === key;
+                      const bgStyle = theme.isRainbow
+                        ? 'linear-gradient(135deg, #ef4444, #f97316, #eab308, #22c55e, #3b82f6, #a855f7, #ec4899)'
+                        : theme.main;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => {
+                            applyThemeUpdate({ ...shopInfo, themeColor: key });
+                          }}
+                          className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full relative overflow-hidden transition-all duration-200 flex items-center justify-center cursor-pointer shadow-sm hover:scale-105 active:scale-95 ${
+                            isSelected
+                              ? 'ring-4 ring-offset-2 ring-slate-400 scale-110 shadow-md'
+                              : 'hover:shadow-md'
+                          }`}
+                          style={{ background: bgStyle }}
+                          title={theme.label}
+                        >
+                          {isSelected && (
+                            <Check className="w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-md" strokeWidth={3} />
+                          )}
+                        </button>
+                      );
+                    })}
+
+                    {/* Custom Color Pipette Swatch */}
+                    <div className="relative group">
+                      <label
+                        ref={customSwatchRef}
+                        className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-transform duration-150 cursor-pointer shadow-sm relative overflow-hidden ${
+                          shopInfo.themeColor === 'custom'
+                            ? 'ring-4 ring-offset-2 ring-slate-400 scale-110 shadow-md'
+                            : 'hover:scale-105 hover:shadow-md border border-slate-200'
+                        }`}
+                        style={{
+                          background:
+                            shopInfo.themeColor === 'custom' && shopInfo.customColorValue
+                              ? shopInfo.customColorValue
+                              : 'conic-gradient(from 90deg, #FF0000, #FFFF00, #00FF00, #00FFFF, #0000FF, #FF00FF, #FF0000)'
+                        }}
+                        title="กำหนดสีเอง (Custom Color)"
+                      >
+                        <input
+                          ref={(el) => {
+                            customColorInputRef.current = el;
+                            if (el && !el._hasNativeChangeListener) {
+                              el._hasNativeChangeListener = true;
+                              el.addEventListener('change', (e) => handleColorCommit(e.target.value));
+                            }
+                          }}
+                          type="color"
+                          className="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10"
+                          defaultValue={shopInfo.customColorValue || '#8B5CF6'}
+                          onInput={(e) => handleColorDrag(e.target.value)}
+                        />
+                        <div
+                          className={`pointer-events-none z-0 ${
+                            shopInfo.themeColor === 'custom'
+                              ? 'text-white drop-shadow-md'
+                              : 'text-slate-700 bg-white/80 p-1.5 rounded-full backdrop-blur-sm shadow-xs'
+                          }`}
+                        >
+                          {shopInfo.themeColor === 'custom' ? (
+                            <Check className="w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-md" strokeWidth={3} />
+                          ) : (
+                            <Pipette className="w-4 h-4 sm:w-5 sm:h-5" />
+                          )}
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Mode Selection (Gradient vs Solid) */}
+                  <div className="pt-2">
+                    <label className="text-xs font-bold text-slate-700 mb-2 block">
+                      รูปแบบการแสดงผล (Display Mode)
+                    </label>
+                    <div className="flex gap-3 max-w-md">
+                      <button
+                        type="button"
+                        onClick={() => applyThemeUpdate({ ...shopInfo, themeMode: 'gradient' })}
+                        className={`flex-1 py-2.5 px-4 rounded-xl border-2 transition-all flex items-center justify-center gap-2 font-bold text-xs cursor-pointer ${
+                          shopInfo.themeMode !== 'solid'
+                            ? 'border-violet-600 bg-violet-50 text-violet-700 shadow-xs'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="w-4 h-4 rounded-full bg-gradient-to-r from-violet-600 to-purple-600" />
+                        <span>ไล่เฉดสี (Gradient)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyThemeUpdate({ ...shopInfo, themeMode: 'solid' })}
+                        className={`flex-1 py-2.5 px-4 rounded-xl border-2 transition-all flex items-center justify-center gap-2 font-bold text-xs cursor-pointer ${
+                          shopInfo.themeMode === 'solid'
+                            ? 'border-violet-600 bg-violet-50 text-violet-700 shadow-xs'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="w-4 h-4 rounded-full bg-violet-600" />
+                        <span>สีเดียว (Solid)</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
                   <button
-                    onClick={() => setShopInfo({...shopInfo, themeMode: 'gradient'})}
-                    className={`flex-1 py-4 px-4 rounded-xl border-2 transition-all flex items-center justify-center gap-2 font-bold ${
-                      shopInfo.themeMode === 'gradient'
-                      ? 'border-indigo-600 bg-indigo-50 text-indigo-600'
-                      : 'border-slate-100 bg-white text-slate-500 hover:border-slate-200'
-                    }`}
+                    type="button"
+                    onClick={() => {
+                      // ซิงค์พิกัดเข้า flower2u_hub_settings สำหรับหน้า VenuesView ทันที
+                      const parsed = parseCoordinatesFromInput(shopInfo.gpsLocation) || DEFAULT_FLOWER2U_HUB.coords;
+                      const hubPayload = {
+                        name: shopInfo.shopName || DEFAULT_FLOWER2U_HUB.name,
+                        description: shopInfo.address || DEFAULT_FLOWER2U_HUB.description,
+                        coords: parsed,
+                        mapLink: shopInfo.mapLink || `https://maps.google.com/?q=${parsed[0]},${parsed[1]}`
+                      };
+                      try {
+                        localStorage.setItem('flower2u_hub_settings', JSON.stringify(hubPayload));
+                        window.dispatchEvent(new CustomEvent('flower2u_hub_updated', { detail: hubPayload }));
+                      } catch (e) {}
+
+                      saveSystemSettings('shop_info', shopInfo);
+                    }}
+                    className="px-6 py-2.5 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-violet-200/50 transition flex items-center gap-2 cursor-pointer active:scale-95"
                   >
-                    <div className="w-6 h-6 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600"></div>
-                    ไล่เฉดสี (Gradient)
+                    <Save className="w-4 h-4" />
+                    <span>บันทึกข้อมูลร้าน</span>
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ============================================================ */}
+          {/* TAB 4: INTEGRATIONS & BOTS (การเชื่อมต่อ & บอท) */}
+          {/* ============================================================ */}
+          {activeCategory === 'integrations' && (
+            <div className="space-y-6">
+              {/* Google Drive */}
+              <div className="bg-white p-6 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-slate-200/80 shadow-sm space-y-5">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                  <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                    <HardDrive className="w-5 h-5 text-blue-600" />
+                    <span>โฟลเดอร์ Google Drive (จัดเก็บไฟล์)</span>
+                  </h3>
                   <button
-                    onClick={() => setShopInfo({...shopInfo, themeMode: 'solid'})}
-                    className={`flex-1 py-4 px-4 rounded-xl border-2 transition-all flex items-center justify-center gap-2 font-bold ${
-                      shopInfo.themeMode === 'solid'
-                      ? 'border-indigo-600 bg-indigo-50 text-indigo-600'
-                      : 'border-slate-100 bg-white text-slate-500 hover:border-slate-200'
-                    }`}
+                    type="button"
+                    onClick={() => {
+                      const newFolder = { id: `folder_${Date.now()}`, name: 'โฟลเดอร์ใหม่', type: 'custom', folderId: '' };
+                      setDriveFolders([...driveFolders, newFolder]);
+                    }}
+                    className="px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-xl text-xs font-bold border border-blue-100 transition flex items-center gap-1 cursor-pointer"
                   >
-                    <div className="w-6 h-6 rounded-full bg-indigo-600"></div>
-                    สีเดียว (Solid)
+                    <FolderPlus className="w-4 h-4" />
+                    <span>เพิ่มโฟลเดอร์</span>
+                  </button>
+                </div>
+
+                <p className="text-xs text-slate-500">
+                  ระบุ Folder ID จาก Google Drive เพื่อให้ระบบอัปโหลดสลิป รูปผลงาน และเอกสารไปยังโฟลเดอร์ที่กำหนด
+                </p>
+
+                <div className="space-y-3">
+                  {driveFolders.map((f, idx) => (
+                    <div key={f.id || idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <Folder className="w-4 h-4 text-amber-500 shrink-0" />
+                        <input
+                          type="text"
+                          value={f.name || ''}
+                          onChange={(e) => {
+                            const updated = [...driveFolders];
+                            updated[idx].name = e.target.value;
+                            setDriveFolders(updated);
+                          }}
+                          placeholder="ชื่อโฟลเดอร์"
+                          className="font-bold text-xs sm:text-sm bg-transparent border-b border-dashed border-slate-300 focus:outline-none focus:border-rose-500"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <input
+                          type="text"
+                          value={f.folderId || ''}
+                          onChange={(e) => {
+                            const updated = [...driveFolders];
+                            updated[idx].folderId = e.target.value;
+                            setDriveFolders(updated);
+                          }}
+                          placeholder="Drive Folder ID"
+                          className="flex-1 sm:w-56 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-1 focus:ring-rose-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = driveFolders.filter((_, i) => i !== idx);
+                            setDriveFolders(updated);
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-50 transition cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      saveSystemSettings('drive_folders', driveFolders);
+                      showToast('บันทึกการตั้งค่า Google Drive สำเร็จ', 'success');
+                    }}
+                    className="px-5 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-violet-200/50 transition flex items-center gap-2 cursor-pointer"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>บันทึก Google Drive</span>
                   </button>
                 </div>
               </div>
 
-              <div className="flex justify-end pt-2">
-                <button
-                  onClick={() => saveSystemSettings('shop_info', shopInfo)}
-                  className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-sm transition flex items-center justify-center gap-2"
-                >
-                  <Save className="w-4 h-4" /> บันทึกธีม
-                </button>
+              {/* Chatbot AI (LINE & Telegram) */}
+              <div className="bg-white p-6 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-slate-200/80 shadow-sm space-y-6">
+                <h3 className="text-xl font-black text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-4">
+                  <Bot className="w-5 h-5 text-sky-600" />
+                  <span>การเชื่อมต่อ LINE Bot &amp; Telegram Bot</span>
+                </h3>
+
+                <div className="grid grid-cols-1 gap-6">
+                  {/* LINE Bot */}
+                  <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <LineIcon className="w-5 h-5 text-emerald-600" />
+                      <h4 className="font-bold text-sm text-slate-800">LINE Messaging API (Line Bot)</h4>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Channel Access Token</label>
+                      <input
+                        type="password"
+                        value={lineBotToken || ''}
+                        onChange={(e) => setLineBotToken(e.target.value)}
+                        placeholder="วาง Channel Access Token จาก LINE Developers"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Telegram Bot */}
+                  <div className="p-4 bg-sky-50/50 rounded-2xl border border-sky-100 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <TelegramIcon className="w-5 h-5 text-sky-600" />
+                      <h4 className="font-bold text-sm text-slate-800">Telegram Bot Notifications</h4>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Bot Token</label>
+                        <input
+                          type="password"
+                          value={telegramBotToken || ''}
+                          onChange={(e) => setTelegramBotToken(e.target.value)}
+                          placeholder="123456789:ABCdef..."
+                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">Chat ID</label>
+                        <input
+                          type="text"
+                          value={telegramChatId || ''}
+                          onChange={(e) => setTelegramChatId(e.target.value)}
+                          placeholder="-100xxxxxxxxx"
+                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      saveSystemSettings('line_bot_token', lineBotToken);
+                      saveSystemSettings('telegram_bot_token', telegramBotToken);
+                      saveSystemSettings('telegram_chat_id', telegramChatId);
+                      showToast('บันทึกการตั้งค่าบอทเรียบร้อยแล้ว', 'success');
+                    }}
+                    className="px-5 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-violet-200/50 transition flex items-center gap-2 cursor-pointer"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>บันทึกการตั้งค่าบอท</span>
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
+          )}
 
-        {/* System Options */}
-        <h3 className="text-xl font-bold text-slate-900 mb-4">ตั้งค่าตัวเลือกระบบ (System Options)</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <ListManager
-            title="หมวดหมู่งาน"
-            items={projectCategories}
-            onAdd={(val) => setProjectCategories([...projectCategories, val])}
-            onDelete={(idx) => setProjectCategories(projectCategories.filter((_, i) => i !== idx))}
-            placeholder="เพิ่มหมวดหมู่..."
-            icon={Tag}
-            onSave={(newItems) => saveSystemSettings('project_categories', newItems)}
-          />
-          <ListManager
-            title="หมวดหมู่ค่าใช้จ่าย"
-            items={expenseCategories}
-            onAdd={(val) => setExpenseCategories([...expenseCategories, val])}
-            onDelete={(idx) => setExpenseCategories(expenseCategories.filter((_, i) => i !== idx))}
-            placeholder="เพิ่มหมวดหมู่ค่าใช้จ่าย..."
-            icon={DollarSign}
-            onSave={(newItems) => saveSystemSettings('expense_categories', newItems)}
-          />
-          <AdvancedListManager
-            title="สถานะดีล (Deal Status)"
-            items={dealStatuses}
-            onUpdate={setDealStatuses} 
-            placeholder="เพิ่มสถานะดีล..."
-            icon={Briefcase}
-            onSave={(newItems) => saveSystemSettings('deal_statuses', newItems)}
-          />
-          <AdvancedListManager
-            title="สถานะขนส่ง (Transport)"
-            items={transportStatuses}
-            onUpdate={setTransportStatuses} 
-            placeholder="เพิ่มสถานะขนส่ง..."
-            icon={Truck}
-            onSave={(newItems) => saveSystemSettings('transport_statuses', newItems)}
-          />
-        </div>
+          {/* ============================================================ */}
+          {/* TAB 5: SYSTEM OPTIONS (ตัวเลือกระบบ) */}
+          {/* ============================================================ */}
+          {activeCategory === 'options' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <ListManager
+                  title="หมวดหมู่งาน (Project Categories)"
+                  items={projectCategories}
+                  onAdd={(val) => setProjectCategories([...projectCategories, val])}
+                  onDelete={(idx) => setProjectCategories(projectCategories.filter((_, i) => i !== idx))}
+                  placeholder="เพิ่มหมวดหมู่งาน..."
+                  icon={Tag}
+                  onSave={(newItems) => saveSystemSettings('project_categories', newItems)}
+                />
 
-        {/* Logout */}
-        <div className="pt-8 mt-8 border-t border-slate-100 flex flex-col-reverse sm:flex-row justify-between gap-4">
-          <button 
-            onClick={handleLogout}
-            className="px-6 py-3.5 text-rose-600 font-bold bg-white border border-rose-100 hover:bg-rose-50 rounded-xl transition-colors flex items-center justify-center gap-2"
-          >
-            <LogOut className="w-5 h-5" />
-            <span>ออกจากระบบ</span>
-          </button>
-        </div>
+                <ListManager
+                  title="หมวดหมู่ค่าใช้จ่าย (Expense Categories)"
+                  items={expenseCategories}
+                  onAdd={(val) => setExpenseCategories([...expenseCategories, val])}
+                  onDelete={(idx) => setExpenseCategories(expenseCategories.filter((_, i) => i !== idx))}
+                  placeholder="เพิ่มหมวดหมู่ค่าใช้จ่าย..."
+                  icon={DollarSign}
+                  onSave={(newItems) => saveSystemSettings('expense_categories', newItems)}
+                />
+
+                <SortableListManager
+                  title="สถานะดีลงาน (Deal Status)"
+                  items={dealStatuses}
+                  onUpdate={setDealStatuses} 
+                  placeholder="เพิ่มสถานะดีล..."
+                  icon={Briefcase}
+                  onSave={(newItems) => saveSystemSettings('deal_statuses', newItems)}
+                  type="status"
+                />
+
+                <SortableListManager
+                  title="สถานะขนส่ง (Transport Status)"
+                  items={transportStatuses}
+                  onUpdate={setTransportStatuses} 
+                  placeholder="เพิ่มสถานะขนส่ง..."
+                  icon={Truck}
+                  onSave={(newItems) => saveSystemSettings('transport_statuses', newItems)}
+                  type="transport"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ============================================================ */}
+          {/* TAB 6: DATABASE & SYNC (ฐานข้อมูล & ซิงค์) */}
+          {/* ============================================================ */}
+          {activeCategory === 'database' && (
+            <div className="bg-white p-6 sm:p-8 rounded-2xl sm:rounded-[2rem] border border-slate-200/80 shadow-sm space-y-6">
+              <h3 className="text-xl font-black text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-4">
+                <Database className="w-5 h-5 text-violet-600" />
+                <span>สถานะฐานข้อมูลและแคช (Database &amp; Storage)</span>
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
+                  <span className="text-[11px] font-bold text-emerald-600 uppercase block">ฐานข้อมูลออฟไลน์</span>
+                  <span className="text-lg font-black text-emerald-950 block mt-1">IndexedDB Active</span>
+                  <p className="text-xs text-emerald-700 mt-1">จัดเก็บข้อมูลโปรเจกต์ ใบเสนอราคา และพัสดุในเครื่อง 0ms</p>
+                </div>
+
+                <div className="p-4 bg-violet-50 rounded-2xl border border-violet-100">
+                  <span className="text-[11px] font-bold text-violet-600 uppercase block">คลาวด์ซิงค์</span>
+                  <span className="text-lg font-black text-violet-950 block mt-1">Supabase Cloud</span>
+                  <p className="text-xs text-violet-700 mt-1">เชื่อมต่อตาราง staff_users, projects, quotations แบบ Realtime</p>
+                </div>
+
+                <div className="p-4 bg-slate-100/70 rounded-2xl border border-slate-200/80">
+                  <span className="text-[11px] font-bold text-slate-600 uppercase block">ความปลอดภัย</span>
+                  <span className="text-lg font-black text-slate-900 block mt-1">Role-Based Guard</span>
+                  <p className="text-xs text-slate-600 mt-1">ระบบจำกัดสิทธิ์หน้าจอตามตำแหน่งงาน 100%</p>
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-2">
+                <h4 className="font-bold text-xs text-slate-700 uppercase">ล้างข้อมูลแคชชั่วคราว (Clear Local Cache)</h4>
+                <p className="text-xs text-slate-500">
+                  หากพบว่าข้อมูลในเครื่องไม่ตรงกับระบบคลาวด์ สามารถล้างแคชเพื่อดึงข้อมูลสดจาก Supabase ใหม่ได้
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      localStorage.removeItem('f2u_projects_cache');
+                      showToast('ล้างแคชเรียบร้อยแล้ว กำลังโหลดข้อมูลใหม่', 'info');
+                      setTimeout(() => window.location.reload(), 800);
+                    }}
+                    className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    ล้างแคชและรีเฟรชหน้าเว็บ
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </main>
       </div>
+
+      {/* Toast Notification */}
+      {toast.show && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast({ show: false, message: '', type: 'success' })}
+        />
+      )}
+
     </div>
   );
-};
+}
 
-export default SettingsView;
+export default React.memo(SettingsView);

@@ -129,9 +129,11 @@ const ModernDateTimePicker = ({
     }
 
     const offset = newDate.getTimezoneOffset() * 60000;
-    const localISOTime = new Date(newDate.getTime() - offset).toISOString().slice(0, 16);
+    const localISOValue = hasTime 
+      ? new Date(newDate.getTime() - offset).toISOString().slice(0, 16)
+      : new Date(newDate.getTime() - offset).toISOString().slice(0, 10);
     
-    onChange({ target: { value: localISOTime } });
+    onChange({ target: { value: localISOValue } });
     if (!hasTime) setIsOpen(false);
   };
 
@@ -246,6 +248,15 @@ const ModernDateTimePicker = ({
 
     if (pickerType === 'year') {
       return parseInt(value) + 543;
+    }
+
+    if (!hasTime) {
+      const dateObj = new Date(value);
+      if (isNaN(dateObj.getTime())) return value;
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const year = dateObj.getFullYear() + 543;
+      return `${day}/${month}/${year}`;
     }
 
     return formatDate(value);

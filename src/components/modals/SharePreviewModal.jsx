@@ -4,6 +4,8 @@ import {
   Share2, X, FileText, User, Truck, Clock, MapPin, ExternalLink, 
   Image as ImageIcon, Wallet, Gift, Link as LinkIcon, Check, Copy, Printer 
 } from 'lucide-react';
+import ImageViewer from '../common/ImageViewer';
+import Toast from '../common/Toast';
 import { 
   formatDate, 
   generateTrackingToken, 
@@ -16,6 +18,20 @@ export const SharePreviewModal = ({ data, onClose, shopInfo }) => {
   const [isCopied, setIsCopied] = useState(false);
   const [isLinkCopied, setIsLinkCopied] = useState(false);
   const [isQuoteLinkCopied, setIsQuoteLinkCopied] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+
+  // Keyboard shortcut: close modal on Escape
+  React.useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (previewImage) setPreviewImage(null);
+        else onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewImage, onClose]);
 
   // คำนวณยอดต่างๆ เพื่อใช้แสดงผล
   const totalSupport = data.customerSupport ? data.customerSupport.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0) : 0;
@@ -600,7 +616,7 @@ ${moneyOrderDetails}${quotationDetails}
       printWindow.document.write(fullHtml);
       printWindow.document.close();
     } else {
-      alert('Pop-up ถูกบล็อก กรุณาอนุญาต Pop-up สำหรับเว็บไซต์นี้');
+      setToast({ show: true, message: 'Pop-up ถูกบล็อก กรุณาอนุญาต Pop-up สำหรับเว็บไซต์นี้', type: 'error' });
     }
   };
 
@@ -704,23 +720,66 @@ ${moneyOrderDetails}${quotationDetails}
             </div>
 
             {/* Image Section */}
-            {data.image && (
+            {((Array.isArray(data.images) && data.images.length > 0) || data.image) && (
               <div>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
-                  <ImageIcon className="w-3.5 h-3.5" /> รูปภาพอ้างอิง
-                </h4>
-                <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50 relative">
-                  <img 
-                    src={processImageUrl(data.image)} 
-                    alt="Project Ref" 
-                    className="w-full h-auto object-contain max-h-60" 
-                    referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      e.target.style.display = 'none';
-                      e.target.parentElement.innerHTML = '<div class="p-4 text-center text-slate-400 text-xs">ไม่สามารถโหลดรูปภาพได้</div>';
-                    }}
-                  />
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                    <ImageIcon className="w-3.5 h-3.5" /> รูปภาพอ้างอิง
+                  </h4>
+                  {Array.isArray(data.images) && data.images.length > 1 && (
+                    <span className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-bold">
+                      {data.images.length} รูป
+                    </span>
+                  )}
                 </div>
+                {Array.isArray(data.images) && data.images.length > 1 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {data.images.map((img, idx) => {
+                      const src = typeof img === 'object' ? img.url : img;
+                      return (
+                        <div 
+                          key={idx} 
+                          onClick={() => setPreviewImage({
+                            images: data.images,
+                            initialIndex: idx,
+                            title: 'รูปภาพอ้างอิง'
+                          })}
+                          className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50 aspect-[3/4] relative cursor-pointer group hover:shadow-md transition"
+                        >
+                          <img
+                            src={processImageUrl(src)}
+                            alt={`Project Ref ${idx + 1}`}
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div 
+                    onClick={() => setPreviewImage({
+                      images: Array.isArray(data.images) && data.images.length > 0 ? data.images : [data.image],
+                      initialIndex: 0,
+                      title: 'รูปภาพอ้างอิง'
+                    })}
+                    className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50 relative cursor-pointer group hover:shadow-md transition"
+                  >
+                    <img 
+                      src={processImageUrl(data.image || (data.images && data.images[0] ? (typeof data.images[0] === 'object' ? data.images[0].url : data.images[0]) : ''))} 
+                      alt="Project Ref" 
+                      className="w-full h-auto object-contain max-h-60" 
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                        e.target.parentElement.innerHTML = '<div class="p-4 text-center text-slate-400 text-xs">ไม่สามารถโหลดรูปภาพได้</div>';
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -847,6 +906,19 @@ ${moneyOrderDetails}${quotationDetails}
           </div>
         </div>
       </div>
+      {previewImage && (
+        <ImageViewer 
+          src={previewImage} 
+          onClose={() => setPreviewImage(null)} 
+        />
+      )}
+      {toast.show && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast({ ...toast, show: false })}
+        />
+      )}
     </div>,
     document.body
   );

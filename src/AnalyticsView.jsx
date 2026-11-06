@@ -12,7 +12,15 @@ import {
   ThumbsDown,
   Trophy,
   Crown,
-  Plus
+  Plus,
+  Banknote,
+  MapPin,
+  Copy,
+  Check,
+  ExternalLink,
+  ShieldAlert,
+  ArrowUpRight,
+  Truck
 } from 'lucide-react';
 
 const DonutChart = ({ data = [], isAnimated }) => {
@@ -30,8 +38,8 @@ const DonutChart = ({ data = [], isAnimated }) => {
   const sortedData = [...data].sort((a, b) => b.count - a.count);
 
   return (
-    <div className="flex flex-col items-center gap-6 py-2 w-full">
-      <div className="relative w-56 h-56 flex items-center justify-center shrink-0">
+    <div className="flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-8 py-2 w-full">
+      <div className="relative w-44 h-44 sm:w-48 sm:h-48 flex items-center justify-center shrink-0">
         <svg viewBox="0 0 100 100" className="w-full h-full absolute inset-0 -rotate-90">
           <circle cx="50" cy="50" r={radius} fill="transparent" stroke="#f1f5f9" strokeWidth="10" />
           {sortedData.map((item, i) => {
@@ -60,22 +68,22 @@ const DonutChart = ({ data = [], isAnimated }) => {
           })}
         </svg>
         <div className={`flex flex-col items-center justify-center transition-all duration-700 delay-300 ${isLoaded ? 'scale-100 opacity-100' : 'scale-50 opacity-0'}`}>
-          <span className="text-4xl font-black text-slate-800 leading-none">{total}</span>
-          <span className="text-sm font-bold text-slate-400 mt-1">งาน</span>
+          <span className="text-3xl sm:text-4xl font-black text-slate-800 leading-none">{total}</span>
+          <span className="text-xs sm:text-sm font-bold text-slate-400 mt-1">งาน</span>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-x-6 gap-y-3 w-full px-2">
+      <div className="space-y-2.5 w-full sm:flex-1 max-h-[240px] overflow-y-auto custom-scrollbar pr-1">
         {sortedData.map((item, i) => (
-          <div key={i} className="flex items-center justify-between group hover:bg-slate-50 p-1.5 rounded-lg transition-colors">
+          <div key={i} className="flex items-center justify-between group hover:bg-slate-50 p-2 rounded-xl transition-colors border border-transparent hover:border-slate-100">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-3 h-3 rounded-full shrink-0 transition-transform group-hover:scale-125 shadow-sm" style={{ backgroundColor: colors[i % colors.length] }}></div>
-              <span className="text-xs font-bold text-slate-600 truncate">{item.name}</span>
+              <span className="text-xs sm:text-sm font-bold text-slate-600 truncate">{item.name}</span>
             </div>
-            <span className="text-xs font-black text-slate-800 bg-white border border-slate-100 px-2 py-0.5 rounded-md shadow-sm">{item.count}</span>
+            <span className="text-xs font-black text-slate-800 bg-slate-50 border border-slate-200/60 px-2 py-0.5 rounded-lg shadow-2xs shrink-0">{item.count} งาน</span>
           </div>
         ))}
         {sortedData.length === 0 && (
-          <div className="col-span-2 text-center text-slate-400 text-xs py-2 italic">ไม่มีข้อมูลงาน</div>
+          <div className="text-center text-slate-400 text-xs py-4 italic">ไม่มีข้อมูลงาน</div>
         )}
       </div>
     </div>
@@ -92,20 +100,26 @@ const AnalyticsView = ({
   openModal,
   renderTable,
   filteredAndSortedActivities = [],
-  isActive = true
+  isActive = true,
+  onOpenVenueModal,
+  onSelectProject
 }) => {
   const expenseRef = useRef(null);
   const categoryRef = useRef(null);
   const artistRef = useRef(null);
   const fanRef = useRef(null);
   const customerRef = useRef(null);
+  const venueRef = useRef(null);
+
+  const [copiedBanknote, setCopiedBanknote] = useState(false);
 
   const [animState, setAnimState] = useState({
     expense: false,
     category: false,
     artist: false,
     fan: false,
-    customer: false
+    customer: false,
+    venue: false
   });
 
   useEffect(() => {
@@ -129,13 +143,13 @@ const AnalyticsView = ({
           { threshold: 0.1 }
         );
 
-        const refs = [expenseRef, categoryRef, artistRef, fanRef, customerRef];
+        const refs = [expenseRef, categoryRef, artistRef, fanRef, customerRef, venueRef];
         refs.forEach(ref => {
           if (ref.current) observer.observe(ref.current);
         });
       }, 150);
     } else {
-      setAnimState({ expense: false, category: false, artist: false, fan: false, customer: false });
+      setAnimState({ expense: false, category: false, artist: false, fan: false, customer: false, venue: false });
     }
 
     return () => {
@@ -149,6 +163,9 @@ const AnalyticsView = ({
     currentSupport = 0,
     currentCost = 0,
     currentProfit = 0,
+    avgOrderValue = 0,
+    avgSupportValue = 0,
+    netMarginPercent = '0.0',
     totalProjects = 0,
     completedProjects = 0,
     activeProjects = 0,
@@ -163,8 +180,31 @@ const AnalyticsView = ({
     maxCustomerRevenue = 1,
     topCustomerByProjects = [],
     maxCustomerProjectCount = 1,
-    categoryData = []
+    categoryData = [],
+    banknoteBreakdown = {},
+    topVenues = [],
+    maxVenueCount = 1,
+    lowMarginProjects = []
   } = analyticsData;
+
+  const totalBanknotesCount = Object.values(banknoteBreakdown).reduce((sum, item) => sum + (item?.count || 0), 0);
+  const totalBanknotesAmount = Object.values(banknoteBreakdown).reduce((sum, item) => sum + (item?.amount || 0), 0);
+
+  const handleCopyBanknotes = () => {
+    const lines = [
+      '📋 รายการเตรียมเบิกธนบัตรเงินซัพพอร์ตศิลปิน (Flower2U)',
+      `💵 ธนบัตร 1,000 บาท: ${(banknoteBreakdown[1000]?.count || 0).toLocaleString()} ใบ (฿${(banknoteBreakdown[1000]?.amount || 0).toLocaleString()})`,
+      `💵 ธนบัตร 500 บาท: ${(banknoteBreakdown[500]?.count || 0).toLocaleString()} ใบ (฿${(banknoteBreakdown[500]?.amount || 0).toLocaleString()})`,
+      `💵 ธนบัตร 100 บาท: ${(banknoteBreakdown[100]?.count || 0).toLocaleString()} ใบ (฿${(banknoteBreakdown[100]?.amount || 0).toLocaleString()})`,
+      `💵 ธนบัตร 50 บาท: ${(banknoteBreakdown[50]?.count || 0).toLocaleString()} ใบ (฿${(banknoteBreakdown[50]?.amount || 0).toLocaleString()})`,
+      `💵 ธนบัตร 20 บาท: ${(banknoteBreakdown[20]?.count || 0).toLocaleString()} ใบ (฿${(banknoteBreakdown[20]?.amount || 0).toLocaleString()})`,
+      '------------------------------',
+      `💰 รวมเงินซัพพอร์ตทั้งหมด: ฿${totalBanknotesAmount.toLocaleString()} (จำนวน ${totalBanknotesCount.toLocaleString()} ฉบับ)`
+    ];
+    navigator.clipboard.writeText(lines.join('\n'));
+    setCopiedBanknote(true);
+    setTimeout(() => setCopiedBanknote(false), 2000);
+  };
 
   return (
     <div className="space-y-8 flex flex-col min-h-full pb-24 md:pb-6">
@@ -193,10 +233,15 @@ const AnalyticsView = ({
             <h3 className="text-lg font-bold text-emerald-700">รายได้ (ค่าจ้าง)</h3>
           </div>
           <p className="text-3xl font-black text-emerald-800">฿{currentRevenue.toLocaleString()}</p>
-          <p className="text-[10px] text-emerald-500 font-bold mt-1 italic leading-none">
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+            <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100/90 px-2.5 py-0.5 rounded-lg">
+              AOV: ฿{avgOrderValue.toLocaleString()} / งาน
+            </span>
+            <span className="text-xs text-emerald-600 font-medium">จาก {totalProjects} งาน</span>
+          </div>
+          <p className="text-[10px] text-emerald-500 font-bold mt-1.5 italic leading-none">
             {dateFilterMode !== 'all' ? '* คำนวณจากวันที่รับชำระเงินในรอบที่เลือก' : '* คำนวณจากวันที่รับชำระเงิน'}
           </p>
-          <p className="text-sm text-emerald-600 mt-1 font-medium">จาก {totalProjects} งาน</p>
         </div>
 
         {/* 3. ค่าใช้จ่าย (รวมรายจ่าย) */}
@@ -222,9 +267,17 @@ const AnalyticsView = ({
             <h3 className="text-lg font-bold text-indigo-700">กำไรสุทธิ</h3>
           </div>
           <p className="text-3xl font-black text-indigo-800">฿{currentProfit.toLocaleString()}</p>
-          <p className="text-sm text-indigo-600 mt-1 font-medium">
-            Margin: {currentRevenue > 0 ? ((currentProfit / currentRevenue) * 100).toFixed(1) : 0}%
-          </p>
+          <div className="flex items-center gap-2 mt-1.5">
+            <span className={`text-[11px] font-black px-2.5 py-0.5 rounded-lg ${
+              Number(netMarginPercent) >= 50
+                ? 'bg-indigo-200/80 text-indigo-800'
+                : Number(netMarginPercent) >= 30
+                  ? 'bg-amber-100 text-amber-800'
+                  : 'bg-rose-100 text-rose-700'
+            }`}>
+              Net Margin: {netMarginPercent}%
+            </span>
+          </div>
         </div>
       </div>
 
@@ -285,9 +338,9 @@ const AnalyticsView = ({
         </div>
       </div>
 
-      {/* Expense & Category Breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 px-4 sm:px-8 lg:px-10">
-        <div ref={expenseRef} data-anim-key="expense" className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col h-full min-h-[400px]">
+      {/* Expense Breakdown (Standalone Full-Width Card) */}
+      <div className="px-4 sm:px-8 lg:px-10">
+        <div ref={expenseRef} data-anim-key="expense" className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col min-h-[400px]">
           <div className="flex items-center justify-between mb-6 flex-shrink-0">
             <h3 className="text-xl font-bold text-slate-900">สัดส่วนค่าใช้จ่ายสูงสุด</h3>
           </div>
@@ -308,13 +361,6 @@ const AnalyticsView = ({
             )) : (
               <div className="text-center text-slate-400 py-10">ไม่มีข้อมูลรายจ่าย</div>
             )}
-          </div>
-        </div>
-
-        <div ref={categoryRef} data-anim-key="category" className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col h-full min-h-[400px]">
-          <h3 className="text-xl font-bold text-slate-900 mb-6 flex-shrink-0 self-start w-full">สัดส่วนหมวดหมู่งาน</h3>
-          <div className="flex-1 w-full flex items-center justify-center">
-            <DonutChart data={categoryData} isAnimated={animState.category} />
           </div>
         </div>
       </div>
@@ -426,8 +472,201 @@ const AnalyticsView = ({
               )}
             </div>
           </div>
+
+          {/* Project Categories Breakdown */}
+          <div ref={categoryRef} data-anim-key="category" className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col max-h-[400px]">
+            <div className="flex items-center justify-between mb-6 flex-shrink-0">
+              <h3 className="text-xl font-bold text-slate-900">สัดส่วนหมวดหมู่งาน</h3>
+            </div>
+            <div className="flex-1 w-full flex items-center justify-center min-h-0 overflow-y-auto custom-scrollbar">
+              <DonutChart data={categoryData} isAnimated={animState.category} />
+            </div>
+          </div>
         </div>
       </div>
+
+      {/* Venue Intelligence & Banknote Float Calculator */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 px-4 sm:px-8 lg:px-10">
+        {/* 1. เครื่องคำนวณเบิกธนบัตรเงินซัพพอร์ต */}
+        <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-2xl">
+                  <Banknote className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900">แจกแจงธนบัตรเงินซัพพอร์ต</h3>
+                  <p className="text-xs text-slate-400 font-medium">คำนวณจำนวนธนบัตรแต่ละชนิดเพื่อเบิกธนาคาร</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCopyBanknotes}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-xl text-xs font-bold transition active:scale-95 flex items-center gap-1.5"
+                title="คัดลอกรายการเบิกธนาคาร"
+              >
+                {copiedBanknote ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-emerald-600">คัดลอกแล้ว!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>คัดลอกยอดเบิก</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Banknote List */}
+            <div className="space-y-2.5 mt-4">
+              {[
+                { denom: 1000, label: '฿1,000', color: 'bg-amber-500/10 text-amber-900 border-amber-200/80', badge: 'bg-amber-600 text-white' },
+                { denom: 500, label: '฿500', color: 'bg-purple-500/10 text-purple-900 border-purple-200/80', badge: 'bg-purple-600 text-white' },
+                { denom: 100, label: '฿100', color: 'bg-red-500/10 text-red-900 border-red-200/80', badge: 'bg-red-600 text-white' },
+                { denom: 50, label: '฿50', color: 'bg-blue-500/10 text-blue-900 border-blue-200/80', badge: 'bg-blue-600 text-white' },
+                { denom: 20, label: '฿20', color: 'bg-emerald-500/10 text-emerald-900 border-emerald-200/80', badge: 'bg-emerald-600 text-white' },
+              ].map(({ denom, label, color, badge }) => {
+                const item = banknoteBreakdown[denom] || { count: 0, amount: 0 };
+                return (
+                  <div 
+                    key={denom} 
+                    className={`flex items-center justify-between p-3 rounded-2xl border ${color} transition-all duration-200 hover:scale-[1.01]`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className={`px-2.5 py-1 rounded-xl text-xs font-black shadow-sm ${badge}`}>
+                        {label}
+                      </span>
+                      <span className="text-xs font-bold text-slate-700">
+                        {item.count.toLocaleString()} <span className="font-medium text-slate-400">ใบ</span>
+                      </span>
+                    </div>
+                    <span className="text-sm font-black text-slate-800">
+                      ฿{item.amount.toLocaleString()}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-500">
+              รวมธนบัตรทั้งหมด <span className="text-slate-800 font-black">{totalBanknotesCount.toLocaleString()}</span> ฉบับ
+            </span>
+            <span className="text-base font-black text-emerald-600">
+              ฿{totalBanknotesAmount.toLocaleString()}
+            </span>
+          </div>
+        </div>
+
+        {/* 2. อันดับทำเล & สถานที่จัดส่งยอดนิยม */}
+        <div ref={venueRef} data-anim-key="venue" className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col h-full min-h-[400px]">
+          <div className="flex items-center justify-between mb-4 flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl">
+                <MapPin className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">ทำเล & สถานที่จัดส่งยอดนิยม</h3>
+                <p className="text-xs text-slate-400 font-medium">สถานที่จัดงานที่ไปส่งบ่อยที่สุด (Top Delivery Venues)</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4 overflow-y-auto custom-scrollbar pr-2 flex-1 mt-2">
+            {topVenues.length > 0 ? topVenues.map((v, i) => (
+              <div key={i} className="flex items-center gap-3 group">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
+                  i === 0 ? 'bg-amber-100 text-amber-800 ring-2 ring-amber-200' :
+                  i === 1 ? 'bg-slate-100 text-slate-700 ring-2 ring-slate-200' :
+                  i === 2 ? 'bg-orange-100 text-orange-800 ring-2 ring-orange-200' :
+                  'bg-slate-50 text-slate-500'
+                }`}>
+                  {i + 1}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex justify-between items-center text-xs font-bold mb-1">
+                    <span className="text-slate-700 truncate pr-2 group-hover:text-indigo-600 transition">
+                      {v.name}
+                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-indigo-600 font-black">{v.count} งาน</span>
+                      {onOpenVenueModal && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenVenueModal(v.name)}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-indigo-600 rounded-md transition"
+                          title="ดูลายแทง Loading Dock"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="w-full h-2 bg-slate-50 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-indigo-500 to-sky-500 rounded-full transition-all duration-1000 ease-out" 
+                      style={{ width: animState.venue ? `${(v.count / maxVenueCount) * 100}%` : '0%' }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )) : (
+              <div className="text-center text-slate-400 py-10 text-xs italic">ไม่มีข้อมูลสถานที่จัดส่ง</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Low Margin Anomaly Radar */}
+      {lowMarginProjects && lowMarginProjects.length > 0 && (
+        <div className="px-4 sm:px-8 lg:px-10">
+          <div className="bg-gradient-to-r from-rose-50/90 via-amber-50/60 to-rose-50/90 p-6 sm:p-7 rounded-[2.5rem] border border-rose-200/70 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2.5 bg-rose-100 text-rose-600 rounded-2xl shrink-0">
+                <ShieldAlert className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-base font-black text-rose-900 tracking-tight">
+                  ระบบตรวจจับงานเสี่ยงต้นทุนสูง (Low Margin Radar)
+                </h4>
+                <p className="text-xs text-rose-700 font-medium">
+                  พบ {lowMarginProjects.length} งาน ที่มีกำไรต่ำกว่า 40% (ต้นทุนวัตถุดิบ/ค่าเดินทางเกิน 60%) ควรตรวจสอบความคุ้มค่า
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
+              {lowMarginProjects.map((p, idx) => (
+                <div
+                  key={p.id || idx}
+                  onClick={() => onSelectProject && onSelectProject(p)}
+                  className="bg-white p-4 rounded-2xl border border-rose-100 shadow-sm hover:border-rose-300 hover:shadow-md transition cursor-pointer group"
+                >
+                  <div className="flex justify-between items-start gap-2">
+                    <span className="text-xs font-bold text-slate-800 line-clamp-1 group-hover:text-indigo-600 transition">
+                      {p.name}
+                    </span>
+                    <span className="text-[10px] font-black text-rose-600 bg-rose-50 border border-rose-100 px-2 py-0.5 rounded-full shrink-0">
+                      {p.marginPct.toFixed(0)}% margin
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1 truncate">
+                    ศิลปิน: {p.artist || '-'}
+                  </div>
+                  <div className="flex justify-between text-xs font-bold mt-2.5 pt-2 border-t border-slate-50">
+                    <span className="text-slate-500">ค่าจ้าง ฿{p.revenue.toLocaleString()}</span>
+                    <span className="text-rose-600">ต้นทุน ฿{p.cost.toLocaleString()}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Filtered Table Section */}
       <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden p-2 mx-4 sm:mx-8 lg:mx-10 mb-10">
@@ -449,4 +688,4 @@ const AnalyticsView = ({
   );
 };
 
-export default AnalyticsView;
+export default React.memo(AnalyticsView);

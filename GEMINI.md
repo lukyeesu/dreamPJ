@@ -57,3 +57,10 @@
 - ปรึกษาและอ่าน [`.agents/memory/SESSION_LOG.md`](file:///D:/WebappDreame/Flower2U/.agents/memory/SESSION_LOG.md) เสมอเพื่อดูประวัติการตัดสินใจ ข้อตกลง และสถานะล่าสุดของโปรเจกต์
 - เมื่อจบงานสำคัญหรือมีการตัดสินใจสถาปัตยกรรมใหม่ ให้อัปเดตสรุปความคืบหน้าลงใน `.agents/memory/SESSION_LOG.md` เพื่อส่งต่อบริบทข้าม Session โดยไม่ต้องอธิบายใหม่
 
+### 11. Strict Custom UI Directive (Banned Native Browser Dialogs & Date Pickers)
+- **เด็ดขาด ห้ามใช้ Native Dialogs ของเบราว์เซอร์**: ห้ามใช้ `window.alert()`, `window.confirm()`, `window.prompt()` และห้ามใช้ `<input type="date">` หรือ `<input type="datetime-local">` เป็นอันขาด
+- **ปฏิทินเลือกวัน/เวลา**: ต้องใช้ `<ModernDateTimePicker />` (`src/components/common/ModernDateTimePicker.jsx`) ซึ่งรองรับทั้ง พ.ศ., เลือกเฉพาะวันที่ (`hasTime={false}`), เลือกวันเวลา, สัปดาห์, เดือน, ปี
+- **การแจ้งเตือนสเตตัส (Notification/Toast)**: ใช้ `<Toast />` (`src/components/common/Toast.jsx`) สำหรับแจ้งสำเร็จ/เตือน/ข้อผิดพลาด
+- **กล่องยืนยันการทำรายการ (Confirmation Modal)**: ใช้ `<ConfirmDialog />` (`src/components/common/ConfirmDialog.jsx`) หรือ Custom Modal ที่มี Backdrop Blur และแอนิเมชันให้เป็นธีมเดียวกับทั้งระบบ
+
+

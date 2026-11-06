@@ -652,4 +652,4 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
   );
 };
 
-export default CalendarView;
+export default React.memo(CalendarView);

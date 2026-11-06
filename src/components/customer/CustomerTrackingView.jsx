@@ -111,7 +111,7 @@ export const CustomerTrackingView = ({ data, shopInfo, dealStatuses = [], transp
   return (
     <div className="min-h-screen bg-slate-50 pb-safe font-sans flex flex-col">
       {/* Image Viewer Portal */}
-      {previewImage && <ImageViewer src={processImageUrl(previewImage)} onClose={() => setPreviewImage(null)} />}
+      {previewImage && <ImageViewer src={previewImage} onClose={() => setPreviewImage(null)} />}
 
       {/* Compact Header */}
       <div className="bg-indigo-600 text-white pt-8 pb-10 px-4 rounded-b-[2rem] shadow-md shadow-indigo-200 relative overflow-hidden z-0 md:pt-16 md:pb-28 md:rounded-b-[3rem]">
@@ -153,7 +153,11 @@ export const CustomerTrackingView = ({ data, shopInfo, dealStatuses = [], transp
               {data.image && (
                 <div 
                   className="w-16 h-16 shrink-0 rounded-xl overflow-hidden border border-slate-100 bg-slate-50 relative group cursor-pointer shadow-sm md:w-28 md:h-28 md:rounded-2xl"
-                  onClick={() => setPreviewImage(data.image)}
+                  onClick={() => setPreviewImage({
+                    images: Array.isArray(data.images) && data.images.length > 0 ? data.images : [data.image],
+                    initialIndex: 0,
+                    title: 'รูปภาพอ้างอิง'
+                  })}
                 >
                   <img 
                     src={processImageUrl(data.image)} 

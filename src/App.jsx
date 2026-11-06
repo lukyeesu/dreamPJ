@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback, startTransition } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Home,
@@ -93,23 +93,53 @@ import {
   Pipette,
   Bot, 
   Send,
-  LayoutGrid
+  LayoutGrid,
+  Sparkles,
+  Package,
+  UserCheck
 } from 'lucide-react';
 import FinanceView from './FinanceView';
 import CalendarView from './CalendarView';
-
 import AnalyticsView from './AnalyticsView';
 import PlansView from './PlansView';
 import SettingsView from './SettingsView';
+import VenuesView from './VenuesView';
+import ArtistsView from './ArtistsView';
+import CustomersView from './CustomersView';
+import InventoryView from './InventoryView';
+import QuotationsView from './QuotationsView';
+import StaffView from './StaffView';
 
 // --- CONFIGURATION ---
-// นำ Web App URL ที่ได้จากการ Deploy Apps Script มาวางที่นี่
-// [UPDATED] อัปเดต URL ให้ตรงกับที่คุณให้มาล่าสุด
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw2WJ4tt7l__0U6XYtgHbyl0W1iGjm6oHXa9-2twBKfa1xP2-SBj2hMwaHUYp7ew_Ih/exec"; 
+// Google Apps Script API URL สำหรับอัปโหลดรูปภาพและสลิปเข้า Google Drive เท่านั้น (ไม่ใช้เก็บข้อมูลแล้ว)
+const GOOGLE_DRIVE_UPLOAD_URL = import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbw2WJ4tt7l__0U6XYtgHbyl0W1iGjm6oHXa9-2twBKfa1xP2-SBj2hMwaHUYp7ew_Ih/exec"; 
+const GOOGLE_SCRIPT_URL = GOOGLE_DRIVE_UPLOAD_URL; // สำหรับฟังก์ชันอัปโหลดรูปภาพเดิม
 // ---------------------
+
+// Supabase & IndexedDB Zero-Egress Sync Engine (ข้อมูลทั้งหมด 100% จัดเก็บและซิงก์ผ่าน Supabase)
+import { 
+  loadProjectsLocalFirst, 
+  saveProjectSync, 
+  deleteProjectSync, 
+  subscribeToRealtimeProjects,
+  subscribeToRealtimeSettings,
+  loadSettingsFromSupabase,
+  saveSettingsToSupabase,
+  loadLocationsLocalFirst,
+  saveLocationSync,
+  loadCustomersLocalFirst,
+  loadArtistsLocalFirst,
+  loadInventoryLocalFirst,
+  loadAssetLoansLocalFirst,
+  fetchProjectDetailOnDemand,
+  fetchServerAnalytics,
+  loadProjectsPaginated,
+  loadProjectsByMonth
+} from './services/syncService';
 
 // Constants & Utilities
 import { themeColors, colorPresets, systemStatusTypes } from './constants/appConstants';
+import { applyThemeVariables, broadcastShopInfoSync } from './utils/themeManager';
 import { 
   shadeColor, 
   hexToRgbString, 
@@ -136,37 +166,65 @@ import LoginScreen from './components/auth/LoginScreen';
 import CustomerQuotationView from './components/customer/CustomerQuotationView';
 import CustomerTrackingView from './components/customer/CustomerTrackingView';
 import SharePreviewModal from './components/modals/SharePreviewModal';
+import VenueDetailModal from './components/modals/VenueDetailModal';
+import VenueDirectoryModal from './components/modals/VenueDirectoryModal';
+import BatchDeliveryBanner from './components/common/BatchDeliveryBanner';
+import UserProfileModal from './components/modals/UserProfileModal';
+import { supabase } from './services/supabaseClient';
 
 const navItems = [
-
   { name: 'Calendar', icon: Calendar, label: 'ปฏิทินงาน', shortLabel: 'ปฏิทิน' },
-  { name: 'Analytics', icon: BarChart2, label: 'วิเคราะห์ประสิทธิภาพ', shortLabel: 'วิเคราะห์' },
-  { name: 'Plans', icon: List, label: 'รายการแผนงาน', shortLabel: 'แผนงาน' },
+  { name: 'Plans', icon: List, label: 'แผนงาน', shortLabel: 'แผนงาน' },
   { name: 'Finance', icon: Wallet, label: 'การเงิน', shortLabel: 'การเงิน' },
-  { name: 'Settings', icon: Settings, label: 'ตั้งค่า', shortLabel: 'ตั้งค่า' },
+  { name: 'Quotations', icon: FileText, label: 'ใบเสนอราคา', shortLabel: 'เสนอราคา' },
+  { name: 'Inventory', icon: Package, label: 'คลังพัสดุ', shortLabel: 'คลังพัสดุ' },
+  { name: 'Venues', icon: MapPin, label: 'สถานที่จัดส่ง', shortLabel: 'สถานที่' },
+  { name: 'Artists', icon: Sparkles, label: 'ข้อมูลศิลปิน', shortLabel: 'ศิลปิน' },
+  { name: 'Customers', icon: Users, label: 'รายชื่อลูกค้า', shortLabel: 'ลูกค้า' },
+  { name: 'Staff', icon: UserCheck, label: 'ข้อมูลพนักงาน', shortLabel: 'พนักงาน' },
+  { name: 'Analytics', icon: BarChart2, label: 'วิเคราะห์ธุรกิจ', shortLabel: 'วิเคราะห์' },
+  { name: 'Settings', icon: Settings, label: 'ตั้งค่าระบบ', shortLabel: 'ตั้งค่า' },
 ];
 
 // --- URL Routing Helpers for Direct Page Links (e.g. /plans, /finance, /calendar) ---
 const TAB_ROUTES = {
-
   Calendar: 'calendar',
-  Analytics: 'analytics',
   Plans: 'plans',
   Finance: 'finance',
+  Quotations: 'quotations',
+  Inventory: 'inventory',
+  Venues: 'venues',
+  Artists: 'artists',
+  Customers: 'customers',
+  Staff: 'staff',
+  Analytics: 'analytics',
   Settings: 'settings',
 };
 
 const ROUTE_TO_TAB = {
-
-
   calendarview: 'Calendar',
   calendar: 'Calendar',
-  analyticsview: 'Analytics',
-  analytics: 'Analytics',
   plansview: 'Plans',
   plans: 'Plans',
   financeview: 'Finance',
   finance: 'Finance',
+  quotationsview: 'Quotations',
+  quotations: 'Quotations',
+  quote: 'Quotations',
+  inventoryview: 'Inventory',
+  inventory: 'Inventory',
+  venuesview: 'Venues',
+  venues: 'Venues',
+  locations: 'Venues',
+  artistsview: 'Artists',
+  artists: 'Artists',
+  customersview: 'Customers',
+  customers: 'Customers',
+  staffview: 'Staff',
+  staff: 'Staff',
+  employees: 'Staff',
+  analyticsview: 'Analytics',
+  analytics: 'Analytics',
   settingsview: 'Settings',
   settings: 'Settings',
 };
@@ -233,8 +291,33 @@ const App = () => {
     return saved === 'true';
   });
   
-  // Mobile Profile Menu
+  // Profile Menu & Modal States
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
+  const [settingsDefaultCategory, setSettingsDefaultCategory] = useState('permissions');
+
+  // Role-Based Permissions Matrix
+  const [permissionMatrix, setPermissionMatrix] = useState(() => {
+    try {
+      const saved = localStorage.getItem('f2u_role_permissions');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return null;
+  });
+
+  useEffect(() => {
+    const handlePermissionsUpdated = (e) => {
+      if (e.detail) setPermissionMatrix(e.detail);
+      else {
+        try {
+          const saved = localStorage.getItem('f2u_role_permissions');
+          if (saved) setPermissionMatrix(JSON.parse(saved));
+        } catch (err) {}
+      }
+    };
+    window.addEventListener('f2u_permissions_updated', handlePermissionsUpdated);
+    return () => window.removeEventListener('f2u_permissions_updated', handlePermissionsUpdated);
+  }, []);
 
   // Settings Loaded State
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(() => {
@@ -245,8 +328,19 @@ const App = () => {
   const [shopInfo, setShopInfo] = useState(() => {
       try {
           const saved = localStorage.getItem('nexus_shop_info');
-          return saved ? JSON.parse(saved) : {
-              shopName: '',
+          if (saved) {
+              const parsed = JSON.parse(saved);
+              // Auto-migrate legacy default 'indigo' to 'violet' (Flower2U brand theme #8B5CF6)
+              if (!parsed.themeColor || parsed.themeColor === 'indigo') {
+                  parsed.themeColor = 'violet';
+              }
+              if (!parsed.shopName || parsed.shopName === 'NexusPlan' || parsed.shopName === 'ProjectPlan') {
+                  parsed.shopName = 'Flower2you';
+              }
+              return parsed;
+          }
+          return {
+              shopName: 'Flower2you',
               phone: '',
               email: '',
               address: '',
@@ -258,13 +352,13 @@ const App = () => {
               wechat: '',  
               telegram: '',
               logo: '',
-              themeColor: 'indigo',
+              themeColor: 'violet',
               themeMode: 'gradient',
               customColorValue: '#000000'
           };
       } catch (e) {
           return {
-              shopName: '',
+              shopName: 'Flower2you',
               phone: '',
               email: '',
               address: '',
@@ -276,7 +370,7 @@ const App = () => {
               wechat: '',  
               telegram: '',
               logo: '',
-              themeColor: 'indigo',
+              themeColor: 'violet',
               themeMode: 'gradient',
               customColorValue: '#000000'
           };
@@ -307,6 +401,20 @@ const App = () => {
   const [activeTab, setActiveTab] = useState(() => {
     return getTabFromUrl();
   });
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set([getTabFromUrl() || 'Calendar']));
+
+  const handleSelectTab = useCallback((tabName) => {
+    if (!tabName || tabName === activeTab) return;
+    setVisitedTabs(prev => {
+      if (prev.has(tabName)) return prev;
+      const next = new Set(prev);
+      next.add(tabName);
+      return next;
+    });
+    startTransition(() => {
+      setActiveTab(tabName);
+    });
+  }, [activeTab]);
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [isSaving, setIsSaving] = useState(false); 
   const [visibleCount, setVisibleCount] = useState(20);
@@ -350,6 +458,14 @@ const App = () => {
 
   const [loginError, setLoginError] = useState('');
   const [userProfile, setUserProfile] = useState(null);
+
+  const allowedNavItems = useMemo(() => {
+    const roleName = userProfile?.role || 'admin';
+    if (roleName === 'admin') return navItems;
+    const allowed = permissionMatrix?.[roleName]?.allowed_pages;
+    if (!allowed || !Array.isArray(allowed)) return navItems;
+    return navItems.filter(item => allowed.includes(item.name));
+  }, [userProfile?.role, permissionMatrix]);
   const [newUser, setNewUser] = useState({ username: '', password: '', name: '', role: '', email: '', phone: '' });
   const [isAddingUser, setIsAddingUser] = useState(false);
 
@@ -408,6 +524,7 @@ const App = () => {
   const [isModalClosing, setIsModalClosing] = useState(false);
   const [viewOnlyMode, setViewOnlyMode] = useState(false);
   const [isMobileFilterExpanded, setIsMobileFilterExpanded] = useState(false);
+  const [isDesktopFilterExpanded, setIsDesktopFilterExpanded] = useState(false);
   
   // Share Data
   const [shareData, setShareData] = useState(null);
@@ -428,8 +545,11 @@ const App = () => {
   // Filters & Sort
   const [sortConfig, setSortConfig] = useState({ key: 'id', direction: 'desc' });
   const [searchTerm, setSearchTerm] = useState('');
-  const [dateFilterMode, setDateFilterMode] = useState('all'); 
-  const [filterDate, setFilterDate] = useState(''); 
+  const [dateFilterMode, setDateFilterMode] = useState('month'); 
+  const [filterDate, setFilterDate] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }); 
   const [filterDateRange, setFilterDateRange] = useState({ start: '', end: '' });
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -460,8 +580,37 @@ const App = () => {
   const [recipientPhone, setRecipientPhone] = useState('');
   const [locationName, setLocationName] = useState('');
   const [mapLink, setMapLink] = useState('');
-  const [uploadedImage, setUploadedImage] = useState(null);
+  const [uploadedImages, setUploadedImages] = useState([]);
+  const uploadedImage = uploadedImages.length > 0 
+    ? (typeof uploadedImages[0] === 'object' ? uploadedImages[0].url : uploadedImages[0]) 
+    : null;
+  const setUploadedImage = (img) => {
+    if (!img) setUploadedImages([]);
+    else if (Array.isArray(img)) setUploadedImages(img);
+    else setUploadedImages([img]);
+  };
   const [uploadedSlips, setUploadedSlips] = useState([]);
+  // Venue Intelligence & Directory States
+  const [deliveryLocations, setDeliveryLocations] = useState([]);
+  const [selectedVenueForModal, setSelectedVenueForModal] = useState(null);
+  const [isVenueDirectoryOpen, setIsVenueDirectoryOpen] = useState(false);
+  // Inventory, Loans & Customers States
+  const [inventoryItems, setInventoryItems] = useState([]);
+  const [assetLoans, setAssetLoans] = useState([]);
+  const [customerList, setCustomerList] = useState([]);
+  const [artistList, setArtistList] = useState([]);
+  // Contextual Create Modal Controllers (Single Unified Header Button)
+  const [isCreateCustomerOpen, setIsCreateCustomerOpen] = useState(false);
+  const [isCreateArtistOpen, setIsCreateArtistOpen] = useState(false);
+  const [isCreateInventoryOpen, setIsCreateInventoryOpen] = useState(false);
+  const [isCreateVenueOpen, setIsCreateVenueOpen] = useState(false);
+  const [isCreateQuotationOpen, setIsCreateQuotationOpen] = useState(false);
+  const [isCreateStaffOpen, setIsCreateStaffOpen] = useState(false);
+  // Active drag states for modal & file dropzones
+  const [isDraggingRef, setIsDraggingRef] = useState(false);
+  const [isDraggingSlip, setIsDraggingSlip] = useState(false);
+  const refDragCounterRef = useRef(0);
+  const slipDragCounterRef = useRef(0);
   const [note, setNote] = useState('');
   const [wage, setWage] = useState(0);
   const [deliveryFee, setDeliveryFee] = useState(0);
@@ -485,7 +634,7 @@ const App = () => {
     currentH: 0
   });
 
-  const EXPAND_TARGET_H = 76; // Height of secondary icon row in px
+  const EXPAND_TARGET_H = 156; // Height of secondary 4-column 2-row icon grid in px
 
   // Sync visual position of the SINGLE nav box and backdrop with state changes
   useEffect(() => {
@@ -791,7 +940,12 @@ const App = () => {
   useEffect(() => {
     const handlePopState = () => {
       const tabFromUrl = getTabFromUrl();
-      setActiveTab(tabFromUrl);
+      if (tabFromUrl) {
+        setVisitedTabs(prev => new Set([...prev, tabFromUrl]));
+        startTransition(() => {
+          setActiveTab(tabFromUrl);
+        });
+      }
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -812,77 +966,9 @@ const App = () => {
     }
   }, []);
 
+  // Dynamic Theme Engine: Uses sub-millisecond CSS variables for silky smooth 60-120fps live updates
   useLayoutEffect(() => {
-      let theme;
-      const isGradient = shopInfo.themeMode === 'gradient';
-
-      // [ADDED] Logic for Custom Color Calculation
-      if (shopInfo.themeColor === 'custom' && shopInfo.customColorValue) {
-          const mainColor = shopInfo.customColorValue;
-          theme = {
-              main: mainColor,
-              hover: shadeColor(mainColor, -0.1), // Darken 10%
-              light: shadeColor(mainColor, 0.93), // Very light tint (93%)
-              textLight: mainColor,
-              gradientFrom: mainColor,
-              gradientTo: shadeColor(mainColor, -0.25), // Darken 25% for gradient end
-              shadow: `rgba(${hexToRgbString(mainColor)}, 0.4)`
-          };
-      } else {
-          theme = themeColors[shopInfo.themeColor] || themeColors.indigo;
-      }
-      
-      const styleId = 'nexus-theme-styles';
-      let style = document.getElementById(styleId);
-      if (!style) {
-          style = document.createElement('style');
-          style.id = styleId;
-          document.head.appendChild(style);
-      }
-
-      // Generate CSS to override Tailwind 'indigo' classes
-      const css = `
-          :root {
-              --theme-main: ${theme.main};
-              --theme-hover: ${theme.hover};
-              --theme-light: ${theme.light};
-              --theme-text-light: ${theme.textLight};
-              --theme-shadow: ${theme.shadow};
-          }
-          
-          /* Backgrounds */
-          .bg-indigo-600 { background-color: var(--theme-main) !important; }
-          .hover\\:bg-indigo-700:hover { background-color: var(--theme-hover) !important; }
-          .bg-indigo-50 { background-color: var(--theme-light) !important; }
-          .bg-indigo-100 { background-color: var(--theme-light) !important; filter: brightness(0.95); } /* Adjusted logic for 100 */
-          
-          /* Texts */
-          .text-indigo-600 { color: var(--theme-main) !important; }
-          .text-indigo-700 { color: var(--theme-hover) !important; }
-          .text-indigo-500 { color: var(--theme-text-light) !important; }
-          
-          /* Borders */
-          .border-indigo-100, .border-indigo-200 { border-color: ${theme.light} !important; filter: brightness(0.9); }
-          .border-indigo-600 { border-color: var(--theme-main) !important; }
-          .hover\\:border-indigo-300:hover { border-color: var(--theme-text-light) !important; opacity: 0.8; }
-
-          /* Shadows */
-          .shadow-indigo-200 { --tw-shadow-color: ${theme.shadow} !important; }
-          
-          /* Gradients */
-          .from-indigo-600 { --tw-gradient-from: ${theme.gradientFrom} !important; var(--tw-gradient-to, ${theme.gradientFrom}) !important; }
-          .to-violet-600 { --tw-gradient-to: ${theme.gradientTo} !important; }
-          .bg-gradient-to-r {
-              ${!isGradient 
-                  ? `background-image: none !important; background-color: var(--theme-main) !important;` 
-                  : (theme.isRainbow 
-                      ? `background-image: linear-gradient(to right, #ef4444, #f97316, #eab308, #22c55e, #3b82f6, #a855f7, #ec4899) !important;` 
-                      : `background-image: linear-gradient(to right, var(--tw-gradient-from), var(--tw-gradient-to)) !important;`)
-              }
-          }
-      `;
-      style.textContent = css;
-
+    applyThemeVariables(shopInfo.themeColor, shopInfo.themeMode, shopInfo.customColorValue);
   }, [shopInfo.themeColor, shopInfo.themeMode, shopInfo.customColorValue]);
 
   // Scroll Restore
@@ -905,7 +991,7 @@ const App = () => {
       shouldBeScrolled = sentinel.getBoundingClientRect().top <= targetTop - marginOffset + 1;
     }
     isScrolledRef.current = shouldBeScrolled;
-    setIsScrolled(shouldBeScrolled);
+    setIsScrolled(prev => (prev !== shouldBeScrolled ? shouldBeScrolled : prev));
   }, [activeTab]);
 
   useEffect(() => {
@@ -918,122 +1004,82 @@ const App = () => {
 
   // --- 3. FUNCTION DEFINITIONS ---
 
-  // [MODIFIED] เพิ่มโหมด showSyncIndicator และระบบ Smart Diffing ลดการ Re-render
+  // [MODIFIED] โหลดการตั้งค่าตรงจาก Supabase (แทน Google Apps Script) พร้อม Smart Diffing
   const fetchSettings = async (showSyncIndicator = false) => {
-    if (!GOOGLE_SCRIPT_URL) {
-        setIsSettingsLoaded(true);
-        return;
-    }
-    
     if (showSyncIndicator) setIsSyncingSettings(true);
-    const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('timeout'), 5000));
     
     try {
-        const fetchPromise = fetch(GOOGLE_SCRIPT_URL, {
-            method: 'POST',
-            headers: { "Content-Type": "text/plain;charset=utf-8" }, 
-            body: JSON.stringify({ action: 'getSettings' })
-        });
-
-        const response = await Promise.race([fetchPromise, timeoutPromise]);
-        
-        if (response === 'timeout') {
-            console.warn('Settings fetch timed out, using defaults.');
-        } else {
-            const result = await response.json();
-            if (result.status === 'success' && result.data) {
-                const data = result.data;
-                
-                // [ADDED] Helper ตรวจสอบข้อมูลก่อน อัปเดต State เฉพาะจุดที่มีการเปลี่ยนแปลงเท่านั้น (แก้ปัญหาหน้าเว็บกระตุก/โหลดช้า)
-                const updateIfChanged = (setter, newValue, cacheKey) => {
-                    setter(prev => {
-                        if (JSON.stringify(prev) !== JSON.stringify(newValue)) {
-                            if (cacheKey) localStorage.setItem(cacheKey, JSON.stringify(newValue));
-                            return newValue;
-                        }
-                        return prev; // ถ้าข้อมูลเดิม ระบบจะไม่ Re-render หน้าจอ
-                    });
-                };
-
-                // ใช้ Helper จัดการการเปลี่ยนแปลง
-                if (data.project_categories) updateIfChanged(setProjectCategories, data.project_categories, 'nexus_project_categories');
-                if (data.expense_categories) updateIfChanged(setExpenseCategories, data.expense_categories, 'nexus_expense_categories');
-                if (data.deal_statuses) updateIfChanged(setDealStatuses, data.deal_statuses, 'nexus_deal_statuses');
-                if (data.transport_statuses) updateIfChanged(setTransportStatuses, data.transport_statuses, 'nexus_transport_statuses');
-                if (data.shop_info) updateIfChanged(setShopInfo, data.shop_info, 'nexus_shop_info');
-
-                if (data.drive_folder_id !== undefined) setDriveFolderId(data.drive_folder_id);
-                if (data.assets_drive_folder_id !== undefined) setAssetsDriveFolderId(data.assets_drive_folder_id);
-                if (data.drive_folders) {
-                  let folders = data.drive_folders;
-                  if (typeof folders === 'string') {
-                    try { folders = JSON.parse(folders); } catch (e) {}
-                  }
-                  if (Array.isArray(folders) && folders.length > 0) {
-                    setDriveFolders(folders);
-                    localStorage.setItem('nexus_drive_folders', JSON.stringify(folders));
-                  }
-                } else if (data.drive_folder_id || data.assets_drive_folder_id) {
-                  setDriveFolders(prev => prev.map(f => {
-                    if (f.type === 'reference' && data.drive_folder_id && !f.folderId) {
-                      return { ...f, folderId: data.drive_folder_id };
+        const data = await loadSettingsFromSupabase();
+        if (data) {
+            // Helper ตรวจสอบข้อมูลก่อน อัปเดต State เฉพาะจุดที่มีการเปลี่ยนแปลงเท่านั้น
+            const updateIfChanged = (setter, newValue, cacheKey) => {
+                setter(prev => {
+                    if (JSON.stringify(prev) !== JSON.stringify(newValue)) {
+                        if (cacheKey) localStorage.setItem(cacheKey, JSON.stringify(newValue));
+                        return newValue;
                     }
-                    if (f.type === 'assets' && data.assets_drive_folder_id && !f.folderId) {
-                      return { ...f, folderId: data.assets_drive_folder_id };
-                    }
-                    return f;
-                  }));
-                }
-                
-                // Load Chatbot Tokens from settings
-                if (data.line_bot_token !== undefined) setLineBotToken(data.line_bot_token);
-                if (data.telegram_bot_token !== undefined) setTelegramBotToken(data.telegram_bot_token);
-                if (data.telegram_chat_id !== undefined) setTelegramChatId(data.telegram_chat_id);
-                if (data.web_app_url !== undefined) setWebAppUrl(data.web_app_url);
-                
-                if (data.app_credentials) {
-                    let creds = data.app_credentials;
-                    if (!Array.isArray(creds)) {
-                        creds = [{
-                            username: creds.username,
-                            password: creds.password,
-                            name: 'Admin',
-                            role: 'Administrator',
-                            email: 'admin@nexusplan.com',
-                            phone: '-'
-                        }];
-                    }
-                    updateIfChanged(setAuthorizedUsers, creds, 'nexus_authorized_users');
+                    return prev;
+                });
+            };
 
-                    // Sync current logged-in user profile with latest data from server
-                    const currentLocalProfile = localStorage.getItem('nexus_profile');
-                    if (currentLocalProfile) {
-                        const currentObj = JSON.parse(currentLocalProfile);
-                        const updatedUser = creds.find(u => u.username.toLowerCase() === currentObj.username.toLowerCase());
-                        
-                        if (updatedUser) {
-                            if (updatedUser.image !== currentObj.image || updatedUser.name !== currentObj.name || updatedUser.role !== currentObj.role) {
-                                const newProfile = {
-                                    ...currentObj,
-                                    name: updatedUser.name,
-                                    role: updatedUser.role,
-                                    email: updatedUser.email,
-                                    phone: updatedUser.phone,
-                                    image: updatedUser.image
-                                };
-                                setUserProfile(newProfile);
-                                localStorage.setItem('nexus_profile', JSON.stringify(newProfile));
-                            }
+            if (data.shopInfo) {
+                applyThemeVariables(data.shopInfo.themeColor, data.shopInfo.themeMode, data.shopInfo.customColorValue);
+                updateIfChanged(setShopInfo, data.shopInfo, 'nexus_shop_info');
+            }
+            if (data.referenceFolderId !== undefined) setDriveFolderId(data.referenceFolderId);
+            if (data.assetsFolderId !== undefined) setAssetsDriveFolderId(data.assetsFolderId);
+            if (data.driveFolders) {
+                setDriveFolders(data.driveFolders);
+                localStorage.setItem('nexus_drive_folders', JSON.stringify(data.driveFolders));
+            }
+            if (data.lineBotToken !== undefined) setLineBotToken(data.lineBotToken);
+            if (data.telegramBotToken !== undefined) setTelegramBotToken(data.telegramBotToken);
+            if (data.telegramChatId !== undefined) setTelegramChatId(data.telegramChatId);
+
+            if (data.projectCategories && Array.isArray(data.projectCategories)) {
+                updateIfChanged(setProjectCategories, data.projectCategories, 'nexus_project_categories');
+            }
+            if (data.expenseCategories && Array.isArray(data.expenseCategories)) {
+                updateIfChanged(setExpenseCategories, data.expenseCategories, 'nexus_expense_categories');
+            }
+            if (data.dealStatuses && Array.isArray(data.dealStatuses)) {
+                updateIfChanged(setDealStatuses, data.dealStatuses, 'nexus_deal_statuses');
+            }
+            if (data.transportStatuses && Array.isArray(data.transportStatuses)) {
+                updateIfChanged(setTransportStatuses, data.transportStatuses, 'nexus_transport_statuses');
+            }
+
+            if (data.appCredentials && Array.isArray(data.appCredentials) && data.appCredentials.length > 0) {
+                updateIfChanged(setAuthorizedUsers, data.appCredentials, 'nexus_authorized_users');
+
+                // Sync current logged-in user profile with latest data from server
+                const currentLocalProfile = localStorage.getItem('nexus_profile');
+                if (currentLocalProfile) {
+                    const currentObj = JSON.parse(currentLocalProfile);
+                    const updatedUser = data.appCredentials.find(u => u.username.toLowerCase() === currentObj.username.toLowerCase());
+                    
+                    if (updatedUser) {
+                        if (updatedUser.image !== currentObj.image || updatedUser.name !== currentObj.name || updatedUser.role !== currentObj.role) {
+                            const newProfile = {
+                                ...currentObj,
+                                name: updatedUser.name,
+                                role: updatedUser.role,
+                                email: updatedUser.email,
+                                phone: updatedUser.phone,
+                                image: updatedUser.image
+                            };
+                            setUserProfile(newProfile);
+                            localStorage.setItem('nexus_profile', JSON.stringify(newProfile));
                         }
                     }
                 }
             }
         }
     } catch (error) {
-        console.error("Error fetching settings:", error);
+        console.error("Error fetching settings from Supabase:", error);
     } finally {
         setIsSettingsLoaded(true); 
-        if (showSyncIndicator) setIsSyncingSettings(false); // [ADDED] ปิดสถานะซิงค์ข้อมูล
+        if (showSyncIndicator) setIsSyncingSettings(false);
     }
   };
 
@@ -1048,66 +1094,86 @@ const App = () => {
     }
   }, [activeTab]);
 
-  // [MODIFIED] เพิ่มพารามิเตอร์ isSilent เพื่อให้โหลดข้อมูลเบื้องหลังได้โดยไม่ขึ้นหน้าต่างโหลดกระตุก
+  // ฟังก์ชันกระจายข้อมูลโปรเจกต์ไปยัง State ที่เกี่ยวข้อง (รวมข้อมูลอย่างฉลาด ป้องกันทับข้อมูลเดือนอื่น)
+  const applyProjectsData = (projects) => {
+    if (!Array.isArray(projects) || projects.length === 0) return;
+
+    setAllActivities(prev => {
+      const map = new Map(prev.map(p => [p.id, p]));
+      projects.forEach(p => {
+        if (p && p.id) map.set(p.id, p);
+      });
+      const uniqueItems = Array.from(map.values());
+
+      const artists = [...new Set(uniqueItems.map(item => item.artist).filter(Boolean))].sort();
+      setSavedArtists(artists);
+
+      const customersMap = new Map();
+      uniqueItems.forEach(item => {
+        if (item.customer) {
+          const existing = customersMap.get(item.customer) || {};
+          const info = item.customerInfo || {};
+          customersMap.set(item.customer, {
+            name: item.customer,
+            social: info.social || existing.social || '',
+            line: info.line || existing.line || '',
+            phone: info.phone || existing.phone || '',
+            email: info.email || existing.email || '',
+            taxId: info.taxId || existing.taxId || '',
+            address: info.address || existing.address || ''
+          });
+        }
+      });
+      setSavedCustomers(Array.from(customersMap.values()));
+
+      const recipientsMap = new Map();
+      uniqueItems.forEach(item => {
+        if (item.recipient && !recipientsMap.has(item.recipient)) {
+          recipientsMap.set(item.recipient, {
+            name: item.recipient,
+            phone: item.recipientPhone || ''
+          });
+        }
+      });
+      setSavedRecipients(Array.from(recipientsMap.values()));
+
+      return uniqueItems;
+    });
+  };
+
+  // ดึงข้อมูลผ่านระบบ Local-First (อ่านจาก IndexedDB 0ms ทันที แล้วแอบซิงก์ส่วนต่างจาก Supabase)
   const fetchProjects = async (isSilent = false) => {
-    if (!GOOGLE_SCRIPT_URL) return;
     if (!isSilent) setIsLoading(true);
     
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000));
-
     try {
-      const fetchPromise = fetch(GOOGLE_SCRIPT_URL, {
-          method: 'POST',
-          headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
-          body: JSON.stringify({ action: 'read' })
+      // 1. ดึงข้อมูลจาก Local-First Engine (IndexedDB + Supabase)
+      const data = await loadProjectsLocalFirst((projects) => {
+        applyProjectsData(projects);
+      });
+      if (Array.isArray(data) && data.length > 0) {
+        applyProjectsData(data);
+      }
+
+      // 2. ดึงข้อมูลสถานที่จัดส่งแบบ Local-First (IndexedDB + Supabase)
+      loadLocationsLocalFirst((locations) => {
+        if (Array.isArray(locations) && locations.length > 0) {
+          setDeliveryLocations(locations);
+        }
       });
 
-      const response = await Promise.race([fetchPromise, timeoutPromise]);
-      const result = await response.json();
-      
-      if (result.status === 'success') {
-        const uniqueItems = Array.from(
-            result.data.reduce((map, item) => {
-                if (item.id) map.set(item.id, item);
-                return map;
-            }, new Map()).values()
-        );
-
-        setAllActivities(uniqueItems);
-        
-        const artists = [...new Set(uniqueItems.map(item => item.artist).filter(Boolean))].sort();
-        setSavedArtists(artists);
-
-        const customersMap = new Map();
-        uniqueItems.forEach(item => {
-            if (item.customer) {
-                const existing = customersMap.get(item.customer) || {};
-                const info = item.customerInfo || {};
-                
-                customersMap.set(item.customer, {
-                    name: item.customer,
-                    social: info.social || existing.social || '',
-                    line: info.line || existing.line || '',
-                    phone: info.phone || existing.phone || '',
-                    email: info.email || existing.email || '',
-                    taxId: info.taxId || existing.taxId || '', 
-                    address: info.address || existing.address || ''
-                });
-            }
-        });
-        setSavedCustomers(Array.from(customersMap.values()));
-
-        const recipientsMap = new Map();
-        uniqueItems.forEach(item => {
-            if (item.recipient && !recipientsMap.has(item.recipient)) {
-                recipientsMap.set(item.recipient, {
-                    name: item.recipient,
-                    phone: item.recipientPhone || ''
-                });
-            }
-        });
-        setSavedRecipients(Array.from(recipientsMap.values()));
-      }
+      // 3. ดึงข้อมูลลูกค้า, ศิลปิน, พัสดุ, และการยืมคืนแบบ Local-First
+      loadCustomersLocalFirst((custs) => {
+        if (Array.isArray(custs) && custs.length > 0) setCustomerList(custs);
+      });
+      loadArtistsLocalFirst((arts) => {
+        if (Array.isArray(arts) && arts.length > 0) setArtistList(arts);
+      });
+      loadInventoryLocalFirst((inv) => {
+        if (Array.isArray(inv) && inv.length > 0) setInventoryItems(inv);
+      });
+      loadAssetLoansLocalFirst((loans) => {
+        if (Array.isArray(loans) && loans.length > 0) setAssetLoans(loans);
+      });
     } catch (error) {
       console.error("Error fetching data:", error);
       if (!isSilent) showToast("การเชื่อมต่อล่าช้า ระบบกำลังทำงานในโหมด Offline", "error");
@@ -1120,17 +1186,87 @@ const App = () => {
     if (isLoggedIn || trackingId || quotationId) {
         fetchProjects();
 
-        // [MODIFIED] เปลี่ยนจากการดึงข้อมูลทุก 1 นาที เป็นการดึงข้อมูลเมื่อสลับแท็บกลับมาหน้าเว็บ (Window Focus)
-        // ช่วยประหยัด Quota ของ Google Apps Script ได้มหาศาล และข้อมูลยังสดใหม่เสมอเมื่อใช้งาน
+        // เปิดรับ Realtime Live Sync จาก Supabase สำหรับโปรเจกต์
+        const unsubscribe = subscribeToRealtimeProjects((updatedProjects) => {
+          console.log('⚡ Realtime projects received in App:', updatedProjects?.length);
+          applyProjectsData(updatedProjects);
+        });
+
+        // เปิดรับ Realtime Live Sync สำหรับการตั้งค่าร้านและธีม (ข้ามเครื่อง/ข้ามหน้าจอ)
+        const unsubSettings = subscribeToRealtimeSettings((updatedShopInfo) => {
+          if (updatedShopInfo) {
+            applyThemeVariables(updatedShopInfo.themeColor, updatedShopInfo.themeMode, updatedShopInfo.customColorValue);
+            setShopInfo(prev => {
+              if (JSON.stringify(prev) !== JSON.stringify(updatedShopInfo)) {
+                localStorage.setItem('nexus_shop_info', JSON.stringify(updatedShopInfo));
+                return updatedShopInfo;
+              }
+              return prev;
+            });
+          }
+        });
+
+        // เปิดรับ Realtime Cross-Tab / Multi-Window Sync (สำหรับเปิด 2 จอ / 2 แท็บบนเครื่องเดียวกัน)
+        let bc = null;
+        try {
+          if (typeof BroadcastChannel !== 'undefined') {
+            bc = new BroadcastChannel('flower2u_sync_channel');
+            bc.onmessage = (event) => {
+              if (event.data?.type === 'SHOP_INFO_SYNC' && event.data?.shopInfo) {
+                const s = event.data.shopInfo;
+                applyThemeVariables(s.themeColor, s.themeMode, s.customColorValue);
+                setShopInfo(prev => {
+                  if (JSON.stringify(prev) !== JSON.stringify(s)) {
+                    return s;
+                  }
+                  return prev;
+                });
+              }
+            };
+          }
+        } catch (bcErr) {}
+
+        const onStorage = (e) => {
+          if (e.key === 'nexus_shop_info' && e.newValue) {
+            try {
+              const parsed = JSON.parse(e.newValue);
+              applyThemeVariables(parsed.themeColor, parsed.themeMode, parsed.customColorValue);
+              setShopInfo(prev => {
+                if (JSON.stringify(prev) !== JSON.stringify(parsed)) {
+                  return parsed;
+                }
+                return prev;
+              });
+            } catch (err) {}
+          }
+        };
+        window.addEventListener('storage', onStorage);
+
         const onFocus = () => {
-            fetchProjects(true); // Silent fetch ไม่ให้หน้าจอกระตุก
+            fetchProjects(true); // Silent fetch เช็คส่วนต่างเบื้องหลัง
+            fetchSettings(false); // เช็คการตั้งค่าเบื้องหลัง
         };
 
         window.addEventListener('focus', onFocus);
         
-        return () => window.removeEventListener('focus', onFocus);
+        return () => {
+          window.removeEventListener('focus', onFocus);
+          window.removeEventListener('storage', onStorage);
+          if (bc) bc.close();
+          if (typeof unsubscribe === 'function') unsubscribe();
+          if (typeof unsubSettings === 'function') unsubSettings();
+        };
     }
   }, [isLoggedIn, trackingId, quotationId]);
+
+  // เมื่อเปลี่ยนเดือนหรือโหมดฟิลเตอร์วันที่ ให้ดึงข้อมูลเฉพาะเดือนนั้นทันทีแบบ Zero-Egress
+  useEffect(() => {
+    if (dateFilterMode === 'month' && filterDate && /^\d{4}-\d{2}$/.test(filterDate)) {
+      loadProjectsByMonth(filterDate, (projects) => {
+        applyProjectsData(projects);
+      });
+    }
+  }, [dateFilterMode, filterDate]);
 
   useEffect(() => {
       if ((trackingId || quotationId) && allActivities.length > 0) {
@@ -1167,9 +1303,8 @@ const App = () => {
       }
   }, [allActivities, trackingId, quotationId, isLoading]);
 
-  // [MODIFIED] Fix Race Condition in Settings Save (Partial Update)
-  const saveSystemSettings = async (key, value) => {
-      if (!GOOGLE_SCRIPT_URL) return;
+  // [MODIFIED] บันทึกการตั้งค่าลง Supabase โดยตรง (100% Zero Sheets)
+  const saveSystemSettings = async (key, value, options = {}) => {
       setIsSaving(true);
       
       const partialData = (typeof key === 'object') ? key : { [key]: value };
@@ -1180,29 +1315,30 @@ const App = () => {
           return;
       }
 
-      // [FIX] We only send partialData to Backend. The backend must handle merging.
-      // Removed fullPayload to prevent old data from overriding new data from other users.
-      const payloadToSend = { ...partialData };
-
       try {
-          await fetch(GOOGLE_SCRIPT_URL, {
-              method: 'POST',
-              headers: { "Content-Type": "text/plain;charset=utf-8" },
-              body: JSON.stringify({
-                  action: 'saveSettings',
-                  data: payloadToSend // [FIX] Send only the changed keys
-              })
-          });
+          await saveSettingsToSupabase(partialData);
           
           // Update Local State & Cache
           if (partialData.app_credentials) {
               setAuthorizedUsers(partialData.app_credentials);
               localStorage.setItem('nexus_authorized_users', JSON.stringify(partialData.app_credentials));
           }
-          if (partialData.project_categories) localStorage.setItem('nexus_project_categories', JSON.stringify(partialData.project_categories));
-          if (partialData.expense_categories) localStorage.setItem('nexus_expense_categories', JSON.stringify(partialData.expense_categories));
-          if (partialData.deal_statuses) localStorage.setItem('nexus_deal_statuses', JSON.stringify(partialData.deal_statuses));
-          if (partialData.transport_statuses) localStorage.setItem('nexus_transport_statuses', JSON.stringify(partialData.transport_statuses));
+          if (partialData.project_categories) {
+              setProjectCategories(partialData.project_categories);
+              localStorage.setItem('nexus_project_categories', JSON.stringify(partialData.project_categories));
+          }
+          if (partialData.expense_categories) {
+              setExpenseCategories(partialData.expense_categories);
+              localStorage.setItem('nexus_expense_categories', JSON.stringify(partialData.expense_categories));
+          }
+          if (partialData.deal_statuses) {
+              setDealStatuses(partialData.deal_statuses);
+              localStorage.setItem('nexus_deal_statuses', JSON.stringify(partialData.deal_statuses));
+          }
+          if (partialData.transport_statuses) {
+              setTransportStatuses(partialData.transport_statuses);
+              localStorage.setItem('nexus_transport_statuses', JSON.stringify(partialData.transport_statuses));
+          }
 
           if (partialData.drive_folders) {
               setDriveFolders(partialData.drive_folders);
@@ -1229,11 +1365,18 @@ const App = () => {
           if (partialData.shop_info) {
               setShopInfo(partialData.shop_info);
               localStorage.setItem('nexus_shop_info', JSON.stringify(partialData.shop_info));
+              applyThemeVariables(partialData.shop_info.themeColor, partialData.shop_info.themeMode, partialData.shop_info.customColorValue);
+              // ซิงค์ไปยังแท็บอื่น / หน้าจออื่นบนเบราว์เซอร์เดียวกันทันที (Multi-Window / Multi-Screen Sync)
+              broadcastShopInfoSync(partialData.shop_info);
           }
-          showToast("บันทึกการตั้งค่าสำเร็จ", "success");
+          if (!options.silent) {
+              showToast("บันทึกการตั้งค่าเรียบร้อยแล้ว", "success");
+          }
       } catch (error) {
           console.error("Error saving settings:", error);
-          showToast("บันทึกการตั้งค่าไม่สำเร็จ", "error");
+          if (!options.silent) {
+              showToast("บันทึกการตั้งค่าไม่สำเร็จ: " + error.message, "error");
+          }
       } finally {
           setIsSaving(false);
       }
@@ -1294,32 +1437,27 @@ const App = () => {
       setIsLoading(true);
       setLoginError('');
       
-      let foundUser = authorizedUsers.find(u => 
-          u.username.toLowerCase() === user.toLowerCase() && u.password === pass
-      );
+      const matchUser = (u) => {
+          const inputLower = (user || '').trim().toLowerCase();
+          const matchUName = u.username && u.username.toLowerCase() === inputLower;
+          const matchCode = u.staffCode && String(u.staffCode).toLowerCase() === inputLower;
+          return (matchUName || matchCode) && u.password === pass;
+      };
 
-      if (!foundUser && GOOGLE_SCRIPT_URL) {
+      let foundUser = authorizedUsers.find(matchUser);
+
+      if (!foundUser) {
           try {
-              const response = await fetch(GOOGLE_SCRIPT_URL, {
-                  method: 'POST',
-                  headers: { "Content-Type": "text/plain;charset=utf-8" },
-                  body: JSON.stringify({ action: 'getSettings' })
-              });
-              
-              const result = await response.json();
-              if (result.status === 'success' && result.data && result.data.app_credentials) {
-                  let latestUsers = result.data.app_credentials;
-                  if (!Array.isArray(latestUsers)) latestUsers = [latestUsers];
-                  
+              const supaSettings = await loadSettingsFromSupabase();
+              if (supaSettings && supaSettings.appCredentials && supaSettings.appCredentials.length > 0) {
+                  const latestUsers = supaSettings.appCredentials;
                   setAuthorizedUsers(latestUsers);
                   localStorage.setItem('nexus_authorized_users', JSON.stringify(latestUsers));
                   
-                  foundUser = latestUsers.find(u => 
-                      u.username.toLowerCase() === user.toLowerCase() && u.password === pass
-                  );
+                  foundUser = latestUsers.find(matchUser);
               }
           } catch (e) {
-              console.error("Login verification error:", e);
+              console.error("Login verification error via Supabase:", e);
           }
       }
 
@@ -1348,6 +1486,17 @@ const App = () => {
                   image: foundUser.image
               }));
           }
+
+          // Attempt Supabase Auth session sign-in in background
+          try {
+            const authEmail = (foundUser.email && foundUser.email.includes('@'))
+              ? foundUser.email.trim()
+              : `${(foundUser.username || '').toLowerCase()}@flower2u.internal`;
+            const rawPass = String(pass || '123456');
+            const authPass = rawPass.length >= 6 ? rawPass : rawPass.padEnd(6, '0');
+            supabase.auth.signInWithPassword({ email: authEmail, password: authPass }).catch(() => {});
+          } catch (e) {}
+
           showToast(`ยินดีต้อนรับคุณ ${foundUser.name}`, "success");
       } else {
           setLoginError("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง");
@@ -1357,9 +1506,12 @@ const App = () => {
   };
 
   const handleLogout = () => {
+      try {
+        supabase.auth.signOut().catch(() => {});
+      } catch (e) {}
       setIsLoggedIn(false);
       setUserProfile(null);
-      setActiveTab('Calendar');
+      handleSelectTab('Calendar');
       if (typeof window !== 'undefined') {
         window.history.pushState(null, '', getBasePath() || '/');
       }
@@ -1418,13 +1570,9 @@ const App = () => {
     }
 
     if (activeTab === 'Plans' || activeTab === 'Analytics') {
-      if (scrollTop + clientHeight >= scrollHeight - 100) {
-        if (visibleCount < filteredAndSortedActivities.length && !isLoadingMore) {
-           setIsLoadingMore(true);
-           setTimeout(() => {
-              setVisibleCount(prev => prev + 5);
-              setIsLoadingMore(false);
-           }, 1000);
+      if (scrollTop + clientHeight >= scrollHeight - 250) {
+        if (visibleCount < filteredAndSortedActivities.length) {
+          setVisibleCount(prev => Math.min(prev + 20, filteredAndSortedActivities.length));
         }
       }
     }
@@ -1753,40 +1901,170 @@ const App = () => {
       closeDeleteLogoModal();
   };
 
-  const handleImageUpload = async (file) => {
-      setIsSaving(true);
-      try {
-          if (!file.type.startsWith('image/')) {
-              throw new Error('กรุณาอัพโหลดไฟล์รูปภาพเท่านั้น');
-          }
-          
-          let processedFile = file;
-          if (file.size > 5 * 1024 * 1024) {
-               showToast("กำลังลดขนาดไฟล์รูปภาพ...", "success");
-               processedFile = await compressImage(file);
-          } else {
-               processedFile = await toBase64(file);
-          }
-          
-          setUploadedImage(processedFile);
-          showToast("อัพโหลดรูปภาพพร้อมบันทึก", "success");
-      } catch (error) {
-          console.error(error);
-          showToast(error.message || "เกิดข้อผิดพลาดในการอัพโหลดรูปภาพ", "error");
-      } finally {
-          setIsSaving(false);
+  const handleReferenceImageUpload = async (files) => {
+    if (!files || files.length === 0) return;
+    setIsSaving(true);
+    try {
+      const fileList = Array.from(files);
+      const newImages = [];
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        if (!file.type || !file.type.startsWith('image/')) continue;
+        let base64Data = '';
+        if (file.size > 2 * 1024 * 1024) {
+          base64Data = await compressImage(file);
+        } else {
+          base64Data = await toBase64(file);
+        }
+        newImages.push({
+          id: `ref_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
+          url: base64Data,
+          name: file.name,
+          createdAt: new Date().toISOString()
+        });
       }
+      if (newImages.length > 0) {
+        setUploadedImages(prev => [...prev, ...newImages]);
+        showToast(`เพิ่มรูปภาพอ้างอิง ${newImages.length} รูปเรียบร้อย`, 'success');
+      }
+    } catch (err) {
+      console.error("Reference image upload error:", err);
+      showToast('เกิดข้อผิดพลาดในการอัปโหลดรูปภาพ', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const onDrop = (e) => {
-      e.preventDefault();
-      const file = e.dataTransfer.files[0];
-      if (file) handleImageUpload(file);
+  const handleRemoveReferenceImage = (imgKey) => {
+    setUploadedImages(prev => prev.filter(img => {
+      const id = typeof img === 'object' ? img.id : img;
+      const url = typeof img === 'object' ? img.url : img;
+      return id !== imgKey && url !== imgKey;
+    }));
   };
 
-  const onDragOverImg = (e) => {
-      e.preventDefault();
+  const handleImageUpload = (filesOrFile) => {
+    if (!filesOrFile) return;
+    if (filesOrFile instanceof FileList || Array.isArray(filesOrFile)) {
+      return handleReferenceImageUpload(filesOrFile);
+    }
+    return handleReferenceImageUpload([filesOrFile]);
   };
+
+  // Window-level safety: prevent browser from navigating away if a file is dropped outside dropzones
+  useEffect(() => {
+    if (!isAddModalOpen) return;
+    const preventWindowDrop = (e) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+        e.preventDefault();
+      }
+    };
+    const handleGlobalDrop = (e) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+        e.preventDefault();
+        refDragCounterRef.current = 0;
+        slipDragCounterRef.current = 0;
+        setIsDraggingRef(false);
+        setIsDraggingSlip(false);
+      }
+    };
+    window.addEventListener('dragover', preventWindowDrop);
+    window.addEventListener('drop', handleGlobalDrop);
+    return () => {
+      window.removeEventListener('dragover', preventWindowDrop);
+      window.removeEventListener('drop', handleGlobalDrop);
+    };
+  }, [isAddModalOpen]);
+
+  // Modal Drag Handlers (Keep safe boundaries without resetting child dropzone state)
+  const handleModalDragOver = (e) => {
+    if (viewOnlyMode) return;
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'none';
+    }
+  };
+
+  const handleModalDrop = (e) => {
+    e.preventDefault();
+  };
+
+  // Reference Images Drag Handlers
+  const handleRefDragEnter = (e) => {
+    if (viewOnlyMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    refDragCounterRef.current += 1;
+    setIsDraggingRef(true);
+  };
+
+  const handleRefDragLeave = (e) => {
+    if (viewOnlyMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    refDragCounterRef.current = Math.max(0, refDragCounterRef.current - 1);
+    if (refDragCounterRef.current === 0) {
+      setIsDraggingRef(false);
+    }
+  };
+
+  const handleRefDragOver = (e) => {
+    if (viewOnlyMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleRefDrop = (e) => {
+    if (viewOnlyMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    refDragCounterRef.current = 0;
+    setIsDraggingRef(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleReferenceImageUpload(e.dataTransfer.files);
+    }
+  };
+
+  // Slip Drag Handlers
+  const handleSlipDragEnter = (e) => {
+    if (viewOnlyMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    slipDragCounterRef.current += 1;
+    setIsDraggingSlip(true);
+  };
+
+  const handleSlipDragLeave = (e) => {
+    if (viewOnlyMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    slipDragCounterRef.current = Math.max(0, slipDragCounterRef.current - 1);
+    if (slipDragCounterRef.current === 0) {
+      setIsDraggingSlip(false);
+    }
+  };
+
+  const handleSlipDragOver = (e) => {
+    if (viewOnlyMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleSlipDrop = (e) => {
+    if (viewOnlyMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    slipDragCounterRef.current = 0;
+    setIsDraggingSlip(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleSlipUpload(e.dataTransfer.files);
+    }
+  };
+
+  const onDrop = handleRefDrop;
+  const onDragOverImg = handleRefDragOver;
 
   const handleSlipUpload = async (files) => {
     if (!files || files.length === 0) return;
@@ -1841,27 +2119,64 @@ const App = () => {
         (item.note && item.note.toLowerCase().includes(searchLower));
 
       let matchesDate = true;
-      const effectiveDate = item.paymentDate || item.rawDateTime; // [MODIFIED] Fallback to rawDateTime
-      if (effectiveDate) {
-          const itemDateStr = effectiveDate.split('T')[0];
-          if (dateFilterMode === 'date' && filterDate) {
-              matchesDate = itemDateStr === filterDate;
-          } else if (dateFilterMode === 'month' && filterDate) {
-              matchesDate = effectiveDate.startsWith(filterDate);
-          } else if (dateFilterMode === 'year' && filterDate) {
-              matchesDate = effectiveDate.startsWith(filterDate);
-          } else if (dateFilterMode === 'range' && filterDateRange.start && filterDateRange.end) {
-              matchesDate = itemDateStr >= filterDateRange.start && itemDateStr <= filterDateRange.end;
-          } else if (dateFilterMode === 'week' && filterDate) {
-              const itemDate = new Date(itemDateStr);
-              const weekStart = new Date(filterDate);
-              const weekEnd = new Date(weekStart);
-              weekEnd.setDate(weekStart.getDate() + 6);
-              weekStart.setHours(0,0,0,0);
-              weekEnd.setHours(23,59,59,999);
-              itemDate.setHours(12,0,0,0);
-              matchesDate = itemDate >= weekStart && itemDate <= weekEnd;
+      if (dateFilterMode !== 'all') {
+        const candidates = [
+          item.rawDeliveryStart,
+          item.rawDateTime,
+          item.date,
+          item.paymentDate,
+          item.deliveryDate
+        ];
+
+        let itemDateStr = '';
+        for (const val of candidates) {
+          if (!val) continue;
+          if (typeof val === 'string') {
+            const trimmed = val.trim();
+            if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+              itemDateStr = trimmed.substring(0, 10);
+              break;
+            }
+            if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(trimmed)) {
+              const parts = trimmed.split(' ')[0].split('/');
+              let y = parseInt(parts[2], 10);
+              if (y > 2500) y -= 543;
+              const mm = String(parts[1]).padStart(2, '0');
+              const dd = String(parts[0]).padStart(2, '0');
+              itemDateStr = `${y}-${mm}-${dd}`;
+              break;
+            }
           }
+          const d = new Date(val);
+          if (!isNaN(d.getTime())) {
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            itemDateStr = `${yyyy}-${mm}-${dd}`;
+            break;
+          }
+        }
+
+        if (!itemDateStr) {
+          matchesDate = false;
+        } else if (dateFilterMode === 'date' && filterDate) {
+          matchesDate = itemDateStr === filterDate;
+        } else if (dateFilterMode === 'month' && filterDate) {
+          matchesDate = itemDateStr.startsWith(filterDate);
+        } else if (dateFilterMode === 'year' && filterDate) {
+          matchesDate = itemDateStr.startsWith(filterDate);
+        } else if (dateFilterMode === 'range' && filterDateRange.start && filterDateRange.end) {
+          matchesDate = itemDateStr >= filterDateRange.start && itemDateStr <= filterDateRange.end;
+        } else if (dateFilterMode === 'week' && filterDate) {
+          const itemDate = new Date(itemDateStr);
+          const weekStart = new Date(filterDate);
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekStart.getDate() + 6);
+          weekStart.setHours(0, 0, 0, 0);
+          weekEnd.setHours(23, 59, 59, 999);
+          itemDate.setHours(12, 0, 0, 0);
+          matchesDate = itemDate >= weekStart && itemDate <= weekEnd;
+        }
       }
       const matchesCategory = filterCategory === 'all' || item.category === filterCategory;
       const matchesStatus = filterStatus === 'all' || item.dealStatus === filterStatus;
@@ -1905,6 +2220,21 @@ const App = () => {
     }
     return items;
   }, [allActivities, sortConfig, searchTerm, filterDate, filterDateRange, dateFilterMode, filterCategory, filterStatus, filterTransport]);
+
+  const [serverAnalytics, setServerAnalytics] = useState(null);
+
+  useEffect(() => {
+    if (activeTab === 'Analytics') {
+      fetchServerAnalytics({
+        startDate: filterDateRange?.start || null,
+        endDate: filterDateRange?.end || null,
+        category: filterCategory !== 'all' ? filterCategory : null,
+        dealStatus: filterStatus !== 'all' ? filterStatus : null
+      }).then(res => {
+        if (res) setServerAnalytics(res);
+      }).catch(err => console.warn('Server analytics RPC notice:', err));
+    }
+  }, [activeTab, filterDateRange, filterCategory, filterStatus]);
 
   const analyticsData = useMemo(() => {
     // [MODIFIED] Calculate financials ONLY for projects with dealStatus === 'completed'
@@ -2000,16 +2330,114 @@ const App = () => {
     });
     const categoryData = Object.entries(categoryStats).map(([name, count]) => ({ name, count }));
 
+    // Key Ratios (AOV, Support, Net Margin %)
+    const avgOrderValue = financialItems.length > 0 ? Math.round(currentRevenue / financialItems.length) : 0;
+    const avgSupportValue = financialItems.length > 0 ? Math.round(currentSupport / financialItems.length) : 0;
+    const netMarginPercent = currentRevenue > 0 ? ((currentProfit / currentRevenue) * 100).toFixed(1) : '0.0';
+
+    // Banknote Float Breakdown (Denominations 1000, 500, 100, 50, 20)
+    const banknoteBreakdown = {
+      1000: { count: 0, amount: 0 },
+      500: { count: 0, amount: 0 },
+      100: { count: 0, amount: 0 },
+      50: { count: 0, amount: 0 },
+      20: { count: 0, amount: 0 }
+    };
+    filteredAndSortedActivities.forEach(item => {
+      if (item.customerSupport && Array.isArray(item.customerSupport)) {
+        item.customerSupport.forEach(cs => {
+          const denom = Number(cs.denomination);
+          const qty = Number(cs.quantity) || 0;
+          const price = Number(cs.price) || (denom * qty);
+          if (banknoteBreakdown[denom]) {
+            banknoteBreakdown[denom].count += qty;
+            banknoteBreakdown[denom].amount += price;
+          }
+        });
+      }
+    });
+
+    // Top Venues Analysis
+    const venueStats = {};
+    filteredAndSortedActivities.forEach(item => {
+      const loc = (item.location || '').trim();
+      if (loc && loc !== '-' && loc.length > 1) {
+        if (!venueStats[loc]) {
+          venueStats[loc] = { name: loc, count: 0, revenue: 0 };
+        }
+        venueStats[loc].count += 1;
+        venueStats[loc].revenue += (item.wage || 0);
+      }
+    });
+    const topVenues = Object.values(venueStats)
+      .sort((a, b) => b.count - a.count || b.revenue - a.revenue)
+      .slice(0, 10);
+    const maxVenueCount = Math.max(...topVenues.map(v => v.count), 1);
+
+    // Low Margin Projects (Margin < 40%)
+    const lowMarginProjects = financialItems.filter(item => {
+      const rev = item.wage || 0;
+      const cost = item.expenses ? item.expenses.reduce((s, e) => s + (parseFloat(e.price) || 0), 0) : 0;
+      if (rev <= 0) return false;
+      const margin = ((rev - cost) / rev) * 100;
+      return margin < 40;
+    }).map(item => {
+      const rev = item.wage || 0;
+      const cost = item.expenses ? item.expenses.reduce((s, e) => s + (parseFloat(e.price) || 0), 0) : 0;
+      return {
+        ...item,
+        revenue: rev,
+        cost,
+        profit: rev - cost,
+        marginPct: ((rev - cost) / rev) * 100
+      };
+    }).sort((a, b) => a.marginPct - b.marginPct).slice(0, 8);
+
+    if (serverAnalytics?.totals) {
+      return {
+        currentRevenue: serverAnalytics.totals.total_revenue || currentRevenue,
+        currentSupport: serverAnalytics.totals.total_customer_support || currentSupport,
+        currentCost: serverAnalytics.totals.total_expenses || currentCost,
+        currentProfit: serverAnalytics.totals.total_net_profit || currentProfit,
+        avgOrderValue: serverAnalytics.totals.avg_order_value || avgOrderValue,
+        avgSupportValue: serverAnalytics.totals.avg_support_value || avgSupportValue,
+        netMarginPercent: serverAnalytics.totals.net_margin_percent || netMarginPercent,
+        totalProjects: serverAnalytics.status_counts?.total ?? totalProjects,
+        completedProjects: serverAnalytics.status_counts?.completed ?? completedProjects,
+        activeProjects: serverAnalytics.status_counts?.active ?? activeProjects,
+        pendingProjects: serverAnalytics.status_counts?.pending ?? pendingProjects,
+        issueProjects: serverAnalytics.status_counts?.issue ?? issueProjects,
+        declinedProjects: serverAnalytics.status_counts?.declined ?? declinedProjects,
+        allExpensesList: serverAnalytics.expenses && serverAnalytics.expenses.length > 0 ? serverAnalytics.expenses : allExpensesList,
+        maxExpense,
+        topPerformers: serverAnalytics.top_artists && serverAnalytics.top_artists.length > 0 ? serverAnalytics.top_artists : topPerformers,
+        maxPerformerRevenue,
+        topCustomers: serverAnalytics.top_customers && serverAnalytics.top_customers.length > 0 ? serverAnalytics.top_customers : topCustomers,
+        maxCustomerRevenue,
+        topCustomerByProjects,
+        maxCustomerProjectCount,
+        categoryData: serverAnalytics.categories && serverAnalytics.categories.length > 0 ? serverAnalytics.categories : categoryData,
+        banknoteBreakdown: serverAnalytics.banknotes && Object.keys(serverAnalytics.banknotes).length > 0 ? serverAnalytics.banknotes : banknoteBreakdown,
+        topVenues: serverAnalytics.top_venues && serverAnalytics.top_venues.length > 0 ? serverAnalytics.top_venues : topVenues,
+        maxVenueCount,
+        lowMarginProjects: serverAnalytics.low_margin && serverAnalytics.low_margin.length > 0 ? serverAnalytics.low_margin : lowMarginProjects
+      };
+    }
+
     return {
         currentRevenue, currentSupport, currentCost, currentProfit,
+        avgOrderValue, avgSupportValue, netMarginPercent,
         totalProjects, completedProjects, activeProjects, pendingProjects, issueProjects, declinedProjects,
         allExpensesList, maxExpense,
         topPerformers, maxPerformerRevenue,
         topCustomers, maxCustomerRevenue,
         topCustomerByProjects, maxCustomerProjectCount,
-        categoryData
+        categoryData,
+        banknoteBreakdown,
+        topVenues, maxVenueCount,
+        lowMarginProjects
     };
-  }, [filteredAndSortedActivities, dealStatuses]); // [FIXED] Added dealStatuses to dependency array
+  }, [filteredAndSortedActivities, dealStatuses, serverAnalytics]); // [FIXED] Added dealStatuses to dependency array
 
     // Sync scroll on mobile window scroll
   useEffect(() => {
@@ -2032,13 +2460,9 @@ const App = () => {
       if (activeTab === 'Plans' || activeTab === 'Analytics') {
         const scrollHeight = document.documentElement.scrollHeight;
         const clientHeight = window.innerHeight;
-        if (scrollTop + clientHeight >= scrollHeight - 150) {
-          if (visibleCount < filteredAndSortedActivities.length && !isLoadingMore) {
-            setIsLoadingMore(true);
-            setTimeout(() => {
-              setVisibleCount(prev => prev + 5);
-              setIsLoadingMore(false);
-            }, 1000);
+        if (scrollTop + clientHeight >= scrollHeight - 250) {
+          if (visibleCount < filteredAndSortedActivities.length) {
+            setVisibleCount(prev => Math.min(prev + 20, filteredAndSortedActivities.length));
           }
         }
       }
@@ -2059,8 +2483,9 @@ const App = () => {
 
   const resetFilters = () => {
     setSearchTerm('');
-    setDateFilterMode('all');
-    setFilterDate('');
+    setDateFilterMode('month');
+    const now = new Date();
+    setFilterDate(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
     setFilterDateRange({ start: '', end: '' });
     setFilterCategory('all');
     setFilterStatus('all');
@@ -2102,6 +2527,10 @@ const App = () => {
   }, [allActivities, dealStatuses, transportStatuses]);
 
   const closeModal = () => {
+    refDragCounterRef.current = 0;
+    slipDragCounterRef.current = 0;
+    setIsDraggingRef(false);
+    setIsDraggingSlip(false);
     setIsModalClosing(true);
     setTimeout(() => {
       setIsAddModalOpen(false);
@@ -2116,6 +2545,32 @@ const App = () => {
       setIsDeleteClosing(false);
     }, 300);
   };
+
+  // Keyboard shortcut: close active modal on Escape
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (selectedVenueForModal) setSelectedVenueForModal(null);
+        else if (isVenueDirectoryOpen) setIsVenueDirectoryOpen(false);
+        else if (shareData) setShareData(null);
+        else if (deleteConfirm.show) closeDeleteModal();
+        else if (deleteLogoConfirm) closeDeleteLogoModal();
+        else if (deleteProfileConfirm) closeDeleteProfileModal();
+        else if (isAddModalOpen && !isModalClosing) closeModal();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    selectedVenueForModal,
+    isVenueDirectoryOpen,
+    shareData,
+    deleteConfirm.show,
+    deleteLogoConfirm,
+    deleteProfileConfirm,
+    isAddModalOpen,
+    isModalClosing
+  ]);
 
   const handleCustomerChange = (e) => {
     const value = e.target.value;
@@ -2174,8 +2629,21 @@ const App = () => {
       setRecipientPhone(formatPhoneNumber(activity.recipientPhone || '')); // [MODIFIED] Format phone
       setLocationName(activity.location || '');
       setMapLink(activity.mapLink || '');
-      setUploadedImage(activity.image || null); 
+      const rawImages = Array.isArray(activity.images) && activity.images.length > 0
+        ? activity.images
+        : (activity.image ? [activity.image] : []);
+      setUploadedImages(rawImages); 
       setUploadedSlips(Array.isArray(activity.slips) ? activity.slips : (activity.slip ? [activity.slip] : [])); 
+      
+      // JIT on-demand fetch of detailed heavy images & slips if opened
+      if (activity.id) {
+        fetchProjectDetailOnDemand(activity.id).then(detail => {
+          if (detail) {
+            if (detail.images && detail.images.length > 0) setUploadedImages(detail.images);
+            if (detail.slips && detail.slips.length > 0) setUploadedSlips(detail.slips);
+          }
+        }).catch(() => {});
+      } 
       
       if (activity.quotationItems && activity.quotationItems.length > 0) {
           // [MODIFIED] Map existing items to include quantity, unitPrice, and item date
@@ -2264,7 +2732,7 @@ const App = () => {
       setRecipientPhone('');
       setLocationName('');
       setMapLink('');
-      setUploadedImage(null);
+      setUploadedImages([]);
       setUploadedSlips([]);
       setNote('');
       setWage(0);
@@ -2306,44 +2774,26 @@ const App = () => {
 
     const totalQuotation = quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0);
 
-    // [ADDED] Logic ป้องกัน ID ชนกัน และป้องกันเซฟทับของที่ถูกลบไปแล้ว
+    // [ADDED] Logic ป้องกัน ID ชนกัน และป้องกันเซฟทับของที่ถูกลบไปแล้ว (อ้างอิง In-Memory & Supabase)
     let finalId = currentId;
 
-    if (GOOGLE_SCRIPT_URL) {
-        try {
-            // โหลดข้อมูลล่าสุดสดๆ ร้อนๆ เสี้ยววินาทีก่อนบันทึก
-            const res = await fetch(GOOGLE_SCRIPT_URL, {
-                method: 'POST',
-                headers: { "Content-Type": "text/plain;charset=utf-8" },
-                body: JSON.stringify({ action: 'read' })
-            });
-            const latestData = await res.json();
-
-            if (latestData.status === 'success') {
-                const latestActivities = latestData.data;
-
-                if (!editingId) {
-                    // กรณีสร้างใหม่: คำนวณ ID ใหม่ล่าสุดจากฐานข้อมูลจริง เพื่อป้องกัน 2 คนกด Add พร้อมกัน
-                    const ids = latestActivities.map(item => {
-                        if(!item.id) return 0;
-                        const match = item.id.match(/\d+/); 
-                        return match ? parseInt(match[0]) : 0;
-                    });
-                    const maxId = ids.length > 0 ? Math.max(...ids) : 0;
-                    finalId = `P-${String(maxId + 1).padStart(4, '0')}`;
-                } else {
-                    // กรณีแก้ไข: เช็คว่างานนี้ยังอยู่ในระบบไหม (โดนคนอื่นลบไปตัดหน้าหรือเปล่า)
-                    const stillExists = latestActivities.some(item => item.id === editingId);
-                    if (!stillExists) {
-                        showToast("ไม่สามารถบันทึกได้: รายการนี้ถูกลบไปแล้วโดยผู้ใช้อื่น", "error");
-                        setIsSaving(false);
-                        return; // ยกเลิกการเซฟ
-                    }
-                }
-            }
-        } catch (e) {
-            console.warn("ไม่สามารถตรวจสอบการชนกันของข้อมูลได้ ทำการบันทึกตามปกติ", e);
-        }
+    if (!editingId) {
+      // กรณีสร้างใหม่: คำนวณ ID ใหม่ล่าสุดเพื่อป้องกัน ID ชนกัน
+      const ids = allActivities.map(item => {
+        if (!item.id) return 0;
+        const match = String(item.id).match(/\d+/); 
+        return match ? parseInt(match[0]) : 0;
+      });
+      const maxId = ids.length > 0 ? Math.max(...ids) : 0;
+      finalId = `P-${String(maxId + 1).padStart(4, '0')}`;
+    } else {
+      // กรณีแก้ไข: เช็คว่างานนี้ยังอยู่ในระบบไหม
+      const stillExists = allActivities.some(item => item.id === editingId);
+      if (!stillExists) {
+        showToast("ไม่สามารถบันทึกได้: รายการนี้ถูกลบไปแล้วโดยผู้ใช้อื่น", "error");
+        setIsSaving(false);
+        return;
+      }
     }
 
     const activityData = {
@@ -2380,13 +2830,66 @@ const App = () => {
       recipient: recipientName,
       recipientPhone: recipientPhone,
       location: locationName,
+      locationId: (() => {
+        const found = deliveryLocations.find(l => 
+          l.name && locationName && (
+            l.name.toLowerCase() === locationName.trim().toLowerCase() ||
+            (Array.isArray(l.aliases) && l.aliases.some(a => a.toLowerCase() === locationName.trim().toLowerCase()))
+          )
+        );
+        return found ? found.id : null;
+      })(),
       mapLink: mapLink,
-      image: uploadedImage,
+      image: uploadedImages.length > 0 ? (typeof uploadedImages[0] === 'object' ? uploadedImages[0].url : uploadedImages[0]) : null,
+      images: uploadedImages,
       slips: uploadedSlips
     };
 
     if (GOOGLE_SCRIPT_URL) {
       try {
+        // Upload any base64 reference images to Google Drive reference folder if configured
+        const refFolderId = getFolderIdByType('reference');
+        let finalImages = Array.isArray(uploadedImages) ? [...uploadedImages] : [];
+        if (refFolderId && finalImages.length > 0) {
+          for (let i = 0; i < finalImages.length; i++) {
+            const itemImg = finalImages[i];
+            const imgUrl = typeof itemImg === 'object' ? itemImg.url : itemImg;
+            if (typeof imgUrl === 'string' && imgUrl.startsWith('data:image')) {
+              try {
+                const mimeType = imgUrl.split(',')[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+                const rawBase64 = imgUrl.substring(imgUrl.indexOf(',') + 1);
+                const fileName = `ref_${activityData.id}_${Date.now()}_${i + 1}.png`;
+                const uploadRes = await fetch(GOOGLE_SCRIPT_URL, {
+                  method: 'POST',
+                  headers: { "Content-Type": "text/plain;charset=utf-8" },
+                  body: JSON.stringify({
+                    action: 'uploadAsset',
+                    data: {
+                      folderId: refFolderId,
+                      fileData: rawBase64,
+                      fileName: fileName,
+                      mimeType: mimeType
+                    }
+                  })
+                });
+                const resJson = await uploadRes.json();
+                if (resJson.status === 'success' && resJson.url) {
+                  const fileLink = resJson.fileId 
+                    ? `https://drive.google.com/uc?export=view&id=${resJson.fileId}`
+                    : resJson.url;
+                  finalImages[i] = typeof itemImg === 'object' 
+                    ? { ...itemImg, url: fileLink, fileId: resJson.fileId }
+                    : fileLink;
+                }
+              } catch (imgErr) {
+                console.warn("Upload ref image to Drive error:", imgErr);
+              }
+            }
+          }
+          activityData.images = finalImages;
+          activityData.image = finalImages.length > 0 ? (typeof finalImages[0] === 'object' ? finalImages[0].url : finalImages[0]) : null;
+        }
+
         // Upload any base64 slips to Google Drive slips folder if configured
         const slipFolderId = getFolderIdByType('slips');
         let finalSlips = Array.isArray(uploadedSlips) ? [...uploadedSlips] : [];
@@ -2429,34 +2932,26 @@ const App = () => {
           activityData.slips = finalSlips;
         }
 
-        const response = await fetch(GOOGLE_SCRIPT_URL, {
-          method: 'POST',
-          headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
-          body: JSON.stringify({ action: 'save', data: activityData })
-        });
-        const result = await response.json();
-        if (result.status === 'success') {
-          setAllActivities(prev => {
-             const exists = prev.some(item => item.id === activityData.id);
-             if (exists) {
-                 return prev.map(item => item.id === activityData.id ? activityData : item);
-             } else {
-                 return [activityData, ...prev];
-             }
-          });
-
-          setIsSaving(false);
-          closeModal();
-          showToast("บันทึกข้อมูลสำเร็จเรียบร้อย", 'success');
-          fetchProjects(); 
-          return;
-        } else {
-          let displayMsg = result.message;
-          if (displayMsg && (displayMsg.includes("DriveApp") || displayMsg.includes("permission") || displayMsg.includes("อนุญาต"))) {
-             displayMsg = "สิทธิ์ Google Drive ไม่ถูกต้อง: กรุณาเปิด Apps Script > กด Run ฟังก์ชันเพื่อขอสิทธิ์ (Authorize) > และ Deploy ใหม่อีกครั้ง";
-          }
-          showToast("ไม่สามารถบันทึกข้อมูลได้: " + displayMsg, 'error');
+        // 1. บันทึกลง Supabase และ IndexedDB แบบ Realtime
+        try {
+          await saveProjectSync(activityData);
+        } catch (supaErr) {
+          console.warn("Supabase save note:", supaErr);
         }
+
+        setAllActivities(prev => {
+           const exists = prev.some(item => item.id === activityData.id);
+           if (exists) {
+               return prev.map(item => item.id === activityData.id ? activityData : item);
+           } else {
+               return [activityData, ...prev];
+           }
+        });
+
+        setIsSaving(false);
+        closeModal();
+        showToast("บันทึกข้อมูลเรียบร้อยแล้ว", 'success');
+        return;
       } catch (error) {
         showToast("เกิดข้อผิดพลาดในการเชื่อมต่อ: " + error.message, 'error');
       }
@@ -2490,31 +2985,15 @@ const App = () => {
       const itemToDelete = allActivities.find(item => item.id === deleteConfirm.id);
       const imageInfo = itemToDelete ? itemToDelete.image : null;
 
-      if (GOOGLE_SCRIPT_URL) {
-         try {
-           const response = await fetch(GOOGLE_SCRIPT_URL, {
-             method: 'POST',
-             headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
-             body: JSON.stringify({ 
-                action: 'delete', 
-                id: deleteConfirm.id,
-                image: imageInfo 
-             })
-           });
-           const result = await response.json();
-           if (result.status === 'success') {
-             await fetchProjects();
-             showToast("ลบข้อมูลเรียบร้อยแล้ว", 'success');
-           } else {
-             showToast("เกิดข้อผิดพลาดในการลบ: " + result.message, 'error');
-           }
-         } catch(error) {
-            showToast("เกิดข้อผิดพลาดในการเชื่อมต่อ: " + error.message, 'error');
-         }
-      } else {
-        setAllActivities(allActivities.filter(item => item.id !== deleteConfirm.id));
-        showToast("ลบข้อมูลเรียบร้อยแล้ว (โหมดออฟไลน์)", 'success');
+      // 1. ลบจาก Supabase และ IndexedDB แบบ Realtime
+      try {
+        await deleteProjectSync(deleteConfirm.id);
+      } catch (supaErr) {
+        console.warn("Supabase delete note:", supaErr);
       }
+
+      setAllActivities(prev => prev.filter(item => item.id !== deleteConfirm.id));
+      showToast("ลบข้อมูลเรียบร้อยแล้ว", 'success');
       
       closeDeleteModal();
       if (deleteConfirm.fromModal) {
@@ -2843,10 +3322,10 @@ const App = () => {
             <div className="overflow-x-auto overflow-y-hidden pb-4 custom-scrollbar">
               {/* [MODIFIED] Removed max-w constraint to let table grow with screen */}
               <div className="min-w-fit w-full">
-                {/* [MODIFIED] Changed table-fixed to table-auto for better content adaptation */}
-                <table className="w-full min-w-[1280px] table-auto">
+                {/* [MODIFIED] Changed table-fixed to table-auto for better content adaptation with border-collapse */}
+                <table className="w-full min-w-[1280px] table-auto border-collapse">
                   <thead>
-                    <tr className="text-slate-400 text-sm font-semibold border-b border-slate-50">
+                    <tr className="text-slate-400 text-sm font-semibold border-b border-slate-100">
                       {/* [MODIFIED] Adjusted widths to be relative/min-width for table-auto */}
                       <SortableHeader className="w-[12%] min-w-[120px]" label="รหัส / วันที่" sortKey="id" sortConfig={sortConfig} handleSort={handleSort} />
                       <SortableHeader className="w-[18%] min-w-[200px]" label="โปรเจค / หมวดหมู่" sortKey="name" sortConfig={sortConfig} handleSort={handleSort} />
@@ -2859,7 +3338,7 @@ const App = () => {
                       <th className="w-[8%] min-w-[100px] px-2 py-4 font-medium text-right whitespace-nowrap">ดำเนินการ</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-50">
+                  <tbody>
                     {items.map((item, i) => {
                       const itemExpenses = item.expenses ? item.expenses.reduce((sum, ex) => sum + (parseFloat(ex.price) || 0), 0) : 0;
                       const itemProfit = (item.wage || 0) - itemExpenses;
@@ -2868,14 +3347,12 @@ const App = () => {
 
                       const dealStatusInfo = getDealStatusInfo(item.dealStatus);
                       const transportStatusInfo = getTransportStatusInfo(item.transportStatus);
-                      const animDelay = (i % 20) * 50; 
 
                       return (
                         <tr
                           key={item.id}
                           onClick={() => openModal(item, true)}
-                          className="hover:bg-slate-50/80 transition-colors group cursor-pointer space-row-animation"
-                          style={{ animationDelay: `${animDelay}ms` }}
+                          className="hover:bg-slate-50/80 transition-colors group cursor-pointer border-b border-slate-100/70"
                         >
                           <td className="px-4 py-4 align-top">
                             <div className="flex flex-col gap-1">
@@ -3025,7 +3502,7 @@ const App = () => {
             </div>
             
             {limit === 0 && isLoadingMore && (
-               <div className="w-full py-8 text-center border-t border-slate-50 bg-slate-50/30 animate-in fade-in slide-in-from-bottom-2">
+               <div className="w-full py-6 text-center border-0 bg-transparent animate-in fade-in">
                    <div className="flex flex-col items-center justify-center gap-3">
                       <div className="p-2 bg-white rounded-full shadow-sm border border-slate-200">
                           <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
@@ -3033,6 +3510,19 @@ const App = () => {
                       <span className="text-xs text-slate-500 font-bold animate-pulse">กำลังโหลดข้อมูลเพิ่มเติม...</span>
                    </div>
                </div>
+            )}
+
+            {limit === 0 && visibleCount < sourceData.length && (
+              <div className="w-full py-4 text-center border-t border-slate-100 bg-slate-50/50">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount(prev => Math.min(prev + 25, sourceData.length))}
+                  className="px-6 py-2.5 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 text-slate-700 hover:text-indigo-600 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer inline-flex items-center gap-2 active:scale-95"
+                >
+                  <span>แสดงข้อมูลเพิ่มเติม (เหลืออีก {sourceData.length - visibleCount} รายการ)</span>
+                  <ChevronDown className="w-4 h-4 text-slate-400" />
+                </button>
+              </div>
             )}
         </div>
       </div>
@@ -3181,80 +3671,118 @@ const App = () => {
          )}
       </div>
       
-      <div className="hidden md:flex flex-col gap-3">
+      <div className="hidden md:flex flex-col gap-2.5">
+          {/* แถวที่ 1: ค้นหา + ตัวเลือกวันที่ + ปุ่มเปิด/ปิดตัวกรองเพิ่มเติม + ปุ่มรีเซ็ต */}
           <div className="flex gap-3 h-[48px]">
-              <div className="relative flex-[2] bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-sm">
-                   <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+              <div className="relative flex-[2] bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs">
+                   <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
                         <Search className="w-5 h-5" />
                    </div>
                    <input
                         type="text"
                         placeholder="ค้นหาชื่องาน, ศิลปิน, รหัส..."
-                        className="w-full h-full pl-12 pr-4 bg-transparent outline-none text-slate-700 text-sm font-medium placeholder:text-slate-400 rounded-2xl"
+                        className="w-full h-full pl-12 pr-10 bg-transparent outline-none text-slate-700 text-sm font-medium placeholder:text-slate-400 rounded-2xl"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                    />
+                   {searchTerm && (
+                     <button
+                       onClick={() => setSearchTerm('')}
+                       className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-md cursor-pointer"
+                       title="ล้างข้อความค้นหา"
+                     >
+                       <X className="w-4 h-4" />
+                     </button>
+                   )}
               </div>
 
-              <div className="flex-1 min-w-[300px]">
+              <div className="flex-1 min-w-[280px]">
                    <DateFilterControl 
                         mode={dateFilterMode} setMode={setDateFilterMode}
                         date={filterDate} setDate={setFilterDate}
                         range={filterDateRange} setRange={setFilterDateRange}
                    />
               </div>
-          </div>
 
-          <div className="flex gap-3 h-[48px]">
-              {/* ... Desktop Filters ... */}
-              <div className="relative flex-1 bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-sm group">
-                   <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Tag className="w-4 h-4" /></div>
-                   <select
-                        className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
-                        value={filterCategory}
-                        onChange={(e) => setFilterCategory(e.target.value)}
-                   >
-                        <option value="all">ทุกหมวดหมู่</option>
-                        {projectCategories.map((cat, i) => <option key={i} value={cat}>{cat}</option>)}
-                   </select>
-                   <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
+              {/* ปุ่มเปิด/ซ่อนตัวกรองเพิ่มเติม Desktop */}
+              <button
+                type="button"
+                onClick={() => setIsDesktopFilterExpanded(!isDesktopFilterExpanded)}
+                className={`h-[48px] px-3.5 rounded-2xl font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 active:scale-95 border cursor-pointer ${
+                  isDesktopFilterExpanded 
+                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-200' 
+                    : (filterCategory !== 'all' || filterStatus !== 'all' || filterTransport !== 'all')
+                    ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                    : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:bg-slate-50'
+                }`}
+                title={isDesktopFilterExpanded ? "ซ่อนตัวกรองเพิ่มเติม" : "เปิดตัวกรองเพิ่มเติม"}
+                aria-label="ตัวกรอง"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                {(filterCategory !== 'all' || filterStatus !== 'all' || filterTransport !== 'all') && (
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                    isDesktopFilterExpanded ? 'bg-white text-indigo-600' : 'bg-indigo-200 text-indigo-800'
+                  }`}>
+                    {[filterCategory !== 'all', filterStatus !== 'all', filterTransport !== 'all'].filter(Boolean).length}
+                  </span>
+                )}
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isDesktopFilterExpanded ? 'rotate-180' : ''}`} />
+              </button>
 
-              <div className="relative flex-1 bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-sm group">
-                   <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Briefcase className="w-4 h-4" /></div>
-                   <select
-                        className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
-                        value={filterStatus}
-                        onChange={(e) => setFilterStatus(e.target.value)}
-                   >
-                        <option value="all">ทุกสถานะ (ดีล)</option>
-                        {dealStatuses.map((s, i) => <option key={i} value={s.value}>{s.label}</option>)}
-                   </select>
-                   <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
-
-              <div className="relative flex-1 bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-sm group">
-                   <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Truck className="w-4 h-4" /></div>
-                   <select
-                        className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
-                        value={filterTransport}
-                        onChange={(e) => setFilterTransport(e.target.value)}
-                   >
-                        <option value="all">ขนส่ง (ทั้งหมด)</option>
-                        <option value="active_only">กำลังดำเนินการ (Active)</option> {/* Added Option */}
-                        {transportStatuses.map((s, i) => <option key={i} value={s.value}>{s.label}</option>)}
-                   </select>
-                   <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
-
+              {/* ปุ่มรีเซ็ตตัวกรอง */}
               <button
                   onClick={resetFilters}
-                  className="px-5 bg-slate-100 text-slate-500 rounded-2xl font-bold hover:bg-rose-50 hover:text-rose-600 transition-colors flex items-center justify-center shadow-sm"
-                  title="ล้างค่าตัวกรอง"
+                  className="h-[48px] px-4 bg-slate-100 text-slate-500 rounded-2xl font-bold hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 border border-transparent transition-colors flex items-center justify-center shadow-xs shrink-0 cursor-pointer active:scale-95"
+                  title="ล้างค่าตัวกรองทั้งหมด"
               >
-                  <RotateCcw className="w-5 h-5" />
+                  <RotateCcw className="w-4 h-4" />
               </button>
           </div>
+
+          {/* แถวที่ 2: หมวดหมู่ + สถานะดีล + ขนส่ง (ซ่อนเริ่มต้น แสดงเมื่อกดปุ่มตัวกรอง) */}
+          {isDesktopFilterExpanded && (
+            <div className="flex gap-3 h-[48px] pt-1 animate-in slide-in-from-top-2 fade-in duration-200">
+                <div className="relative flex-1 bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs group">
+                     <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Tag className="w-4 h-4" /></div>
+                     <select
+                          className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
+                          value={filterCategory}
+                          onChange={(e) => setFilterCategory(e.target.value)}
+                     >
+                          <option value="all">ทุกหมวดหมู่</option>
+                          {projectCategories.map((cat, i) => <option key={i} value={cat}>{cat}</option>)}
+                     </select>
+                     <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+
+                <div className="relative flex-1 bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs group">
+                     <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Briefcase className="w-4 h-4" /></div>
+                     <select
+                          className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
+                          value={filterStatus}
+                          onChange={(e) => setFilterStatus(e.target.value)}
+                     >
+                          <option value="all">ทุกสถานะ (ดีล)</option>
+                          {dealStatuses.map((s, i) => <option key={i} value={s.value}>{s.label}</option>)}
+                     </select>
+                     <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+
+                <div className="relative flex-1 bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs group">
+                     <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Truck className="w-4 h-4" /></div>
+                     <select
+                          className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
+                          value={filterTransport}
+                          onChange={(e) => setFilterTransport(e.target.value)}
+                     >
+                          <option value="all">ขนส่ง (ทั้งหมด)</option>
+                          <option value="active_only">กำลังดำเนินการ (Active)</option>
+                          {transportStatuses.map((s, i) => <option key={i} value={s.value}>{s.label}</option>)}
+                     </select>
+                     <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+            </div>
+          )}
       </div>
     </div>
     </>
@@ -3344,16 +3872,17 @@ const App = () => {
       );
     }
     
-    // ... existing no URL check ...
-    if (!GOOGLE_SCRIPT_URL) {
+    // Supabase Database Connection Check
+    const isSupabaseConfigured = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+    if (!isSupabaseConfigured && !GOOGLE_SCRIPT_URL) {
       return (
         <div className="flex flex-col items-center justify-center h-[calc(100vh-80px)] w-full px-4 text-center">
             <div className="p-4 bg-amber-50 rounded-full text-amber-500 mb-4">
                <WifiOff className="w-12 h-12" />
             </div>
-            <h2 className="text-2xl font-black text-slate-800 mb-2">ยังไม่ได้เชื่อมต่อฐานข้อมูล</h2>
+            <h2 className="text-2xl font-black text-slate-800 mb-2">ยังไม่ได้เชื่อมต่อฐานข้อมูล Supabase</h2>
             <p className="text-slate-500 max-w-md mb-6">
-               กรุณานำ URL ที่ได้จากการ Deploy Google Apps Script มาวางในตัวแปร <code>GOOGLE_SCRIPT_URL</code> ในไฟล์ NexusPlan.jsx
+               กรุณากำหนดค่าตัวแปร <code>VITE_SUPABASE_URL</code> และ <code>VITE_SUPABASE_ANON_KEY</code> ในไฟล์ .env.local
             </p>
         </div>
       );
@@ -3371,119 +3900,266 @@ const App = () => {
         categoryData
     } = analyticsData;
 
-    // [PERFORMANCE FIX] ใช้เทคนิค Persistent Layout (ซ่อน/แสดง) แทนการ Unmount Component เพื่อความลื่นไหลสูงสุด
+    // [PERFORMANCE FIX] ใช้เทคนิค Lazy Mount + Persistent Warm Layout พร้อม startTransition เพื่อความลื่นไหลระดับ 60fps
     return (
       <>
         {/* --- Tab: Calendar --- */}
-        <div className={activeTab === 'Calendar' ? 'block h-full' : 'hidden'}>
-          <CalendarView 
-            activities={allActivities} 
-            onEventClick={(item) => openModal(item, true)} 
-            dealStatuses={dealStatuses}
-            transportStatuses={transportStatuses}
-          />
-        </div>
+        {visitedTabs.has('Calendar') && (
+          <div className={activeTab === 'Calendar' ? 'block h-full' : 'hidden'}>
+            <CalendarView 
+              activities={allActivities} 
+              onEventClick={(item) => openModal(item, true)} 
+              dealStatuses={dealStatuses}
+              transportStatuses={transportStatuses}
+            />
+          </div>
+        )}
 
         {/* --- Tab 3: Analytics --- */}
-        <div className={activeTab === 'Analytics' ? 'block' : 'hidden'}>
-          <AnalyticsView
-            renderFilterCard={() => renderFilterCard('Analytics')}
-            analyticsData={analyticsData}
-            dateFilterMode={dateFilterMode}
-            resetFilters={resetFilters}
-            setFilterStatus={setFilterStatus}
-            setFilterTransport={setFilterTransport}
-            openModal={openModal}
-            renderTable={renderTable}
-            filteredAndSortedActivities={filteredAndSortedActivities}
-            isActive={activeTab === 'Analytics'}
-          />
-        </div>
+        {visitedTabs.has('Analytics') && (
+          <div className={activeTab === 'Analytics' ? 'block' : 'hidden'}>
+            <AnalyticsView
+              renderFilterCard={() => renderFilterCard('Analytics')}
+              analyticsData={analyticsData}
+              dateFilterMode={dateFilterMode}
+              resetFilters={resetFilters}
+              setFilterStatus={setFilterStatus}
+              setFilterTransport={setFilterTransport}
+              openModal={openModal}
+              renderTable={renderTable}
+              filteredAndSortedActivities={filteredAndSortedActivities}
+              isActive={activeTab === 'Analytics'}
+              onOpenVenueModal={(venueOrName) => {
+                const match = typeof venueOrName === 'string'
+                  ? deliveryLocations.find(l => l.name.toLowerCase() === venueOrName.trim().toLowerCase()) || { name: venueOrName }
+                  : venueOrName;
+                setSelectedVenueForModal(match);
+              }}
+              onSelectProject={(project) => openModal(project, false)}
+            />
+          </div>
+        )}
 
         {/* --- Tab 4: Plans --- */}
-        <div className={activeTab === 'Plans' ? 'block' : 'hidden'}>
-          <PlansView
-            stats={stats}
-
-            renderFilterCard={() => renderFilterCard('Plans')}
-            renderTable={renderTable}
-            filteredAndSortedActivities={filteredAndSortedActivities}
-            onOpenModal={() => openModal()}
-          />
-        </div>
+        {visitedTabs.has('Plans') && (
+          <div className={activeTab === 'Plans' ? 'block' : 'hidden'}>
+            <PlansView
+              stats={stats}
+              renderFilterCard={() => renderFilterCard('Plans')}
+              renderTable={renderTable}
+              filteredAndSortedActivities={filteredAndSortedActivities}
+              onOpenModal={() => openModal()}
+              renderBatchBanner={() => (
+                <BatchDeliveryBanner
+                  activities={filteredAndSortedActivities}
+                  dealStatuses={dealStatuses}
+                  transportStatuses={transportStatuses}
+                  onSelectProject={(p) => openModal(p, false)}
+                  onOpenVenueModal={(venueOrName) => {
+                    const match = typeof venueOrName === 'string'
+                      ? deliveryLocations.find(l => l.name.toLowerCase() === venueOrName.trim().toLowerCase()) || { name: venueOrName }
+                      : venueOrName;
+                    setSelectedVenueForModal(match);
+                  }}
+                />
+              )}
+            />
+          </div>
+        )}
 
         {/* --- Tab 5: Finance --- */}
-        <div className={activeTab === 'Finance' ? 'block min-h-full pb-24 md:pb-6' : 'hidden'}>
-            <FinanceView
-                activities={allActivities}
-                dealStatuses={dealStatuses}
-                transportStatuses={transportStatuses}
-                shopInfo={shopInfo}
-                onOpenProjectModal={openModal}
-                themeColor={shopInfo?.themeColor || 'indigo'}
-                dateFilterMode={dateFilterMode}
-                setDateFilterMode={setDateFilterMode}
-                filterDate={filterDate}
-                setFilterDate={setFilterDate}
-                filterDateRange={filterDateRange}
-                setFilterDateRange={setFilterDateRange}
-                isActive={activeTab === 'Finance'}
+        {visitedTabs.has('Finance') && (
+          <div className={activeTab === 'Finance' ? 'block min-h-full pb-24 md:pb-6' : 'hidden'}>
+              <FinanceView
+                  activities={allActivities}
+                  dealStatuses={dealStatuses}
+                  transportStatuses={transportStatuses}
+                  shopInfo={shopInfo}
+                  onOpenProjectModal={openModal}
+                  themeColor={shopInfo?.themeColor || 'indigo'}
+                  dateFilterMode={dateFilterMode}
+                  setDateFilterMode={setDateFilterMode}
+                  filterDate={filterDate}
+                  setFilterDate={setFilterDate}
+                  filterDateRange={filterDateRange}
+                  setFilterDateRange={setFilterDateRange}
+                  isActive={activeTab === 'Finance'}
+                  onSaveActivity={(updatedActivity) => {
+                    setAllActivities(prev => {
+                      const exists = prev.some(item => item.id === updatedActivity.id);
+                      if (exists) {
+                        return prev.map(item => item.id === updatedActivity.id ? updatedActivity : item);
+                      } else {
+                        return [updatedActivity, ...prev];
+                      }
+                    });
+                  }}
+              />
+          </div>
+        )}
+
+        {/* --- Tab: Quotations --- */}
+        {visitedTabs.has('Quotations') && (
+          <div className={activeTab === 'Quotations' ? 'block' : 'hidden'}>
+            <QuotationsView
+              activities={allActivities}
+              allProjects={allActivities}
+              customers={savedCustomers}
+              shopInfo={shopInfo}
+              dealStatuses={dealStatuses}
+              inventoryItems={inventoryItems}
+              isCreateOpen={isCreateQuotationOpen}
+              onCloseCreate={() => setIsCreateQuotationOpen(false)}
+              onOpenProjectModal={openModal}
+              onRefresh={fetchProjects}
             />
-        </div>
+          </div>
+        )}
+
+        {/* --- Tab: Inventory --- */}
+        {visitedTabs.has('Inventory') && (
+          <div className={activeTab === 'Inventory' ? 'block' : 'hidden'}>
+            <InventoryView
+              inventoryItems={inventoryItems}
+              assetLoans={assetLoans}
+              activities={allActivities}
+              isCreateOpen={isCreateInventoryOpen}
+              onCloseCreate={() => setIsCreateInventoryOpen(false)}
+              onOpenProjectModal={openModal}
+              onRefresh={() => {
+                loadInventoryLocalFirst(setInventoryItems);
+                loadAssetLoansLocalFirst(setAssetLoans);
+              }}
+            />
+          </div>
+        )}
+
+        {/* --- Tab: Venues --- */}
+        {visitedTabs.has('Venues') && (
+          <div className={activeTab === 'Venues' ? 'block' : 'hidden'}>
+            <VenuesView
+              venues={deliveryLocations}
+              isCreateOpen={isCreateVenueOpen}
+              onCloseCreate={() => setIsCreateVenueOpen(false)}
+              onSelectVenue={(venue) => {
+                setSelectedVenueForModal(venue);
+              }}
+              onRefresh={() => {
+                loadLocationsLocalFirst(setDeliveryLocations);
+              }}
+              shopInfo={shopInfo}
+            />
+          </div>
+        )}
+
+        {/* --- Tab: Artists --- */}
+        {visitedTabs.has('Artists') && (
+          <div className={activeTab === 'Artists' ? 'block' : 'hidden'}>
+            <ArtistsView
+              artists={artistList}
+              activities={allActivities}
+              isCreateOpen={isCreateArtistOpen}
+              onCloseCreate={() => setIsCreateArtistOpen(false)}
+              onOpenProjectModal={openModal}
+              onFilterByArtist={(artistName) => {
+                setSearchQuery(artistName);
+                handleSelectTab('Plans');
+              }}
+              onRefresh={() => {
+                loadArtistsLocalFirst(setArtistList);
+              }}
+            />
+          </div>
+        )}
+
+        {/* --- Tab: Customers --- */}
+        {visitedTabs.has('Customers') && (
+          <div className={activeTab === 'Customers' ? 'block' : 'hidden'}>
+            <CustomersView
+              customers={customerList}
+              activities={allActivities}
+              isCreateOpen={isCreateCustomerOpen}
+              onCloseCreate={() => setIsCreateCustomerOpen(false)}
+              onOpenProjectModal={openModal}
+              onFilterByCustomer={(custName) => {
+                setSearchQuery(custName);
+                handleSelectTab('Plans');
+              }}
+              onRefresh={() => {
+                loadCustomersLocalFirst(setCustomerList);
+              }}
+            />
+          </div>
+        )}
+
+        {/* --- Tab: Staff --- */}
+        {visitedTabs.has('Staff') && (
+          <div className={activeTab === 'Staff' ? 'block' : 'hidden'}>
+            <StaffView
+              activities={allActivities}
+              isCreateOpen={isCreateStaffOpen}
+              onCloseCreate={() => setIsCreateStaffOpen(false)}
+              onRefresh={fetchSettings}
+            />
+          </div>
+        )}
 
         {/* --- Tab 6: Settings --- */}
-        <div className={activeTab === 'Settings' ? 'block' : 'hidden'}>
-          <SettingsView
-            isSyncingSettings={isSyncingSettings}
-            isUploadingProfile={isUploadingProfile}
-            handleProfileImageUpload={handleProfileImageUpload}
-            userProfile={userProfile}
-
-            requestDeleteProfile={requestDeleteProfile}
-            authorizedUsers={authorizedUsers}
-            handleDeleteUser={handleDeleteUser}
-            isAddingUser={isAddingUser}
-            setIsAddingUser={setIsAddingUser}
-            newUser={newUser}
-            setNewUser={setNewUser}
-            handleAddUser={handleAddUser}
-            driveFolderId={driveFolderId}
-            setDriveFolderId={setDriveFolderId}
-            driveFolders={driveFolders}
-            setDriveFolders={setDriveFolders}
-            saveSystemSettings={saveSystemSettings}
-            assetsDriveFolderId={assetsDriveFolderId}
-            setAssetsDriveFolderId={setAssetsDriveFolderId}
-            lineBotToken={lineBotToken}
-            setLineBotToken={setLineBotToken}
-            telegramBotToken={telegramBotToken}
-            setTelegramBotToken={setTelegramBotToken}
-            deployUrl={deployUrl}
-            setDeployUrl={setDeployUrl}
-            telegramChatId={telegramChatId}
-            setTelegramChatId={setTelegramChatId}
-            handleFetchTelegramId={handleFetchTelegramId}
-            webAppUrl={webAppUrl}
-            setWebAppUrl={setWebAppUrl}
-            shopInfo={shopInfo}
-            setShopInfo={setShopInfo}
-            isUploadingLogo={isUploadingLogo}
-            handleLogoUpload={handleLogoUpload}
-            requestDeleteLogo={requestDeleteLogo}
-            isSaving={isSaving}
-            themeColors={themeColors}
-            projectCategories={projectCategories}
-            setProjectCategories={setProjectCategories}
-            expenseCategories={expenseCategories}
-            setExpenseCategories={setExpenseCategories}
-            dealStatuses={dealStatuses}
-            setDealStatuses={setDealStatuses}
-            transportStatuses={transportStatuses}
-            setTransportStatuses={setTransportStatuses}
-            handleLogout={handleLogout}
-            processImageUrl={processImageUrl}
-          />
-        </div>
+        {visitedTabs.has('Settings') && (
+          <div className={activeTab === 'Settings' ? 'block' : 'hidden'}>
+            <SettingsView
+              isSyncingSettings={isSyncingSettings}
+              isUploadingProfile={isUploadingProfile}
+              handleProfileImageUpload={handleProfileImageUpload}
+              userProfile={userProfile}
+              requestDeleteProfile={requestDeleteProfile}
+              authorizedUsers={authorizedUsers}
+              handleDeleteUser={handleDeleteUser}
+              isAddingUser={isAddingUser}
+              setIsAddingUser={setIsAddingUser}
+              newUser={newUser}
+              setNewUser={setNewUser}
+              handleAddUser={handleAddUser}
+              driveFolderId={driveFolderId}
+              setDriveFolderId={setDriveFolderId}
+              driveFolders={driveFolders}
+              setDriveFolders={setDriveFolders}
+              saveSystemSettings={saveSystemSettings}
+              assetsDriveFolderId={assetsDriveFolderId}
+              setAssetsDriveFolderId={setAssetsDriveFolderId}
+              lineBotToken={lineBotToken}
+              setLineBotToken={setLineBotToken}
+              telegramBotToken={telegramBotToken}
+              setTelegramBotToken={setTelegramBotToken}
+              deployUrl={deployUrl}
+              setDeployUrl={setDeployUrl}
+              telegramChatId={telegramChatId}
+              setTelegramChatId={setTelegramChatId}
+              handleFetchTelegramId={handleFetchTelegramId}
+              webAppUrl={webAppUrl}
+              setWebAppUrl={setWebAppUrl}
+              shopInfo={shopInfo}
+              setShopInfo={setShopInfo}
+              isUploadingLogo={isUploadingLogo}
+              handleLogoUpload={handleLogoUpload}
+              requestDeleteLogo={requestDeleteLogo}
+              isSaving={isSaving}
+              themeColors={themeColors}
+              projectCategories={projectCategories}
+              setProjectCategories={setProjectCategories}
+              expenseCategories={expenseCategories}
+              setExpenseCategories={setExpenseCategories}
+              dealStatuses={dealStatuses}
+              setDealStatuses={setDealStatuses}
+              transportStatuses={transportStatuses}
+              setTransportStatuses={setTransportStatuses}
+              handleLogout={handleLogout}
+              processImageUrl={processImageUrl}
+              defaultCategory={settingsDefaultCategory}
+              onUpdateUserProfile={(newProf) => setUserProfile(newProf)}
+            />
+          </div>
+        )}
       </>
     );
   };
@@ -3551,7 +4227,12 @@ const App = () => {
       {/* --- Global Feedback Elements --- */}
       {isSaving && <LoadingOverlay />} 
       {toast.show && <Toast message={toast.message} type={toast.type} onClose={closeToast} />}
-      {previewImage && <ImageViewer src={processImageUrl(previewImage)} onClose={() => setPreviewImage(null)} />}
+      {previewImage && (
+        <ImageViewer 
+          src={previewImage} 
+          onClose={() => setPreviewImage(null)} 
+        />
+      )}
       
       {/* Render SharePreviewModal when shareData exists */}
       {shareData && (
@@ -3570,14 +4251,14 @@ const App = () => {
             {/* ... Sidebar Content ... */}
             <button
                 onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 bg-white border border-slate-200 rounded-full shadow-sm text-slate-400 hover:text-indigo-600 transition-colors z-50"
+                className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 bg-white border border-slate-200 rounded-full shadow-sm text-slate-400 hover:text-rose-600 transition-colors z-50"
             >
                 {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
             </button>
 
             <div className={`p-6 pb-4 flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
-            {/* [MODIFIED] Sidebar Logo: Remove shadow and background if logo exists to avoid white box effect */}
-            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 overflow-hidden relative ${shopInfo.logo ? '' : 'bg-indigo-600 shadow-lg shadow-indigo-200'}`}>
+            {/* Sidebar Brand Logo: Original Clipboard Icon with Dynamic Theme */}
+            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 overflow-hidden relative ${shopInfo.logo ? '' : 'theme-logo-bg'}`}>
                 {shopInfo.logo ? (
                     <img 
                         src={processImageUrl(shopInfo.logo)} 
@@ -3587,8 +4268,7 @@ const App = () => {
                         onError={(e) => { 
                             e.target.style.display = 'none'; 
                             if(e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
-                            // If image fails, add background and shadow back
-                            e.target.parentElement.classList.add('bg-indigo-600', 'shadow-lg', 'shadow-indigo-200');
+                            e.target.parentElement.classList.add('theme-logo-bg');
                         }}
                     />
                 ) : null}
@@ -3598,19 +4278,19 @@ const App = () => {
             </div>
             {!isSidebarCollapsed && (
                 <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent tracking-tight whitespace-nowrap overflow-hidden">
-                {shopInfo.shopName || 'ProjectPlan'}
+                {shopInfo.shopName || 'Flower2you'}
                 </h1>
             )}
             </div>
             
             <nav className="flex-1 px-4 py-6 space-y-2">
-            {navItems.map((item) => (
+            {allowedNavItems.map((item) => (
                 <button
                 key={item.name}
-                onClick={() => setActiveTab(item.name)}
+                onClick={() => handleSelectTab(item.name)}
                 className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-2' : 'gap-4 px-6'} py-4 text-sm font-bold rounded-[1.2rem] transition-all duration-300 group ${
                     activeTab === item.name
-                    ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-200 scale-100'
+                    ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-lg shadow-violet-200/60 scale-100'
                     : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
                 }`}
                 title={isSidebarCollapsed ? item.label : ''}
@@ -3621,8 +4301,12 @@ const App = () => {
             ))}
             </nav>
 
-            <div className="p-4 border-t border-slate-50">
-                <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-4'} cursor-pointer p-2 sm:p-4 rounded-[1.5rem] bg-slate-50 hover:bg-white hover:shadow-lg hover:shadow-slate-100 transition-all duration-300 border border-transparent hover:border-slate-100`}>
+            <div className="p-4 border-t border-slate-50 relative">
+                <div 
+                  onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
+                  className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-4'} cursor-pointer p-2 sm:p-4 rounded-[1.5rem] bg-slate-50 hover:bg-white hover:shadow-lg hover:shadow-slate-100 transition-all duration-300 border border-transparent hover:border-slate-100 group select-none`}
+                  title="โปรไฟล์และบัญชีผู้ใช้"
+                >
                 {/* [MODIFIED] Profile Image in Sidebar */}
                 <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-white text-xs font-bold ring-4 ring-white shadow-md shrink-0 overflow-hidden">
                     {userProfile?.image ? (
@@ -3646,6 +4330,96 @@ const App = () => {
                     </div>
                 )}
                 </div>
+
+                {/* Profile Popup Menu at Bottom-Left (Screenshot 3 Facebook style) */}
+                {isProfileMenuOpen && (
+                    <>
+                        <div className="fixed inset-0 z-40" onClick={() => setIsProfileMenuOpen(false)}></div>
+                        <div 
+                          className={`absolute ${isSidebarCollapsed ? 'left-20 bottom-0' : 'left-4 bottom-full mb-2'} bg-white rounded-3xl shadow-2xl border border-slate-100 p-2.5 w-72 sm:w-80 z-50 animate-in fade-in zoom-in-95 origin-bottom-left flex flex-col gap-1.5`}
+                        >
+                            {/* Top User Card (Matching Screenshot 3) */}
+                            <div 
+                              onClick={() => {
+                                setIsUserProfileModalOpen(true);
+                                setIsProfileMenuOpen(false);
+                              }}
+                              className="p-3 bg-gradient-to-br from-indigo-50/90 via-slate-50 to-purple-50/50 rounded-2xl border border-indigo-100/70 hover:bg-indigo-50 transition cursor-pointer group"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 rounded-full bg-slate-900 text-white font-bold flex items-center justify-center text-lg overflow-hidden shrink-0 ring-2 ring-white shadow-md">
+                                  {userProfile?.image ? (
+                                    <img 
+                                      src={processImageUrl(userProfile.image)} 
+                                      alt="Profile" 
+                                      className="w-full h-full object-cover" 
+                                      referrerPolicy="no-referrer"
+                                    />
+                                  ) : (
+                                    userProfile?.name?.charAt(0) || 'U'
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="text-sm font-black text-slate-900 truncate group-hover:text-indigo-600 transition">
+                                    {userProfile?.name || 'Guest User'}
+                                  </h4>
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <span className="font-mono text-[10px] font-bold text-indigo-700 bg-white px-1.5 py-0.2 rounded border border-indigo-100">
+                                      {userProfile?.id || userProfile?.staff_code || '2611001'}
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 font-medium truncate">
+                                      @{userProfile?.username || 'user'}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1">
+                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-indigo-600 text-white inline-block">
+                                      {userProfile?.role_label || (userProfile?.role === 'admin' ? 'ผู้ดูแลระบบ' : userProfile?.role || 'พนักงาน')}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Menu Items */}
+                            <div className="space-y-1">
+                              <button 
+                                onClick={() => {
+                                  setIsUserProfileModalOpen(true);
+                                  setIsProfileMenuOpen(false);
+                                }}
+                                className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 text-slate-700 text-xs font-bold transition text-left cursor-pointer"
+                              >
+                                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                                  <User className="w-4 h-4" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-slate-900 font-bold">โปรไฟล์ของฉัน (My Profile)</div>
+                                  <div className="text-[10px] text-slate-400 font-normal">แก้ไขชื่อ, เลขบัตร ปชช., เบอร์โทร, รหัสผ่าน</div>
+                                </div>
+                              </button>
+
+                            </div>
+
+                            <div className="h-px bg-slate-100 my-1" />
+
+                            {/* Logout Button */}
+                            <button 
+                              onClick={() => {
+                                setIsProfileMenuOpen(false);
+                                handleLogout();
+                              }}
+                              className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-rose-50 text-rose-600 text-xs font-bold transition text-left cursor-pointer"
+                            >
+                              <div className="p-2 bg-rose-100 text-rose-500 rounded-xl">
+                                <LogOut className="w-4 h-4" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="font-bold">ออกจากระบบ (Logout)</div>
+                              </div>
+                            </button>
+                        </div>
+                    </>
+                )}
             </div>
         </aside>
       )}
@@ -3667,69 +4441,116 @@ const App = () => {
                 </h1>
             </div>
 
-            <div className="hidden md:flex">
+            <div className="flex items-center gap-2">
+              {activeTab === 'Plans' && (
                 <button
-                onClick={() => openModal()}
-                className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-200 hover:-translate-y-0.5 transition-all flex items-center gap-2"
+                  onClick={() => openModal()}
+                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
                 >
-                <Plus className="w-5 h-5" />
-                <span>เพิ่มรายการ</span>
+                  <Plus className="w-4 h-4" />
+                  <span>เพิ่มแผนงาน</span>
                 </button>
-            </div>
-
-            {/* [ADDED] Mobile Profile Menu Button - Resized to be more compact */}
-            <div className="md:hidden relative">
+              )}
+              {activeTab === 'Calendar' && (
                 <button
-                    onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
-                    className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 text-xs font-bold shadow-sm active:scale-95 transition-all hover:bg-slate-200 overflow-hidden"
+                  onClick={() => openModal()}
+                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
                 >
-                    {userProfile?.image ? (
-                        <img 
-                            src={processImageUrl(userProfile.image)} 
-                            alt="Profile" 
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                            onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.innerText = userProfile?.name?.charAt(0) || 'U'; }}
-                        />
-                    ) : (
-                        userProfile?.name ? userProfile.name.charAt(0).toUpperCase() : <User className="w-4 h-4" />
-                    )}
+                  <Plus className="w-4 h-4" />
+                  <span>เพิ่มงาน</span>
                 </button>
-                
-                {isProfileMenuOpen && (
-                    <>
-                        <div className="fixed inset-0 z-10" onClick={() => setIsProfileMenuOpen(false)}></div>
-                        <div className="absolute right-0 top-12 bg-white rounded-xl shadow-xl border border-slate-100 p-1.5 min-w-[160px] z-20 animate-in fade-in zoom-in-95 origin-top-right flex flex-col gap-1">
-                            {/* User Info Header */}
-                            <div className="px-2 py-2 border-b border-slate-50 mb-1">
-                                <p className="text-xs font-bold text-slate-800 truncate">{userProfile?.name}</p>
-                                <p className="text-[10px] text-slate-500 truncate">{userProfile?.role}</p>
-                            </div>
-
-                            {/* Settings Button */}
-                            <button 
-                                onClick={() => { setActiveTab('Settings'); setIsProfileMenuOpen(false); }}
-                                className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors text-left"
-                            >
-                                <div className="p-1 bg-slate-100 rounded-md text-slate-600">
-                                    <Settings className="w-3.5 h-3.5" />
-                                </div>
-                                <span>ตั้งค่า</span>
-                            </button>
-
-                            {/* [ADDED] Logout Button */}
-                            <button 
-                                onClick={() => { setIsProfileMenuOpen(false); handleLogout(); }}
-                                className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-rose-50 text-rose-600 text-xs font-bold transition-colors text-left"
-                            >
-                                <div className="p-1 bg-rose-100 rounded-md text-rose-500">
-                                    <LogOut className="w-3.5 h-3.5" />
-                                </div>
-                                <span>ออกจากระบบ</span>
-                            </button>
-                        </div>
-                    </>
-                )}
+              )}
+              {activeTab === 'Quotations' && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => window.dispatchEvent(new CustomEvent('trigger-rates-quotation'))}
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                    title="ตั้งค่าราคากลางวัสดุ"
+                  >
+                    <Settings className="w-4 h-4 text-slate-500" />
+                    <span className="hidden sm:inline">ราคากลางวัสดุ</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsCreateQuotationOpen(true);
+                      window.dispatchEvent(new CustomEvent('trigger-create-quotation'));
+                    }}
+                    className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>คำนวณเสนอราคา</span>
+                  </button>
+                </div>
+              )}
+              {activeTab === 'Inventory' && (
+                <button
+                  onClick={() => {
+                    setIsCreateInventoryOpen(true);
+                    window.dispatchEvent(new CustomEvent('trigger-create-inventory'));
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>เพิ่มพัสดุใหม่</span>
+                </button>
+              )}
+              {activeTab === 'Venues' && (
+                <button
+                  onClick={() => {
+                    setIsCreateVenueOpen(true);
+                    window.dispatchEvent(new CustomEvent('trigger-create-venue'));
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>เพิ่มสถานที่</span>
+                </button>
+              )}
+              {activeTab === 'Artists' && (
+                <button
+                  onClick={() => {
+                    setIsCreateArtistOpen(true);
+                    window.dispatchEvent(new CustomEvent('trigger-create-artist'));
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>เพิ่มศิลปินใหม่</span>
+                </button>
+              )}
+              {activeTab === 'Customers' && (
+                <button
+                  onClick={() => {
+                    setIsCreateCustomerOpen(true);
+                    window.dispatchEvent(new CustomEvent('trigger-create-customer'));
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>เพิ่มลูกค้าใหม่</span>
+                </button>
+              )}
+              {activeTab === 'Staff' && (
+                <button
+                  onClick={() => {
+                    setIsCreateStaffOpen(true);
+                    window.dispatchEvent(new CustomEvent('trigger-create-staff'));
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>เพิ่มพนักงานใหม่</span>
+                </button>
+              )}
+              {activeTab === 'Finance' && (
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent('trigger-create-finance-tx'))}
+                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>เพิ่มรายรับ/จ่าย</span>
+                </button>
+              )}
             </div>
 
             </header>
@@ -3796,14 +4617,14 @@ const App = () => {
                 {/* 1. Calendar */}
                 <button
                     onClick={() => {
-                      setActiveTab('Calendar');
+                      handleSelectTab('Calendar');
                       if (isMobileNavExpanded) setIsMobileNavExpanded(false);
                     }}
                     className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10 active:scale-95 transition-transform"
                     title="ปฏิทินงาน"
                 >
                     <div className={`transition-all duration-200 flex flex-col items-center justify-center ${
-                        activeTab === 'Calendar' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
+                        activeTab === 'Calendar' ? 'text-violet-600' : 'text-slate-400 hover:text-slate-600'
                     }`}>
                         <Calendar 
                           className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
@@ -3811,11 +4632,11 @@ const App = () => {
                         />
                         <span className={`text-[10px] leading-none transition-all duration-200 ${
                           isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Calendar' ? 'font-bold text-indigo-600' : 'font-medium text-slate-500'}`}>
+                        } ${activeTab === 'Calendar' ? 'font-bold text-violet-600' : 'font-medium text-slate-500'}`}>
                           ปฏิทิน
                         </span>
                         {activeTab === 'Calendar' && (
-                            <span className={`w-1.5 h-1.5 bg-indigo-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
+                            <span className={`w-1.5 h-1.5 bg-violet-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
                         )}
                     </div>
                 </button>
@@ -3823,14 +4644,14 @@ const App = () => {
                 {/* 2. Plans */}
                 <button
                     onClick={() => {
-                      setActiveTab('Plans');
+                      handleSelectTab('Plans');
                       if (isMobileNavExpanded) setIsMobileNavExpanded(false);
                     }}
                     className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10 active:scale-95 transition-transform"
                     title="แผนงาน"
                 >
                     <div className={`transition-all duration-200 flex flex-col items-center justify-center ${
-                        activeTab === 'Plans' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
+                        activeTab === 'Plans' ? 'text-violet-600' : 'text-slate-400 hover:text-slate-600'
                     }`}>
                         <List 
                           className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
@@ -3838,11 +4659,11 @@ const App = () => {
                         />
                         <span className={`text-[10px] leading-none transition-all duration-200 ${
                           isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Plans' ? 'font-bold text-indigo-600' : 'font-medium text-slate-500'}`}>
+                        } ${activeTab === 'Plans' ? 'font-bold text-violet-600' : 'font-medium text-slate-500'}`}>
                           แผนงาน
                         </span>
                         {activeTab === 'Plans' && (
-                            <span className={`w-1.5 h-1.5 bg-indigo-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
+                            <span className={`w-1.5 h-1.5 bg-violet-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
                         )}
                     </div>
                 </button>
@@ -3851,7 +4672,7 @@ const App = () => {
                 <div className="relative flex justify-center items-center z-20 pointer-events-none">
                      <button
                         onClick={() => openModal()}
-                        className="w-11 h-11 bg-indigo-600 rounded-full text-white shadow-md shadow-indigo-300/50 flex items-center justify-center transform active:scale-95 transition-all border-2 border-white pointer-events-auto"
+                        className="w-11 h-11 theme-logo-bg rounded-full text-white shadow-lg flex items-center justify-center transform active:scale-95 transition-all border-2 border-white pointer-events-auto"
                         title="เพิ่มรายการใหม่"
                      >
                         <Plus className="w-6 h-6" strokeWidth={2.5} />
@@ -3861,14 +4682,14 @@ const App = () => {
                 {/* 4. Finance */}
                 <button
                     onClick={() => {
-                      setActiveTab('Finance');
+                      handleSelectTab('Finance');
                       if (isMobileNavExpanded) setIsMobileNavExpanded(false);
                     }}
                     className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10 active:scale-95 transition-transform"
                     title="การเงิน"
                 >
                     <div className={`transition-all duration-200 flex flex-col items-center justify-center ${
-                        activeTab === 'Finance' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
+                        activeTab === 'Finance' ? 'text-violet-600' : 'text-slate-400 hover:text-slate-600'
                     }`}>
                         <Wallet 
                           className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
@@ -3876,11 +4697,11 @@ const App = () => {
                         />
                         <span className={`text-[10px] leading-none transition-all duration-200 ${
                           isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Finance' ? 'font-bold text-indigo-600' : 'font-medium text-slate-500'}`}>
+                        } ${activeTab === 'Finance' ? 'font-bold text-violet-600' : 'font-medium text-slate-500'}`}>
                           การเงิน
                         </span>
                         {activeTab === 'Finance' && (
-                            <span className={`w-1.5 h-1.5 bg-indigo-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
+                            <span className={`w-1.5 h-1.5 bg-violet-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
                         )}
                     </div>
                 </button>
@@ -3888,14 +4709,14 @@ const App = () => {
                 {/* 5. Analytics */}
                 <button
                     onClick={() => {
-                      setActiveTab('Analytics');
+                      handleSelectTab('Analytics');
                       if (isMobileNavExpanded) setIsMobileNavExpanded(false);
                     }}
                     className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10 active:scale-95 transition-transform"
                     title="วิเคราะห์"
                 >
                     <div className={`transition-all duration-200 flex flex-col items-center justify-center ${
-                        activeTab === 'Analytics' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
+                        activeTab === 'Analytics' ? 'text-violet-600' : 'text-slate-400 hover:text-slate-600'
                     }`}>
                         <BarChart2 
                           className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
@@ -3903,50 +4724,152 @@ const App = () => {
                         />
                         <span className={`text-[10px] leading-none transition-all duration-200 ${
                           isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Analytics' ? 'font-bold text-indigo-600' : 'font-medium text-slate-500'}`}>
+                        } ${activeTab === 'Analytics' ? 'font-bold text-violet-600' : 'font-medium text-slate-500'}`}>
                           วิเคราะห์
                         </span>
                         {activeTab === 'Analytics' && (
-                            <span className={`w-1.5 h-1.5 bg-indigo-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
+                            <span className={`w-1.5 h-1.5 bg-violet-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
                         )}
                     </div>
                 </button>
             </div>
 
-            {/* Row 2: Secondary Navigation Section (ดึงขึ้นมาจะปรากฏในกล่องเดียวกัน ไร้กรอบสี่เหลี่ยม ไร้ขีดคั่น เป็นชิ้นเดียวกัน) */}
+            {/* Row 2: Secondary Navigation Section (Grid 4 คอลัมน์ ไม่ชิดติดกัน เป็นระเบียบ) */}
             <div 
               ref={expandSectionRef}
               className="overflow-hidden"
               style={{
-                height: isMobileNavExpanded ? '76px' : '0px',
+                height: isMobileNavExpanded ? `${EXPAND_TARGET_H}px` : '0px',
                 opacity: isMobileNavExpanded ? 1 : 0,
                 pointerEvents: isMobileNavExpanded ? 'auto' : 'none'
               }}
             >
-              <div className="pt-1.5 pb-1 grid grid-cols-5 px-1 items-center">
-                {/* 1. Settings (ตั้งค่า) */}
+              <div className="pt-2 pb-3 grid grid-cols-4 px-2 items-center gap-y-3.5 gap-x-2">
+                {/* 1. Quotations (ใบเสนอราคา) */}
                 <button
                   onClick={() => {
-                    setActiveTab('Settings');
+                    handleSelectTab('Quotations');
+                    setIsMobileNavExpanded(false);
+                  }}
+                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
+                  title="ใบเสนอราคา"
+                >
+                  <FileText className={`w-6 h-6 transition-colors ${activeTab === 'Quotations' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Quotations' ? 2.5 : 2} />
+                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Quotations' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                    เสนอราคา
+                  </span>
+                  {activeTab === 'Quotations' && (
+                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
+                  )}
+                </button>
+
+                {/* 2. Inventory (คลังพัสดุ) */}
+                <button
+                  onClick={() => {
+                    handleSelectTab('Inventory');
+                    setIsMobileNavExpanded(false);
+                  }}
+                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
+                  title="คลังพัสดุ"
+                >
+                  <Package className={`w-6 h-6 transition-colors ${activeTab === 'Inventory' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Inventory' ? 2.5 : 2} />
+                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Inventory' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                    คลังพัสดุ
+                  </span>
+                  {activeTab === 'Inventory' && (
+                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
+                  )}
+                </button>
+
+                {/* 3. Venues (สถานที่จัดส่ง) */}
+                <button
+                  onClick={() => {
+                    handleSelectTab('Venues');
+                    setIsMobileNavExpanded(false);
+                  }}
+                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
+                  title="สถานที่จัดส่ง"
+                >
+                  <MapPin className={`w-6 h-6 transition-colors ${activeTab === 'Venues' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Venues' ? 2.5 : 2} />
+                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Venues' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                    สถานที่
+                  </span>
+                  {activeTab === 'Venues' && (
+                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
+                  )}
+                </button>
+
+                {/* 4. Artists (ศิลปิน) */}
+                <button
+                  onClick={() => {
+                    handleSelectTab('Artists');
+                    setIsMobileNavExpanded(false);
+                  }}
+                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
+                  title="ศิลปิน"
+                >
+                  <Sparkles className={`w-6 h-6 transition-colors ${activeTab === 'Artists' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Artists' ? 2.5 : 2} />
+                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Artists' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                    ศิลปิน
+                  </span>
+                  {activeTab === 'Artists' && (
+                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
+                  )}
+                </button>
+
+                {/* 5. Customers (ลูกค้า) */}
+                <button
+                  onClick={() => {
+                    handleSelectTab('Customers');
+                    setIsMobileNavExpanded(false);
+                  }}
+                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
+                  title="ลูกค้า"
+                >
+                  <Users className={`w-6 h-6 transition-colors ${activeTab === 'Customers' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Customers' ? 2.5 : 2} />
+                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Customers' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                    ลูกค้า
+                  </span>
+                  {activeTab === 'Customers' && (
+                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
+                  )}
+                </button>
+
+                {/* 6. Staff (พนักงาน) */}
+                <button
+                  onClick={() => {
+                    handleSelectTab('Staff');
+                    setIsMobileNavExpanded(false);
+                  }}
+                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
+                  title="พนักงาน"
+                >
+                  <UserCheck className={`w-6 h-6 transition-colors ${activeTab === 'Staff' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Staff' ? 2.5 : 2} />
+                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Staff' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                    พนักงาน
+                  </span>
+                  {activeTab === 'Staff' && (
+                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
+                  )}
+                </button>
+
+                {/* 7. Settings (ตั้งค่า) */}
+                <button
+                  onClick={() => {
+                    handleSelectTab('Settings');
                     setIsMobileNavExpanded(false);
                   }}
                   className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
                   title="ตั้งค่า"
                 >
-                  <Settings className={`w-6 h-6 transition-colors ${activeTab === 'Settings' ? 'text-indigo-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Settings' ? 2.5 : 2} />
-                  <span className={`text-[10px] mt-0.5 leading-none ${activeTab === 'Settings' ? 'text-indigo-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                  <Settings className={`w-6 h-6 transition-colors ${activeTab === 'Settings' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Settings' ? 2.5 : 2} />
+                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Settings' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
                     ตั้งค่า
                   </span>
                   {activeTab === 'Settings' && (
-                    <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full mt-0.5" />
+                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
                   )}
                 </button>
-
-                {/* 2, 3, 4, 5. Empty slots */}
-                <div className="flex items-center justify-center py-1 opacity-0 pointer-events-none" />
-                <div className="flex items-center justify-center py-1 opacity-0 pointer-events-none" />
-                <div className="flex items-center justify-center py-1 opacity-0 pointer-events-none" />
-                <div className="flex items-center justify-center py-1 opacity-0 pointer-events-none" />
               </div>
             </div>
           </nav>
@@ -4058,6 +4981,18 @@ const App = () => {
         </div>
       )}
 
+      {/* User Profile Modal */}
+      <UserProfileModal
+        isOpen={isUserProfileModalOpen}
+        onClose={() => setIsUserProfileModalOpen(false)}
+        userProfile={userProfile}
+        onUpdateProfile={(updated) => {
+          setUserProfile(updated);
+        }}
+        showToast={showToast}
+        handleProfileImageUpload={handleProfileImageUpload}
+      />
+
       {/* Modern Add Item Modal - Expanded Version */}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -4067,9 +5002,12 @@ const App = () => {
              onClick={closeModal}
            />
            
-           {/* Modal Content - Responsive Layout */}
-           <div className={`bg-white w-full max-w-4xl sm:rounded-[2.5rem] rounded-xl shadow-2xl relative z-10 overflow-hidden border border-slate-100 flex flex-col max-h-[90vh] ${isModalClosing ? 'modal-animate-out' : 'modal-animate-in'}`}>
-             
+           {/* Modal Content - Responsive Layout with File Drag & Drop */}
+           <div 
+             onDragOver={handleModalDragOver}
+             onDrop={handleModalDrop}
+             className={`bg-white w-full max-w-4xl sm:rounded-[2.5rem] rounded-xl shadow-2xl relative z-10 overflow-hidden border border-slate-100 flex flex-col max-h-[90vh] ${isModalClosing ? 'modal-animate-out' : 'modal-animate-in'}`}
+           >
              {/* Header - Compact for Mobile */}
              <div className="px-4 py-4 sm:px-8 sm:py-6 border-b border-slate-100 flex justify-between items-center bg-white sticky top-0 z-20">
                  <div className="flex items-center gap-3">
@@ -4118,6 +5056,7 @@ const App = () => {
                                 recipient: recipientName,
                                 recipientPhone: recipientPhone,
                                 image: uploadedImage,
+                                images: uploadedImages,
                                 wage: wage,
                                 quotationItems: quotationItems, 
                                 customerSupport: customerSupportItems,
@@ -4419,34 +5358,109 @@ const App = () => {
                                 />
                              </div>
                            </div>
-                           <div className="space-y-2">
-                             <label className="text-sm font-bold text-slate-700 ml-1">สถานที่</label>
-                             <div className="relative">
-                               <MapPin className="absolute left-4 top-3.5 w-5 h-5 text-slate-400" />
-                               <input
-                                 type="text"
-                                 placeholder="ระบุชื่อสถานที่"
-                                 value={locationName}
-                                 disabled={viewOnlyMode}
-                                 onChange={(e) => setLocationName(e.target.value)}
-                                 className={`w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
-                               />
-                             </div>
-                           </div>
-                           <div className="space-y-2">
-                             <label className="text-sm font-bold text-slate-700 ml-1">Google Maps Link</label>
-                             {viewOnlyMode ? (
-                                <ViewOnlyField value={mapLink} type="url" icon={MapPin} />
-                             ) : (
-                                <input
-                                  type="url"
-                                  placeholder="https://maps.google.com/..."
-                                  value={mapLink}
-                                  onChange={(e) => setMapLink(e.target.value)}
-                                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium text-blue-600"
-                                />
-                             )}
-                           </div>
+                           {(() => {
+                             const matchedVenue = deliveryLocations.find(l => 
+                               l.name && locationName && (
+                                 l.name.toLowerCase() === locationName.trim().toLowerCase() ||
+                                 (Array.isArray(l.aliases) && l.aliases.some(a => a.toLowerCase() === locationName.trim().toLowerCase()))
+                               )
+                             );
+                             return (
+                               <>
+                                 <div className="space-y-2">
+                                   <div className="flex items-center justify-between">
+                                     <label className="text-sm font-bold text-slate-700 ml-1">สถานที่จัดส่ง (Venue)</label>
+                                     {matchedVenue && (
+                                       <button
+                                         type="button"
+                                         onClick={() => setSelectedVenueForModal(matchedVenue)}
+                                         className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 hover:underline cursor-pointer"
+                                       >
+                                         <Truck className="w-3.5 h-3.5 text-indigo-500" />
+                                         <span>ดูลายแทง Loading Dock</span>
+                                         <ExternalLink className="w-3 h-3" />
+                                       </button>
+                                     )}
+                                   </div>
+                                   <div className="relative">
+                                     <MapPin className="absolute left-4 top-3.5 w-5 h-5 text-slate-400" />
+                                     <input
+                                       type="text"
+                                       list="venue-list"
+                                       placeholder="พิมพ์หรือเลือกสถานที่จัดส่ง (เช่น CentralWorld, Impact Arena)"
+                                       value={locationName}
+                                       disabled={viewOnlyMode}
+                                       onChange={(e) => {
+                                         const val = e.target.value;
+                                         setLocationName(val);
+                                         const found = deliveryLocations.find(l => 
+                                           l.name.toLowerCase() === val.trim().toLowerCase() ||
+                                           (Array.isArray(l.aliases) && l.aliases.some(a => a.toLowerCase() === val.trim().toLowerCase()))
+                                         );
+                                         if (found && !mapLink && found.default_map_link) {
+                                           setMapLink(found.default_map_link);
+                                         }
+                                       }}
+                                       className={`w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
+                                     />
+                                   </div>
+
+                                   {/* Venue Intel Micro-Card */}
+                                   {matchedVenue && (
+                                     <div className="p-3 bg-gradient-to-r from-sky-50 via-indigo-50 to-slate-50 border border-indigo-100/80 rounded-2xl text-xs space-y-1.5 shadow-sm">
+                                       <div className="flex items-center justify-between font-bold text-indigo-950">
+                                         <span className="flex items-center gap-1.5">
+                                           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                                           {matchedVenue.zone ? `[โซน ${matchedVenue.zone}] ` : ''}{matchedVenue.name}
+                                         </span>
+                                         {matchedVenue.parking_height_limit && (
+                                           <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md font-bold text-[10px]">
+                                             จำกัดสูง {matchedVenue.parking_height_limit}
+                                           </span>
+                                         )}
+                                       </div>
+                                       {matchedVenue.gate_info && (
+                                         <p className="text-slate-600 font-medium">
+                                           <span className="font-bold text-slate-700">จุดส่ง:</span> {matchedVenue.gate_info}
+                                         </p>
+                                       )}
+                                       {matchedVenue.delivery_tips && (
+                                         <p className="text-slate-500 line-clamp-1 italic text-[11px]">
+                                           💡 {matchedVenue.delivery_tips}
+                                         </p>
+                                       )}
+                                     </div>
+                                   )}
+                                 </div>
+
+                                 <div className="space-y-2">
+                                   <div className="flex items-center justify-between">
+                                     <label className="text-sm font-bold text-slate-700 ml-1">Google Maps Link</label>
+                                     {matchedVenue?.loading_dock_map_link && !viewOnlyMode && (
+                                       <button
+                                         type="button"
+                                         onClick={() => setMapLink(matchedVenue.loading_dock_map_link)}
+                                         className="text-[11px] font-bold text-amber-600 hover:text-amber-700 hover:underline flex items-center gap-1 cursor-pointer"
+                                       >
+                                         <span>ใช้พิกัด Loading Dock</span>
+                                       </button>
+                                     )}
+                                   </div>
+                                   {viewOnlyMode ? (
+                                      <ViewOnlyField value={mapLink} type="url" icon={MapPin} />
+                                   ) : (
+                                      <input
+                                        type="url"
+                                        placeholder="https://maps.google.com/..."
+                                        value={mapLink}
+                                        onChange={(e) => setMapLink(e.target.value)}
+                                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium text-blue-600"
+                                      />
+                                   )}
+                                 </div>
+                               </>
+                             );
+                           })()}
                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                               <div className="space-y-2">
                                 <label className="text-sm font-bold text-slate-700 ml-1">ผู้รับ</label>
@@ -4499,108 +5513,203 @@ const App = () => {
                               </div>
                            </div>
 
-                           {/* Image Upload Area Moved Here */}
-                          <div className="space-y-2 pt-2 border-t border-slate-100">
-                             <label className="text-sm font-bold text-slate-700 ml-1">รูปภาพอ้างอิง</label>
-                             {!viewOnlyMode ? (
-                               <div 
-                                 className="w-full border-2 border-dashed border-slate-200 rounded-2xl p-4 flex flex-col items-center justify-center text-center hover:border-indigo-400 hover:bg-indigo-50/30 transition-all cursor-pointer group"
-                                 onDrop={onDrop}
-                                 onDragOver={onDragOverImg}
-                                 onClick={() => document.getElementById('image-upload').click()}
-                               >
-                                  <input 
-                                    type="file" 
-                                    id="image-upload" 
-                                    className="hidden" 
-                                    accept="image/*"
-                                    onChange={(e) => e.target.files[0] && handleImageUpload(e.target.files[0])}
-                                  />
-                                  {uploadedImage ? (
-                                     <div 
-                                        className="relative w-full h-48 rounded-xl overflow-hidden shadow-sm border border-slate-100 group/img"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setPreviewImage(uploadedImage);
-                                        }}
-                                     >
-                                         <img 
-                                            src={processImageUrl(uploadedImage)} 
-                                            alt="Preview" 
-                                            className="w-full h-full object-contain bg-slate-50" 
-                                            referrerPolicy="no-referrer"
-                                            onError={(e) => {
-                                                e.target.onerror = null;
-                                                e.target.src = "https://placehold.co/400x300?text=Image+Load+Error";
-                                            }}
-                                         />
-                                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                              <Maximize2 className="w-6 h-6 text-white" />
-                                              <span className="text-white font-bold text-sm">ดูรูปขยาย</span>
-                                         </div>
-                                         <button 
-                                            onClick={(e) => { e.stopPropagation(); setUploadedImage(null); }}
-                                            className="absolute top-2 right-2 p-1.5 bg-white/80 backdrop-blur-sm text-rose-500 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition shadow-sm z-10"
-                                         >
-                                            <Trash2 className="w-4 h-4" />
-                                         </button>
-                                     </div>
-                                  ) : (
-                                     <div className="py-6 flex flex-col items-center">
-                                         <div className="p-3 bg-indigo-50 text-indigo-500 rounded-full mb-3 group-hover:scale-110 transition-transform">
-                                            <UploadCloud className="w-6 h-6" />
-                                         </div>
-                                         <p className="text-sm font-bold text-slate-600">คลิกเพื่ออัพโหลด หรือลากไฟล์มาวาง</p>
-                                         <p className="text-xs text-slate-400 mt-1">รองรับ JPG, PNG (Max 5MB)</p>
-                                     </div>
-                                  )}
-                               </div>
-                             ) : (
-                                uploadedImage ? (
-                                   <div 
-                                        className="w-full h-64 rounded-2xl overflow-hidden shadow-sm border border-slate-100 bg-slate-50 cursor-zoom-in relative group"
-                                        onClick={() => setPreviewImage(uploadedImage)}
-                                   >
-                                       <img 
-                                          src={processImageUrl(uploadedImage)} 
-                                          alt="Preview" 
-                                          className="w-full h-full object-contain" 
+                          {/* Reference Images Upload Area */}
+                          <div className="space-y-2.5 pt-3 border-t border-slate-100">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <div className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-2xs">
+                                  <ImageIcon className="w-4 h-4" />
+                                </div>
+                                <span className="text-sm font-bold text-slate-800">รูปภาพอ้างอิง</span>
+                                {uploadedImages.length > 0 && (
+                                  <span className="bg-indigo-100 text-indigo-700 text-xs px-2.5 py-0.5 rounded-full font-bold">
+                                    {uploadedImages.length} รูป
+                                  </span>
+                                )}
+                              </div>
+                              {!viewOnlyMode && (
+                                <button
+                                  type="button"
+                                  onClick={() => document.getElementById('image-multi-upload').click()}
+                                  className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  เพิ่มรูปภาพ
+                                </button>
+                              )}
+                            </div>
+
+                            <input
+                              type="file"
+                              id="image-multi-upload"
+                              className="hidden"
+                              accept="image/*"
+                              multiple
+                              onChange={(e) => {
+                                if (e.target.files && e.target.files.length > 0) {
+                                  handleReferenceImageUpload(e.target.files);
+                                  e.target.value = '';
+                                }
+                              }}
+                            />
+
+                            {/* Reference Images Preview Grid or Upload Prompt */}
+                            {uploadedImages.length > 0 ? (
+                              <div 
+                                className={`rounded-2xl transition-all duration-200 p-2.5 border-2 ${
+                                  isDraggingRef
+                                    ? 'border-indigo-500 bg-indigo-50/40 ring-4 ring-indigo-500/15'
+                                    : 'border-slate-200/80 bg-slate-50/40'
+                                }`}
+                                onDragEnter={handleRefDragEnter}
+                                onDragLeave={handleRefDragLeave}
+                                onDragOver={handleRefDragOver}
+                                onDrop={handleRefDrop}
+                              >
+                                {isDraggingRef && (
+                                  <div className="mb-2.5 flex items-center justify-center gap-2 py-2 px-3 bg-indigo-600 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-md transition-all animate-in fade-in duration-150">
+                                    <UploadCloud className="w-4 h-4 animate-bounce" />
+                                    <span>ปล่อยเมาส์เพื่อเพิ่มรูปภาพต่อท้าย ({uploadedImages.length} รูปเดิมจะคงอยู่)</span>
+                                  </div>
+                                )}
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                                  {uploadedImages.map((img, idx) => {
+                                    const imgSrc = typeof img === 'object' ? img.url : img;
+                                    const imgKey = typeof img === 'object' ? (img.id || idx) : idx;
+                                    return (
+                                      <div
+                                        key={imgKey}
+                                        className="relative group rounded-xl overflow-hidden border border-slate-200/90 bg-slate-100 aspect-[3/4] cursor-pointer shadow-2xs hover:shadow-md transition-all duration-200"
+                                        onClick={() => setPreviewImage({
+                                          images: uploadedImages,
+                                          initialIndex: idx,
+                                          title: 'รูปภาพอ้างอิง'
+                                        })}
+                                      >
+                                        <img
+                                          src={processImageUrl(imgSrc)}
+                                          alt={`รูปอ้างอิง ${idx + 1}`}
+                                          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                                           referrerPolicy="no-referrer"
                                           onError={(e) => {
-                                              e.target.onerror = null;
-                                              e.target.src = "https://placehold.co/400x300?text=Image+Load+Error";
+                                            e.target.onerror = null;
+                                            e.target.src = "https://placehold.co/300x400?text=Image+Error";
                                           }}
-                                       />
-                                       <div className="absolute bottom-3 right-3 bg-black/50 backdrop-blur-sm p-1.5 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-opacity">
-                                           <Maximize2 className="w-4 h-4" />
-                                       </div>
-                                   </div>
-                                ) : (
-                                   <div className="w-full px-4 py-8 bg-slate-50 border border-slate-200 rounded-xl text-slate-400 italic text-sm flex flex-col items-center gap-2">
-                                       <ImageIcon className="w-8 h-8 opacity-50" />
-                                       <span>ไม่มีรูปภาพ</span>
-                                   </div>
-                                )
-                             )}
+                                        />
+                                        <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
+                                        <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center pointer-events-none">
+                                          <div className="p-2 bg-white/25 backdrop-blur-md rounded-full text-white shadow-sm">
+                                            <Maximize2 className="w-4 h-4" />
+                                          </div>
+                                        </div>
+                                        {!viewOnlyMode && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleRemoveReferenceImage(imgKey);
+                                            }}
+                                            className="absolute top-1.5 right-1.5 p-1.5 bg-white/95 backdrop-blur-sm text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all shadow-sm z-10 cursor-pointer"
+                                            title="ลบรูปภาพ"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        )}
+                                        <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-md rounded-md text-[10px] text-white font-medium flex items-center gap-1 shadow-sm">
+                                          <span>รูปที่ {idx + 1}</span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                  {!viewOnlyMode && (
+                                    isDraggingRef ? (
+                                      <div className="border-2 border-dashed border-indigo-500 bg-indigo-100/70 text-indigo-700 ring-2 ring-indigo-400/20 rounded-xl flex flex-col items-center justify-center aspect-[3/4] transition-all animate-pulse shadow-sm p-2 text-center pointer-events-none">
+                                        <UploadCloud className="w-6 h-6 mb-1 text-indigo-600 animate-bounce" />
+                                        <span className="text-xs font-bold text-indigo-800">วางไฟล์ที่นี่</span>
+                                        <span className="text-[10px] text-indigo-600 mt-0.5">เพิ่มต่อท้าย</span>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => document.getElementById('image-multi-upload').click()}
+                                        className="border-2 border-dashed border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/30 rounded-xl flex flex-col items-center justify-center aspect-[3/4] text-slate-400 hover:text-indigo-600 transition-all duration-150 group shadow-2xs cursor-pointer"
+                                      >
+                                        <div className="w-9 h-9 rounded-full bg-slate-100 group-hover:bg-indigo-100 flex items-center justify-center text-slate-500 group-hover:text-indigo-600 transition-colors mb-1.5">
+                                          <Plus className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                                        </div>
+                                        <span className="text-xs font-bold">เพิ่มอีก</span>
+                                        <span className="text-[10px] text-slate-400 group-hover:text-indigo-500">หรือลากไฟล์มา</span>
+                                      </button>
+                                    )
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              !viewOnlyMode ? (
+                                <div
+                                  className={`w-full border-2 border-dashed rounded-2xl p-6 sm:p-7 flex flex-col items-center justify-center text-center transition-all duration-200 cursor-pointer group ${
+                                    isDraggingRef
+                                      ? 'border-indigo-500 bg-indigo-50/70 ring-4 ring-indigo-500/15 shadow-sm scale-[0.995]'
+                                      : 'border-slate-300/80 bg-slate-50/50 hover:bg-indigo-50/30 hover:border-indigo-400 shadow-2xs'
+                                  }`}
+                                  onClick={() => document.getElementById('image-multi-upload').click()}
+                                  onDragEnter={handleRefDragEnter}
+                                  onDragLeave={handleRefDragLeave}
+                                  onDragOver={handleRefDragOver}
+                                  onDrop={handleRefDrop}
+                                >
+                                  <div className="flex flex-col items-center pointer-events-none select-none">
+                                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-2.5 transition-all duration-200 ${
+                                      isDraggingRef
+                                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200 scale-110'
+                                        : 'bg-white border border-slate-200/90 text-indigo-600 group-hover:scale-105 group-hover:border-indigo-300 group-hover:bg-indigo-50/50 shadow-2xs'
+                                    }`}>
+                                      {isDraggingRef ? (
+                                        <UploadCloud className="w-6 h-6 animate-bounce" />
+                                      ) : (
+                                        <ImageIcon className="w-6 h-6" />
+                                      )}
+                                    </div>
+                                    <p className={`text-sm font-bold transition-colors duration-150 ${
+                                      isDraggingRef ? 'text-indigo-800 font-extrabold' : 'text-slate-700 group-hover:text-indigo-600'
+                                    }`}>
+                                      {isDraggingRef ? 'ปล่อยเมาส์เพื่อวางรูปภาพอ้างอิงทันที' : 'คลิกเพื่อเลือกรูปภาพ หรือลากไฟล์มาวางที่นี่'}
+                                    </p>
+                                    <p className={`text-xs mt-1 transition-colors duration-150 ${
+                                      isDraggingRef ? 'text-indigo-600 font-semibold' : 'text-slate-400'
+                                    }`}>
+                                      {isDraggingRef ? 'พร้อมอัพโหลดเข้าสู่รายการ' : 'รองรับ JPG, PNG, WEBP (เลือกได้หลายรูป)'}
+                                    </p>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="w-full px-4 py-6 bg-slate-50 border border-slate-200 rounded-xl text-slate-400 italic text-sm flex flex-col items-center gap-1.5">
+                                  <ImageIcon className="w-6 h-6 opacity-40" />
+                                  <span>ไม่มีรูปภาพอ้างอิง</span>
+                                </div>
+                              )
+                            )}
                           </div>
 
                           {/* Payment Slips Upload Area */}
-                          <div className="space-y-2 pt-3 border-t border-slate-100">
+                          <div className="space-y-2.5 pt-3 border-t border-slate-100">
                             <div className="flex items-center justify-between">
-                              <label className="text-sm font-bold text-slate-700 ml-1 flex items-center gap-1.5">
-                                <Receipt className="w-4 h-4 text-amber-500" />
-                                <span>สลิปโอนเงิน (หลักฐานชำระเงิน)</span>
+                              <div className="flex items-center gap-2">
+                                <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shadow-2xs">
+                                  <Receipt className="w-4 h-4" />
+                                </div>
+                                <span className="text-sm font-bold text-slate-800">สลิปโอนเงิน (หลักฐานชำระเงิน)</span>
                                 {uploadedSlips.length > 0 && (
-                                  <span className="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full font-bold">
+                                  <span className="bg-amber-100 text-amber-700 text-xs px-2.5 py-0.5 rounded-full font-bold">
                                     {uploadedSlips.length} รูป
                                   </span>
                                 )}
-                              </label>
+                              </div>
                               {!viewOnlyMode && (
                                 <button
                                   type="button"
                                   onClick={() => document.getElementById('slip-multi-upload').click()}
-                                  className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition"
+                                  className="text-xs font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 rounded-lg transition-colors cursor-pointer"
                                 >
                                   <Plus className="w-3.5 h-3.5" />
                                   เพิ่มสลิป
@@ -4624,7 +5733,23 @@ const App = () => {
 
                             {/* Slips Preview Grid or Upload Prompt */}
                             {uploadedSlips.length > 0 ? (
-                              <div className="space-y-2">
+                              <div 
+                                className={`rounded-2xl transition-all duration-200 p-2.5 border-2 ${
+                                  isDraggingSlip
+                                    ? 'border-amber-500 bg-amber-50/40 ring-4 ring-amber-500/15'
+                                    : 'border-slate-200/80 bg-slate-50/40'
+                                }`}
+                                onDragEnter={handleSlipDragEnter}
+                                onDragLeave={handleSlipDragLeave}
+                                onDragOver={handleSlipDragOver}
+                                onDrop={handleSlipDrop}
+                              >
+                                {isDraggingSlip && (
+                                  <div className="mb-2.5 flex items-center justify-center gap-2 py-2 px-3 bg-amber-600 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-md transition-all animate-in fade-in duration-150">
+                                    <UploadCloud className="w-4 h-4 animate-bounce" />
+                                    <span>ปล่อยเมาส์เพื่อเพิ่มสลิปโอนเงิน ({uploadedSlips.length} รูปเดิมจะคงอยู่)</span>
+                                  </div>
+                                )}
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                                   {uploadedSlips.map((slip, idx) => {
                                     const slipSrc = typeof slip === 'object' ? slip.url : slip;
@@ -4632,21 +5757,28 @@ const App = () => {
                                     return (
                                       <div
                                         key={slipKey}
-                                        className="relative group rounded-xl overflow-hidden border border-slate-200 bg-slate-50 aspect-[3/4] cursor-pointer shadow-xs hover:shadow-md transition"
-                                        onClick={() => setPreviewImage(slipSrc)}
+                                        className="relative group rounded-xl overflow-hidden border border-slate-200/90 bg-slate-100 aspect-[3/4] cursor-pointer shadow-2xs hover:shadow-md transition-all duration-200"
+                                        onClick={() => setPreviewImage({
+                                          images: uploadedSlips,
+                                          initialIndex: idx,
+                                          title: 'สลิปโอนเงิน (หลักฐานชำระเงิน)'
+                                        })}
                                       >
                                         <img
                                           src={processImageUrl(slipSrc)}
                                           alt={`สลิป ${idx + 1}`}
-                                          className="w-full h-full object-cover"
+                                          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                                           referrerPolicy="no-referrer"
                                           onError={(e) => {
                                             e.target.onerror = null;
                                             e.target.src = "https://placehold.co/300x400?text=Slip+Error";
                                           }}
                                         />
-                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5">
-                                          <Maximize2 className="w-5 h-5 text-white" />
+                                        <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
+                                        <div className="absolute inset-0 bg-black/25 opacity-0 group-hover/opacity-100 transition-opacity duration-200 flex items-center justify-center pointer-events-none">
+                                          <div className="p-2 bg-white/25 backdrop-blur-md rounded-full text-white shadow-sm">
+                                            <Maximize2 className="w-4 h-4" />
+                                          </div>
                                         </div>
                                         {!viewOnlyMode && (
                                           <button
@@ -4655,48 +5787,78 @@ const App = () => {
                                               e.stopPropagation();
                                               handleRemoveSlip(slipKey);
                                             }}
-                                            className="absolute top-1.5 right-1.5 p-1 bg-white/90 backdrop-blur-sm text-rose-500 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition shadow-sm z-10"
+                                            className="absolute top-1.5 right-1.5 p-1.5 bg-white/95 backdrop-blur-sm text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all shadow-sm z-10 cursor-pointer"
                                             title="ลบสลิป"
                                           >
                                             <Trash2 className="w-3.5 h-3.5" />
                                           </button>
                                         )}
-                                        <div className="absolute bottom-1 left-1.5 px-1.5 py-0.5 bg-black/60 backdrop-blur-xs rounded text-[10px] text-white font-medium">
-                                          ใบที่ {idx + 1}
+                                        <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-md rounded-md text-[10px] text-white font-medium flex items-center gap-1 shadow-sm">
+                                          <span>ใบที่ {idx + 1}</span>
                                         </div>
                                       </div>
                                     );
                                   })}
                                   {!viewOnlyMode && (
-                                    <button
-                                      type="button"
-                                      onClick={() => document.getElementById('slip-multi-upload').click()}
-                                      className="border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center aspect-[3/4] text-slate-400 hover:text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50/20 transition group"
-                                    >
-                                      <Plus className="w-6 h-6 group-hover:scale-110 transition-transform" />
-                                      <span className="text-xs font-bold mt-1">เพิ่มอีก</span>
-                                    </button>
+                                    isDraggingSlip ? (
+                                      <div className="border-2 border-dashed border-amber-500 bg-amber-100/70 text-amber-700 ring-2 ring-amber-400/20 rounded-xl flex flex-col items-center justify-center aspect-[3/4] transition-all animate-pulse shadow-sm p-2 text-center pointer-events-none">
+                                        <UploadCloud className="w-6 h-6 mb-1 text-amber-600 animate-bounce" />
+                                        <span className="text-xs font-bold text-amber-800">วางไฟล์ที่นี่</span>
+                                        <span className="text-[10px] text-amber-600 mt-0.5">เพิ่มต่อท้าย</span>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => document.getElementById('slip-multi-upload').click()}
+                                        className="border-2 border-dashed border-slate-300 hover:border-amber-400 hover:bg-amber-50/30 rounded-xl flex flex-col items-center justify-center aspect-[3/4] text-slate-400 hover:text-amber-600 transition-all duration-150 group shadow-2xs cursor-pointer"
+                                      >
+                                        <div className="w-9 h-9 rounded-full bg-slate-100 group-hover:bg-amber-100 flex items-center justify-center text-slate-500 group-hover:text-amber-600 transition-colors mb-1.5">
+                                          <Plus className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                                        </div>
+                                        <span className="text-xs font-bold">เพิ่มอีก</span>
+                                        <span className="text-[10px] text-slate-400 group-hover:text-amber-500">หรือลากไฟล์มา</span>
+                                      </button>
+                                    )
                                   )}
                                 </div>
                               </div>
                             ) : (
                               !viewOnlyMode ? (
                                 <div
-                                  className="w-full border-2 border-dashed border-slate-200 rounded-2xl p-4 flex flex-col items-center justify-center text-center hover:border-amber-400 hover:bg-amber-50/20 transition-all cursor-pointer group"
+                                  className={`w-full border-2 border-dashed rounded-2xl p-6 sm:p-7 flex flex-col items-center justify-center text-center transition-all duration-200 cursor-pointer group ${
+                                    isDraggingSlip
+                                      ? 'border-amber-500 bg-amber-50/70 ring-4 ring-amber-500/15 shadow-sm scale-[0.995]'
+                                      : 'border-slate-300/80 bg-slate-50/50 hover:bg-amber-50/30 hover:border-amber-400 shadow-2xs'
+                                  }`}
                                   onClick={() => document.getElementById('slip-multi-upload').click()}
-                                  onDrop={(e) => {
-                                    e.preventDefault();
-                                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                                      handleSlipUpload(e.dataTransfer.files);
-                                    }
-                                  }}
-                                  onDragOver={(e) => e.preventDefault()}
+                                  onDragEnter={handleSlipDragEnter}
+                                  onDragLeave={handleSlipDragLeave}
+                                  onDragOver={handleSlipDragOver}
+                                  onDrop={handleSlipDrop}
                                 >
-                                  <div className="p-2.5 bg-amber-50 text-amber-500 rounded-full mb-2 group-hover:scale-110 transition-transform">
-                                    <Receipt className="w-5 h-5" />
+                                  <div className="flex flex-col items-center pointer-events-none select-none">
+                                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-2.5 transition-all duration-200 ${
+                                      isDraggingSlip
+                                        ? 'bg-amber-600 text-white shadow-md shadow-amber-200 scale-110'
+                                        : 'bg-white border border-slate-200/90 text-amber-600 group-hover:scale-105 group-hover:border-amber-300 group-hover:bg-amber-50/50 shadow-2xs'
+                                    }`}>
+                                      {isDraggingSlip ? (
+                                        <UploadCloud className="w-6 h-6 animate-bounce" />
+                                      ) : (
+                                        <Receipt className="w-6 h-6" />
+                                      )}
+                                    </div>
+                                    <p className={`text-sm font-bold transition-colors duration-150 ${
+                                      isDraggingSlip ? 'text-amber-800 font-extrabold' : 'text-slate-700 group-hover:text-amber-600'
+                                    }`}>
+                                      {isDraggingSlip ? 'ปล่อยเมาส์เพื่อวางสลิปโอนเงินทันที' : 'คลิกเพื่อเลือกสลิป หรือลากไฟล์มาวางที่นี่'}
+                                    </p>
+                                    <p className={`text-xs mt-1 transition-colors duration-150 ${
+                                      isDraggingSlip ? 'text-amber-600 font-semibold' : 'text-slate-400'
+                                    }`}>
+                                      {isDraggingSlip ? 'พร้อมอัพโหลดหลักฐานชำระเงิน' : 'รองรับ JPG, PNG, WEBP (เลือกได้หลายรูป)'}
+                                    </p>
                                   </div>
-                                  <p className="text-sm font-bold text-slate-600">คลิกเพื่ออัพโหลดสลิป หรือลากไฟล์มาวาง</p>
-                                  <p className="text-xs text-slate-400 mt-0.5">เลือกได้หลายรูปพร้อมกัน (JPG, PNG)</p>
                                 </div>
                               ) : (
                                 <div className="w-full px-4 py-6 bg-slate-50 border border-slate-200 rounded-xl text-slate-400 italic text-sm flex flex-col items-center gap-1.5">
@@ -4706,7 +5868,6 @@ const App = () => {
                               )
                             )}
                           </div>
-
                         </div>
                    </div>
                  </div>
@@ -4742,12 +5903,14 @@ const App = () => {
                                           {/* 1. วันที่รับเงิน */}
                                           <div className="sm:col-span-3">
                                               <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">วันที่รับเงิน</span>
-                                              <input
-                                                  type="date"
+                                              <ModernDateTimePicker
                                                   value={item.date ? item.date.slice(0, 10) : ''}
                                                   disabled={viewOnlyMode}
+                                                  hasTime={false}
+                                                  compact={true}
+                                                  placeholder="เลือกวันที่..."
                                                   onChange={(e) => handleSupportItemChange(idx, 'date', e.target.value)}
-                                                  className={`w-full px-2 py-2 bg-white border border-indigo-200 rounded-lg text-xs font-semibold text-slate-700 ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
+                                                  className={`border-indigo-200 h-[34px] ${viewOnlyMode ? 'opacity-80 cursor-not-allowed' : ''}`}
                                               />
                                           </div>
 
@@ -4858,11 +6021,13 @@ const App = () => {
                                    <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-start animate-in fade-in slide-in-from-left-2 duration-300 bg-white p-3 sm:p-0 rounded-xl sm:bg-transparent border sm:border-none border-emerald-100 shadow-sm sm:shadow-none">
                                        <div className="sm:col-span-3">
                                           <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">วันที่ทำบิล/รับเงิน</span>
-                                          <input
-                                            type="date"
+                                          <ModernDateTimePicker
                                             value={item.date ? item.date.slice(0, 10) : ''}
+                                            hasTime={false}
+                                            compact={true}
+                                            placeholder="เลือกวันที่..."
                                             onChange={(e) => handleQuotationItemChange(idx, 'date', e.target.value)}
-                                            className="w-full px-2 py-2 bg-white border border-emerald-200 rounded-lg text-xs font-semibold text-slate-700"
+                                            className="border-emerald-200 h-[34px]"
                                           />
                                        </div>
                                        <div className="sm:col-span-2">
@@ -4956,11 +6121,13 @@ const App = () => {
                                    <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-start animate-in fade-in slide-in-from-left-2 duration-300 bg-white p-3 sm:p-0 rounded-xl sm:bg-transparent border sm:border-none border-rose-100 shadow-sm sm:shadow-none">
                                        <div className="sm:col-span-3">
                                           <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">วันที่จ่ายเงิน</span>
-                                          <input
-                                            type="date"
+                                          <ModernDateTimePicker
                                             value={item.date ? item.date.slice(0, 10) : ''}
+                                            hasTime={false}
+                                            compact={true}
+                                            placeholder="เลือกวันที่..."
                                             onChange={(e) => handleExpenseChange(idx, 'date', e.target.value)}
-                                            className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs font-semibold text-slate-700"
+                                            className="border-rose-200 h-[34px]"
                                           />
                                        </div>
                                        <div className="sm:col-span-2">
@@ -5199,6 +6366,37 @@ const App = () => {
           <option key={i} value={cat} />
         ))}
       </datalist>
+
+      {/* Datalist for Autocomplete - Delivery Locations / Venues */}
+      <datalist id="venue-list">
+        {deliveryLocations.map((loc, i) => (
+          <option key={loc.id || i} value={loc.name} label={loc.zone ? `[${loc.zone}] ${loc.gate_info || ''}` : loc.gate_info} />
+        ))}
+      </datalist>
+
+      {/* Venue Detail / Loading Dock Intelligence Modal */}
+      {selectedVenueForModal && (
+        <VenueDetailModal
+          isOpen={Boolean(selectedVenueForModal)}
+          venue={selectedVenueForModal}
+          onClose={() => setSelectedVenueForModal(null)}
+          onUpdateVenue={(updated) => {
+            setDeliveryLocations(prev => prev.map(v => v.id === updated.id ? { ...v, ...updated } : v));
+            setSelectedVenueForModal(prev => ({ ...prev, ...updated }));
+          }}
+        />
+      )}
+
+      {/* Venue Intelligence Directory Modal */}
+      <VenueDirectoryModal
+        isOpen={isVenueDirectoryOpen}
+        venues={deliveryLocations}
+        onClose={() => setIsVenueDirectoryOpen(false)}
+        onSelectVenue={(venue) => {
+          setSelectedVenueForModal(venue);
+          setIsVenueDirectoryOpen(false);
+        }}
+      />
 
     </div>
   );

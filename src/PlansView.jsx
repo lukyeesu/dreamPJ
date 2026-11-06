@@ -6,11 +6,12 @@ const PlansView = ({
   renderFilterCard,
   renderTable,
   filteredAndSortedActivities = [],
-  onOpenModal
+  onOpenModal,
+  renderBatchBanner
 }) => {
   return (
     <div className="space-y-6 sm:space-y-8 flex flex-col min-h-full pb-24 md:pb-6">
-      {/* 4 Summary KPI Cards (นำมาจากหน้าภาพรวมแผนงาน พร้อมรองรับการคลิกเพื่อกรองสถานะ) */}
+      {/* 4 Summary KPI Cards */}
       {stats.length > 0 && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 px-4 sm:px-8 lg:px-10 pt-4">
           {stats.map((stat, index) => (
@@ -41,6 +42,9 @@ const PlansView = ({
         </div>
       )}
 
+      {/* Smart Batch Delivery Alert Banner */}
+      {renderBatchBanner && renderBatchBanner()}
+
       {/* Sticky Filter Toolbar */}
       {renderFilterCard && renderFilterCard()}
 
@@ -64,4 +68,4 @@ const PlansView = ({
   );
 };
 
-export default PlansView;
+export default React.memo(PlansView);

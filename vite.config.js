@@ -33,8 +33,11 @@ export default defineConfig({
               return 'icons';
             }
             // แยกกลุ่ม React Core (ช่วยเรื่องความเร็วในการโหลดซ้ำ/Caching)
-            if (id.includes('react') || id.includes('react-dom')) {
+            if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('\\react\\') || id.includes('\\react-dom\\')) {
               return 'vendor-react';
+            }
+            if (id.includes('@supabase') || id.includes('dexie')) {
+              return 'vendor-db';
             }
             // Library อื่นๆ ใน node_modules ให้รวมกันในชื่อ vendor
             return 'vendor';

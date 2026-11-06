@@ -1,15 +1,8 @@
 @import "tailwindcss";
 
-/* ลบโค้ดเก่าในไฟล์นี้ออกให้หมด แล้วใส่แค่บรรทัดด้านบน หรือถ้ายังไม่หายให้ลองใช้แบบด้านล่างนี้ครับ */
-
-/* @tailwind base;
-@tailwind components;
-@tailwind utilities;
-*/
-
 :root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  background-color: #f8fafc; /* พื้นหลังสีสว่างสบายตา */
+  background-color: #f8fafc;
 }
 
 html, body {
@@ -25,4 +18,136 @@ html, body {
 #root {
   width: 100%;
   min-height: 100%;
+}
+
+@keyframes modalEnter {
+  0% { opacity: 0; transform: scale(0.95) translateY(12px); filter: blur(2px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+}
+
+@keyframes modalExit {
+  0% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+  100% { opacity: 0; transform: scale(0.95) translateY(12px); filter: blur(2px); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.modal-animate-in {
+  animation: modalEnter 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.modal-animate-out {
+  animation: modalExit 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.backdrop-animate-in {
+  animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.backdrop-animate-out {
+  animation: fadeOut 0.25s forwards;
+}
+
+/* ==========================================================================
+   Table & Grid Reset: Eliminate dark / black border lines & collapse glitches
+   ตอนที่มีการเคลื่อนไหว เช่น เพิ่มลบ หรือ infinity loading
+   ========================================================================== */
+
+/* 1. Ensure table, thead, tbody, tfoot, tr, th, td always use light slate border color
+      so the browser NEVER collapses or defaults border-color to currentColor / dark text / black */
+table,
+thead,
+tbody,
+tfoot,
+tr,
+th,
+td,
+.border-slate-100,
+[class*="divide-slate-100"] > * {
+  border-color: #f1f5f9; /* Tailwind slate-100 */
+}
+
+/* Specific border overrides for tables with slate-200 or custom borders */
+table .border-slate-200,
+table.border-slate-200,
+tr.border-slate-200,
+th.border-slate-200,
+td.border-slate-200,
+.border-slate-200,
+[class*="divide-slate-200"] > * {
+  border-color: #e2e8f0;
+}
+
+table .border-slate-300,
+table.border-slate-300,
+tr.border-slate-300,
+th.border-slate-300,
+td.border-slate-300 {
+  border-color: #cbd5e1;
+}
+
+/* 2. When hover transitions occur on rows, ONLY transition background-color and opacity!
+      NEVER transition border-color (prevents 150ms flash from black/currentColor during mount/scroll/infinity-loading) */
+table tr,
+table tr.transition-colors,
+table tr.transition-all {
+  transition-property: background-color, opacity, transform !important;
+}
+
+/* 3. Global sleek scrollbar styling to prevent Windows default black scrollbar tracks during table overflow */
+.custom-scrollbar::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb {
+  background: #cbd5e1; /* slate-300 */
+  border-radius: 9999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8; /* slate-400 */
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+/* Checklist & Preparation Sheet Styles (Spec from d:\WebappDreame\_Markdown_.md_.md) */
+.done-item {
+  text-decoration: line-through;
+  color: #94a3b8 !important;
+  background-color: #f8fafc !important;
+}
+
+.done-item td,
+.done-item span,
+.done-item p {
+  color: #94a3b8 !important;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
 }

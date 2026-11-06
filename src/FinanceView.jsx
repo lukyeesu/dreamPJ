@@ -31,10 +31,24 @@ import {
   User,
   Mic,
   Receipt,
-  Maximize2
+  Maximize2,
+  Edit,
+  Trash2,
+  Check,
+  Tag,
+  Briefcase,
+  Sparkles,
+  ArrowUpRight,
+  ArrowDownRight,
+  Activity
 } from 'lucide-react';
 import DateFilterControl from './components/common/DateFilterControl';
 import { processImageUrl } from './utils/formatters';
+import ImageViewer from './components/common/ImageViewer';
+import { saveProjectSync } from './services/syncService';
+import ModernDateTimePicker from './components/common/ModernDateTimePicker';
+import Toast from './components/common/Toast';
+import ConfirmDialog from './components/common/ConfirmDialog';
 
 // --- Helper Functions for Formatting ---
 const formatCurrency = (amount) => {
@@ -62,7 +76,290 @@ const formatDateTimeDisplay = (isoStr) => {
   const day = String(d.getDate()).padStart(2, '0');
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const year = d.getFullYear();
-  return `${day}/${month}/${year}`;
+  const hours = String(d.getHours()).padStart(2, '0');
+  const mins = String(d.getMinutes()).padStart(2, '0');
+  return `${day}/${month}/${year} ${hours}:${mins} น.`;
+};
+
+const formatItemDateTime = (item) => {
+  if (!item) return '-';
+  const raw = item.rawDeliveryStart || item.rawDateTime;
+  if (raw && typeof raw === 'string' && raw.includes('T')) {
+    const [dPart, tPart] = raw.split('T');
+    const [y, m, d] = dPart.split('-');
+    const time = tPart ? tPart.substring(0, 5) : '';
+    let year = parseInt(y, 10);
+    return `${d}/${m}/${year}${time ? ` ${time} น.` : ''}`;
+  }
+  if (item.deliveryDate && typeof item.deliveryDate === 'string') {
+    const firstPart = item.deliveryDate.split(' - ')[0];
+    if (firstPart && firstPart.trim()) {
+      return firstPart.trim() + (firstPart.includes(':') && !firstPart.includes('น.') ? ' น.' : '');
+    }
+  }
+  if (item.date) return item.date;
+  if (item.paymentDate) return formatItemDate(item.paymentDate);
+  return '-';
+};
+
+const getItemLedgerDateTime = (item, entry) => {
+  const raw = (entry && entry.date) || item.rawDeliveryStart || item.rawDateTime || item.paymentDate || item.deliveryDate || item.date;
+  if (!raw) return { date: '-', time: '-' };
+
+  // If raw has 'T' (ISO format e.g. 2026-11-05T16:16:23)
+  if (typeof raw === 'string' && raw.includes('T')) {
+    const [dPart, tPart] = raw.split('T');
+    const [y, m, d] = dPart.split('-');
+    const yearNum = parseInt(y, 10);
+    const beYear = yearNum > 2400 ? yearNum : yearNum + 543;
+    const timeStr = tPart ? tPart.substring(0, 8).replace('Z', '') : '';
+    const formattedTime = timeStr ? (timeStr.includes(':') ? `${timeStr} น.` : `${timeStr} น.`) : '-';
+    return {
+      date: `${d}/${m}/${beYear}`,
+      time: formattedTime
+    };
+  }
+
+  // If raw is already DD/MM/YYYY or DD/MM/YYYY HH:mm:ss
+  if (typeof raw === 'string' && /^\d{2}\/\d{2}\/\d{4}/.test(raw)) {
+    const parts = raw.split(' ');
+    const datePart = parts[0];
+    const timePart = parts.slice(1).join(' ').trim();
+    const [d, m, y] = datePart.split('/');
+    const yearNum = parseInt(y, 10);
+    const beYear = yearNum > 2400 ? yearNum : yearNum + 543;
+    return {
+      date: `${d}/${m}/${beYear}`,
+      time: timePart ? (timePart.includes('น.') ? timePart : `${timePart} น.`) : '-'
+    };
+  }
+
+  const d = new Date(raw);
+  if (!isNaN(d.getTime())) {
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const beYear = d.getFullYear() > 2400 ? d.getFullYear() : d.getFullYear() + 543;
+    const hours = String(d.getHours()).padStart(2, '0');
+    const mins = String(d.getMinutes()).padStart(2, '0');
+    const secs = String(d.getSeconds()).padStart(2, '0');
+    const hasSpecificTime = hours !== '00' || mins !== '00' || secs !== '00';
+    return {
+      date: `${day}/${month}/${beYear}`,
+      time: hasSpecificTime ? `${hours}:${mins}:${secs} น.` : '-'
+    };
+  }
+
+  return { date: String(raw).split(' ')[0] || '-', time: '-' };
+};
+
+const getProjectStatementRows = (item) => {
+  const rows = [];
+
+  // 1. เงินศิลปิน (Customer Support) -> เงินโอนเข้าบัญชี = จัดเป็น "รายรับ"
+  const supportItems = [];
+  if (Array.isArray(item.customerSupport) && item.customerSupport.length > 0) {
+    item.customerSupport.forEach((cs) => {
+      const val = parseFloat(cs.price) || ((parseFloat(cs.denomination) || 0) * (parseFloat(cs.quantity) || 1)) || 0;
+      if (val > 0 || (cs.denomination && cs.quantity)) {
+        supportItems.push({
+          name: `แบงค์ ${formatCurrency(cs.denomination)} x ${cs.quantity || 1} ใบ`,
+          amount: val
+        });
+      }
+    });
+  }
+
+  const sTotal = item._sTotal || (supportItems.reduce((sum, it) => sum + it.amount, 0));
+
+  if (sTotal > 0 || supportItems.length > 0) {
+    rows.push({
+      key: `${item.id}-support`,
+      type: 'support',
+      typeBadge: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+      typeLabel: 'เงินศิลปิน',
+      title: item.name || 'เงินศิลปิน (โอนเข้าบัญชี)',
+      category: 'เงินสนับสนุน',
+      items: supportItems.length > 0 ? supportItems : [{ name: 'ยอดเงินส่งต่อศิลปินรวม', amount: sTotal }],
+      incomeAmount: sTotal,
+      expenseAmount: 0,
+      isIncome: true,
+      paymentStatus: item._paymentStatus || 'paid',
+    });
+  }
+
+  // 2. รายการขาย / ใบเสนอราคา (Quotation Items / Revenue) -> ถือเป็น "รายรับ"
+  const quotationItems = [];
+  if (Array.isArray(item.quotationItems) && item.quotationItems.length > 0) {
+    item.quotationItems.forEach((q) => {
+      const val = parseFloat(q.price) || ((parseFloat(q.unitPrice) || 0) * (parseFloat(q.quantity) || 1)) || 0;
+      quotationItems.push({
+        name: `${q.detail || q.category || 'รายการค่าจ้าง'}${q.quantity > 1 ? ` (${q.quantity} รายการ)` : ''}`,
+        amount: val
+      });
+    });
+  }
+
+  const qTotal = item._qTotal || parseFloat(item.wage) || (quotationItems.reduce((sum, it) => sum + it.amount, 0));
+
+  if (qTotal > 0 || quotationItems.length > 0) {
+    rows.push({
+      key: `${item.id}-quotation`,
+      type: 'revenue',
+      typeBadge: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      typeLabel: 'รายรับ',
+      title: item.name || 'ค่าจ้างโปรเจกต์',
+      category: item.category || 'งานบริการ',
+      items: quotationItems.length > 0 ? quotationItems : [{ name: item.name || 'ค่าจ้างโปรเจกต์', amount: qTotal }],
+      incomeAmount: qTotal,
+      expenseAmount: 0,
+      isIncome: true,
+      paymentStatus: item._paymentStatus || 'unpaid',
+    });
+  }
+
+  // 3. รายจ่ายจริง (Expenses) -> ถือเป็น "รายจ่าย" (สีแดง)
+  const expenseItems = [];
+  if (Array.isArray(item.expenses) && item.expenses.length > 0) {
+    item.expenses.forEach((ex) => {
+      const val = parseFloat(ex.price) || ((parseFloat(ex.unitPrice) || 0) * (parseFloat(ex.quantity) || 1)) || 0;
+      if (val > 0 || ex.detail || ex.category) {
+        expenseItems.push({
+          name: `${ex.detail || ex.category || 'ค่าใช้จ่าย'}${ex.quantity > 1 ? ` (${ex.quantity})` : ''}`,
+          amount: val
+        });
+      }
+    });
+  }
+
+  const eTotal = item._eTotal || parseFloat(item.totalExpenses) || (expenseItems.reduce((sum, it) => sum + it.amount, 0));
+
+  if (eTotal > 0 || expenseItems.length > 0) {
+    rows.push({
+      key: `${item.id}-expense`,
+      type: 'expense',
+      typeBadge: 'bg-rose-50 text-rose-700 border-rose-200',
+      typeLabel: 'รายจ่ายจริง',
+      title: 'ค่าใช้จ่ายจริงของงาน',
+      category: 'ต้นทุน/ค่าใช้จ่าย',
+      items: expenseItems.length > 0 ? expenseItems : [{ name: 'ยอดค่าใช้จ่ายจริงรวม', amount: eTotal }],
+      incomeAmount: 0,
+      expenseAmount: eTotal,
+      isIncome: false,
+      paymentStatus: 'paid', // รายจ่ายถือว่าจ่ายไปแล้ว
+    });
+  }
+
+  // กรณีโปรเจกต์ยังไม่มีข้อมูลใดๆ ให้แสดง 1 แถวเริ่มต้น
+  if (rows.length === 0) {
+    rows.push({
+      key: `${item.id}-blank`,
+      type: 'revenue',
+      typeBadge: 'bg-slate-50 text-slate-600 border-slate-200',
+      typeLabel: 'แผนงาน',
+      title: item.name || 'ไม่มีชื่อโปรเจกต์',
+      category: item.category || '-',
+      items: [],
+      incomeAmount: 0,
+      expenseAmount: 0,
+      isIncome: true,
+      paymentStatus: item._paymentStatus || 'unpaid',
+    });
+  }
+
+  return rows;
+};
+
+const getProjectFinancialItems = (item) => {
+  const lineItems = [];
+
+  // 1. เงินศิลปิน (Customer Support)
+  if (Array.isArray(item.customerSupport) && item.customerSupport.length > 0) {
+    item.customerSupport.forEach((cs, i) => {
+      const val = parseFloat(cs.price) || ((parseFloat(cs.denomination) || 0) * (parseFloat(cs.quantity) || 1)) || 0;
+      lineItems.push({
+        id: cs.id || `cs-${item.id}-${i}`,
+        type: 'support',
+        typeLabel: 'เงินศิลปิน',
+        typeBadge: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+        detail: `แบงค์ ${formatCurrency(cs.denomination)} บาท x ${cs.quantity || 1} ใบ`,
+        amountSupport: val,
+        amountRevenue: 0,
+        amountExpense: 0,
+      });
+    });
+  } else if ((item._sTotal || 0) > 0) {
+    lineItems.push({
+      id: `cs-sum-${item.id}`,
+      type: 'support',
+      typeLabel: 'เงินศิลปิน',
+      typeBadge: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+      detail: 'ยอดเงินส่งต่อศิลปินรวม',
+      amountSupport: item._sTotal,
+      amountRevenue: 0,
+      amountExpense: 0,
+    });
+  }
+
+  // 2. รายรับ (Quotation Items / Revenue)
+  if (Array.isArray(item.quotationItems) && item.quotationItems.length > 0) {
+    item.quotationItems.forEach((q, i) => {
+      const val = parseFloat(q.price) || ((parseFloat(q.unitPrice) || 0) * (parseFloat(q.quantity) || 1)) || 0;
+      lineItems.push({
+        id: q.id || `q-${item.id}-${i}`,
+        type: 'revenue',
+        typeLabel: 'รายรับ',
+        typeBadge: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+        detail: `${q.detail || q.category || 'รายการค่าจ้าง'}${q.quantity > 1 ? ` (${q.quantity} รายการ)` : ''}`,
+        amountSupport: 0,
+        amountRevenue: val,
+        amountExpense: 0,
+      });
+    });
+  } else if ((item._qTotal || 0) > 0 || parseFloat(item.wage) > 0) {
+    const val = item._qTotal || parseFloat(item.wage) || 0;
+    lineItems.push({
+      id: `q-sum-${item.id}`,
+      type: 'revenue',
+      typeLabel: 'รายรับ',
+      typeBadge: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      detail: item.name || 'ค่าจ้างโปรเจกต์',
+      amountSupport: 0,
+      amountRevenue: val,
+      amountExpense: 0,
+    });
+  }
+
+  // 3. รายจ่ายจริง (Expenses)
+  if (Array.isArray(item.expenses) && item.expenses.length > 0) {
+    item.expenses.forEach((ex, i) => {
+      const val = parseFloat(ex.price) || ((parseFloat(ex.unitPrice) || 0) * (parseFloat(ex.quantity) || 1)) || 0;
+      lineItems.push({
+        id: ex.id || `ex-${item.id}-${i}`,
+        type: 'expense',
+        typeLabel: 'รายจ่ายจริง',
+        typeBadge: 'bg-rose-50 text-rose-700 border-rose-200',
+        detail: ex.detail || ex.category || 'ค่าใช้จ่ายจริง',
+        category: ex.category || '',
+        amountSupport: 0,
+        amountRevenue: 0,
+        amountExpense: val,
+      });
+    });
+  } else if ((item._eTotal || 0) > 0 || parseFloat(item.totalExpenses) > 0) {
+    const val = item._eTotal || parseFloat(item.totalExpenses) || 0;
+    lineItems.push({
+      id: `ex-sum-${item.id}`,
+      type: 'expense',
+      typeLabel: 'รายจ่ายจริง',
+      typeBadge: 'bg-rose-50 text-rose-700 border-rose-200',
+      detail: 'ยอดค่าใช้จ่ายจริงรวม',
+      amountSupport: 0,
+      amountRevenue: 0,
+      amountExpense: val,
+    });
+  }
+
+  return lineItems;
 };
 
 const escapeHtml = (str) => {
@@ -75,12 +372,13 @@ const escapeHtml = (str) => {
     .replace(/'/g, '&#39;');
 };
 
-export default function FinanceView({
+function FinanceView({
   activities = [],
   dealStatuses = [],
   transportStatuses = [],
   shopInfo = {},
   onOpenProjectModal,
+  onSaveActivity,
   themeColor = 'indigo',
   dateFilterMode: propDateFilterMode,
   setDateFilterMode: propSetDateFilterMode,
@@ -91,10 +389,106 @@ export default function FinanceView({
   isActive = true
 }) {
   // --- View Mode State ---
-  // 'sheet' = ตารางกำไรขาดทุนแบบสมุดบัญชีตามรูป (Accounting Sheet View)
+  // 'feed' = แถวรายการรายรับ-รายจ่าย แก้ไข/ยกเลิกได้สด (Transaction Feed View - Default)
+  // 'sheet' = ตารางกำไรขาดทุนแบบสมุดบัญชีสำหรับพิมพ์ A4 (Accounting Sheet View)
   // 'dashboard' = แดชบอร์ดภาพรวมพร้อมการ์ดสถิติ (Interactive Dashboard View)
   // 'slips' = ตารางสลิปโอนเงิน (Slips Table View)
-  const [viewMode, setViewMode] = useState('sheet');
+  const [viewMode, setViewMode] = useState('feed');
+  const [feedSearchQuery, setFeedSearchQuery] = useState('');
+  const [feedTypeFilter, setFeedTypeFilter] = useState('all'); // 'all' | 'income' | 'expense' | 'support'
+  const [isAddTxModalOpen, setIsAddTxModalOpen] = useState(false);
+  const [isEditTxModalOpen, setIsEditTxModalOpen] = useState(false);
+  const [editingTx, setEditingTx] = useState(null);
+  const [editFormData, setEditFormData] = useState({ detail: '', category: '', amount: 0, is_voided: false });
+  const [newTxFormData, setNewTxFormData] = useState({
+    type: 'income',
+    code: 'INC-รอการบันทึก',
+    dateTime: new Date().toISOString(),
+    projectId: '',
+    channel: 'โอนเงิน',
+    category: 'ค่าจัดดอกไม้/บริการ',
+    artist: '',
+    customer: '',
+    items: [{ id: 1, detail: '', quantity: 1, price: '' }],
+    discountValue: 0,
+    discountType: 'baht',
+    taxType: 'none',
+    note: ''
+  });
+
+  // Dynamic calculations for Add Transaction Modal
+  const calcTxSubtotal = useMemo(() => {
+    return (newTxFormData.items || []).reduce((sum, it) => {
+      const q = Number(it.quantity) || 1;
+      const p = Number(it.price) || 0;
+      return sum + (q * p);
+    }, 0);
+  }, [newTxFormData.items]);
+
+  const calcTxDiscount = useMemo(() => {
+    const dVal = Number(newTxFormData.discountValue) || 0;
+    if (newTxFormData.discountType === 'percent') {
+      return (calcTxSubtotal * dVal) / 100;
+    }
+    return dVal;
+  }, [calcTxSubtotal, newTxFormData.discountValue, newTxFormData.discountType]);
+
+  const calcTxAfterDiscount = useMemo(() => {
+    return Math.max(0, calcTxSubtotal - calcTxDiscount);
+  }, [calcTxSubtotal, calcTxDiscount]);
+
+  const calcTxTax = useMemo(() => {
+    if (newTxFormData.taxType === 'exclude') {
+      return calcTxAfterDiscount * 0.07;
+    }
+    if (newTxFormData.taxType === 'include') {
+      return calcTxAfterDiscount - (calcTxAfterDiscount / 1.07);
+    }
+    return 0;
+  }, [calcTxAfterDiscount, newTxFormData.taxType]);
+
+  const calcTxNetTotal = useMemo(() => {
+    if (newTxFormData.taxType === 'exclude') {
+      return calcTxAfterDiscount + calcTxTax;
+    }
+    return calcTxAfterDiscount;
+  }, [calcTxAfterDiscount, calcTxTax, newTxFormData.taxType]);
+
+  const handleAddTxItem = () => {
+    setNewTxFormData(prev => ({
+      ...prev,
+      items: [...prev.items, { id: Date.now(), detail: '', quantity: 1, price: '' }]
+    }));
+  };
+
+  const handleRemoveTxItem = (idx) => {
+    if (newTxFormData.items.length <= 1) return;
+    setNewTxFormData(prev => ({
+      ...prev,
+      items: prev.items.filter((_, i) => i !== idx)
+    }));
+  };
+
+  const handleUpdateTxItem = (idx, field, val) => {
+    setNewTxFormData(prev => ({
+      ...prev,
+      items: prev.items.map((it, i) => i === idx ? { ...it, [field]: val } : it)
+    }));
+  };
+  const [isTxSaving, setIsTxSaving] = useState(false);
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'danger',
+    confirmText: 'ยืนยัน',
+    onConfirm: null
+  });
+
+  const showToast = (message, type = 'success') => {
+    setToast({ show: true, message, type });
+  };
   const [previewSlipImage, setPreviewSlipImage] = useState(null);
   const [slipsPerRow, setSlipsPerRow] = useState(3); // 3 (ชัดเจน อ่านง่าย) หรือ 4 (กะทัดรัด)
   const [slipsFilterMode, setSlipsFilterMode] = useState('all'); // 'all' (ทั้งหมด) หรือ 'has_slips' (เฉพาะที่มีสลิป)
@@ -137,6 +531,26 @@ export default function FinanceView({
     const handleResize = () => setIsMobileScreen(window.innerWidth < 768);
     window.addEventListener('resize', handleResize, { passive: true });
     return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Keyboard shortcut: close modals on Escape
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (previewSlipImage) setPreviewSlipImage(null);
+        else if (isAddTxModalOpen) setIsAddTxModalOpen(false);
+        else if (isEditTxModalOpen) setIsEditTxModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewSlipImage, isAddTxModalOpen, isEditTxModalOpen]);
+
+  // Listen to Top Header "+ เพิ่มรายรับ/จ่าย" button event
+  useEffect(() => {
+    const handleTriggerCreate = () => setIsAddTxModalOpen(true);
+    window.addEventListener('trigger-create-finance-tx', handleTriggerCreate);
+    return () => window.removeEventListener('trigger-create-finance-tx', handleTriggerCreate);
   }, []);
 
   // Sticky Collision State for Filter Toolbar
@@ -192,19 +606,24 @@ export default function FinanceView({
   // Detail mode for 'sheet' and print: 'compact' (สรุปย่อ ประหยัดกระดาษ) or 'detailed' (แจกแจงรายการย่อย)
   const [tableDetailMode, setTableDetailMode] = useState('compact');
   const [isMobileFilterExpanded, setIsMobileFilterExpanded] = useState(false);
+  const [isDesktopFilterExpanded, setIsDesktopFilterExpanded] = useState(false);
 
   const handleResetFilters = () => {
     setSearchQuery('');
     setPaymentStatusFilter('all');
-    setDateFilterMode('all');
-    setFilterDate('');
+    setDateFilterMode('month');
+    const now = new Date();
+    setFilterDate(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
     setFilterDateRange({ start: '', end: '' });
   };
 
   // --- Filter States ---
   // DateFilterControl modes: 'all', 'date', 'week', 'month', 'year', 'range'
-  const [internalDateFilterMode, setInternalDateFilterMode] = useState('all');
-  const [internalFilterDate, setInternalFilterDate] = useState('');
+  const [internalDateFilterMode, setInternalDateFilterMode] = useState('month');
+  const [internalFilterDate, setInternalFilterDate] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [internalFilterDateRange, setInternalFilterDateRange] = useState({ start: '', end: '' });
 
   const dateFilterMode = propDateFilterMode !== undefined ? propDateFilterMode : internalDateFilterMode;
@@ -223,6 +642,43 @@ export default function FinanceView({
 
   const toggleRowExpand = (id) => {
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  // Helper สำหรับดึงและแปลงวันที่โปรเจกต์ให้เป็นมาตรฐานสากล YYYY-MM-DD (รองรับทั้ง ค.ศ. และ พ.ศ.)
+  const getEffectiveItemDateStr = (item) => {
+    const candidates = [
+      item.rawDeliveryStart,
+      item.rawDateTime,
+      item.date,
+      item.paymentDate,
+      item.deliveryDate
+    ];
+
+    for (const val of candidates) {
+      if (!val) continue;
+      if (typeof val === 'string') {
+        const trimmed = val.trim();
+        if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+          return trimmed.substring(0, 10);
+        }
+        if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(trimmed)) {
+          const parts = trimmed.split(' ')[0].split('/');
+          let y = parseInt(parts[2], 10);
+          if (y > 2500) y -= 543; // แปลง พ.ศ. เป็น ค.ศ.
+          const mm = String(parts[1]).padStart(2, '0');
+          const dd = String(parts[0]).padStart(2, '0');
+          return `${y}-${mm}-${dd}`;
+        }
+      }
+      const d = new Date(val);
+      if (!isNaN(d.getTime())) {
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+      }
+    }
+    return '';
   };
 
   // --- Filter and Process Activities ---
@@ -246,25 +702,7 @@ export default function FinanceView({
 
       // 3. Date Filter (matches Analytics / App.jsx logic)
       if (dateFilterMode !== 'all') {
-        const effectiveDate = item.paymentDate || item.rawDateTime || item.date;
-        if (!effectiveDate) return false;
-
-        let itemDateStr = '';
-        if (typeof effectiveDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(effectiveDate)) {
-          itemDateStr = effectiveDate.substring(0, 10);
-        } else if (typeof effectiveDate === 'string' && /^\d{2}\/\d{2}\/\d{4}/.test(effectiveDate)) {
-          const parts = effectiveDate.split(' ')[0].split('/');
-          itemDateStr = `${parts[2]}-${parts[1]}-${parts[0]}`;
-        } else {
-          const d = new Date(effectiveDate);
-          if (!isNaN(d.getTime())) {
-            const yyyy = d.getFullYear();
-            const mm = String(d.getMonth() + 1).padStart(2, '0');
-            const dd = String(d.getDate()).padStart(2, '0');
-            itemDateStr = `${yyyy}-${mm}-${dd}`;
-          }
-        }
-
+        const itemDateStr = getEffectiveItemDateStr(item);
         if (!itemDateStr) return false;
 
         if (dateFilterMode === 'date') {
@@ -408,6 +846,404 @@ export default function FinanceView({
   // Progressive slices for screen rendering (smooth 60fps)
   const visibleSheetData = useMemo(() => processedData.slice(0, visibleCount), [processedData, visibleCount]);
   const visibleDashboardData = useMemo(() => processedData.slice(0, visibleCount), [processedData, visibleCount]);
+
+  // =========================================================================
+  // TRANSACTION FEED: Extract Row-by-Row Line Items (Zero-Egress & Interactive)
+  // =========================================================================
+  const feedTransactions = useMemo(() => {
+    const list = [];
+    for (let i = 0; i < processedData.length; i++) {
+      const p = processedData[i];
+
+      // 1. Income Items (Quotation Items or Base Wage)
+      if (p.quotationItems && p.quotationItems.length > 0) {
+        p.quotationItems.forEach((q, idx) => {
+          list.push({
+            id: q.id || `${p.id}-q-${idx}`,
+            projectId: p.id,
+            projectName: p.name,
+            customer: p.customer,
+            artist: p.artist,
+            date: q.date || p.deliveryDate || p.rawDateTime || '',
+            category: q.category || 'ค่าจัดดอกไม้/บริการ',
+            detail: q.detail || 'รายการเสนอราคา',
+            type: 'income',
+            amount: Number(q.price) || 0,
+            quantity: Number(q.quantity) || 1,
+            unitPrice: Number(q.unitPrice) || Number(q.price) || 0,
+            status: p._paymentStatus || 'unpaid',
+            isVoided: Boolean(q.is_voided),
+            rawItem: q,
+            parentProject: p
+          });
+        });
+      } else if (p.wage || p.deliveryFee) {
+        const totalW = (Number(p.wage) || 0) + (Number(p.deliveryFee) || 0);
+        list.push({
+          id: `${p.id}-wage`,
+          projectId: p.id,
+          projectName: p.name,
+          customer: p.customer,
+          artist: p.artist,
+          date: p.deliveryDate || p.rawDateTime || '',
+          category: 'ค่าบริการจัดดอกไม้',
+          detail: 'ค่าจ้างรวม' + (p.deliveryFee ? ` (รวมส่ง ${p.deliveryFee})` : ''),
+          type: 'income',
+          amount: totalW,
+          quantity: 1,
+          unitPrice: totalW,
+          status: p._paymentStatus || 'unpaid',
+          isVoided: false,
+          rawItem: null,
+          parentProject: p
+        });
+      }
+
+      // 2. Expense Items
+      (p.expenses || []).forEach((e, idx) => {
+        list.push({
+          id: e.id || `${p.id}-e-${idx}`,
+          projectId: p.id,
+          projectName: p.name,
+          customer: p.customer,
+          artist: p.artist,
+          date: e.date || p.deliveryDate || p.rawDateTime || '',
+          category: e.category || 'ค่าใช้จ่ายทั่วไป',
+          detail: e.detail || 'ซื้อของ/อุปกรณ์',
+          type: 'expense',
+          amount: Number(e.price) || 0,
+          quantity: Number(e.quantity) || 1,
+          unitPrice: Number(e.unitPrice) || Number(e.price) || 0,
+          status: 'paid',
+          isVoided: Boolean(e.is_voided),
+          rawItem: e,
+          parentProject: p
+        });
+      });
+
+      // 3. Customer Support Items
+      (p.customerSupport || []).forEach((cs, idx) => {
+        const denom = Number(cs.denomination) || 0;
+        const qty = Number(cs.quantity) || 0;
+        const price = Number(cs.price) || (denom * qty);
+        list.push({
+          id: cs.id || `${p.id}-cs-${idx}`,
+          projectId: p.id,
+          projectName: p.name,
+          customer: p.customer,
+          artist: p.artist,
+          date: cs.date || p.deliveryDate || p.rawDateTime || '',
+          category: 'เงินสนับสนุนศิลปิน',
+          detail: `ธนบัตร ฿${denom.toLocaleString()} x ${qty} ใบ`,
+          type: 'support',
+          amount: price,
+          quantity: qty,
+          unitPrice: denom,
+          status: 'paid',
+          isVoided: false,
+          rawItem: cs,
+          parentProject: p
+        });
+      });
+    }
+
+    return list.sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.projectId.localeCompare(a.projectId));
+  }, [processedData]);
+
+  // Filtered Feed Transactions
+  const filteredFeedTransactions = useMemo(() => {
+    return feedTransactions.filter(tx => {
+      const q = feedSearchQuery.toLowerCase().trim();
+      const matchSearch = !q ||
+        tx.projectId.toLowerCase().includes(q) ||
+        tx.detail.toLowerCase().includes(q) ||
+        tx.category.toLowerCase().includes(q) ||
+        (tx.customer && tx.customer.toLowerCase().includes(q)) ||
+        (tx.artist && tx.artist.toLowerCase().includes(q));
+
+      const matchType = feedTypeFilter === 'all' || tx.type === feedTypeFilter;
+      return matchSearch && matchType;
+    });
+  }, [feedTransactions, feedSearchQuery, feedTypeFilter]);
+
+  // Handlers for Transaction Feed Actions
+  const handleOpenEditTx = (tx) => {
+    setEditingTx(tx);
+    setEditFormData({
+      detail: tx.detail,
+      category: tx.category,
+      amount: tx.amount,
+      is_voided: tx.isVoided
+    });
+    setIsEditTxModalOpen(true);
+  };
+
+  const handleSaveEditTx = async (e) => {
+    e.preventDefault();
+    if (!editingTx) return;
+    setIsTxSaving(true);
+    try {
+      const project = activities.find(a => a.id === editingTx.projectId);
+      if (!project) throw new Error('ไม่พบข้อมูลโปรเจกต์งาน');
+      const clone = JSON.parse(JSON.stringify(project));
+
+      if (editingTx.type === 'expense') {
+        clone.expenses = (clone.expenses || []).map(e => {
+          if (e.id === editingTx.id || (e.detail === editingTx.detail && Number(e.price) === Number(editingTx.amount))) {
+            return {
+              ...e,
+              detail: editFormData.detail,
+              category: editFormData.category,
+              price: Number(editFormData.amount),
+              unit_price: Number(editFormData.amount),
+              is_voided: editFormData.is_voided
+            };
+          }
+          return e;
+        });
+      } else if (editingTx.type === 'income') {
+        if (clone.quotationItems && clone.quotationItems.length > 0) {
+          clone.quotationItems = clone.quotationItems.map(q => {
+            if (q.id === editingTx.id || (q.detail === editingTx.detail && Number(q.price) === Number(editingTx.amount))) {
+              return {
+                ...q,
+                detail: editFormData.detail,
+                category: editFormData.category,
+                price: Number(editFormData.amount),
+                unit_price: Number(editFormData.amount),
+                is_voided: editFormData.is_voided
+              };
+            }
+            return q;
+          });
+        } else {
+          clone.wage = Number(editFormData.amount);
+        }
+      }
+
+      // Recalculate totals
+      const totalRev = (clone.quotationItems || []).reduce((s, q) => s + (q.is_voided ? 0 : Number(q.price) || 0), 0) || (Number(clone.wage) || 0) + (Number(clone.deliveryFee) || 0);
+      const totalExp = (clone.expenses || []).reduce((s, e) => s + (e.is_voided ? 0 : Number(e.price) || 0), 0);
+      clone.totalRevenue = totalRev;
+      clone.totalExpenses = totalExp;
+      clone.netProfit = totalRev - totalExp;
+
+      await saveProjectSync(clone);
+      if (onSaveActivity) onSaveActivity(clone);
+      setIsEditTxModalOpen(false);
+      showToast('บันทึกการแก้ไขเรียบร้อย', 'success');
+    } catch (err) {
+      showToast('บันทึกการแก้ไขไม่สำเร็จ: ' + err.message, 'error');
+    } finally {
+      setIsTxSaving(false);
+    }
+  };
+
+  const handleToggleVoidTx = (tx) => {
+    const willVoid = !tx.isVoided;
+    const confirmMsg = willVoid
+      ? `คุณต้องการยกเลิก (Void) รายการ "${tx.detail}" (฿${tx.amount.toLocaleString()}) หรือไม่? ยอดนี้จะไม่ถูกนำไปคิดกำไรขาดทุน`
+      : `คุณต้องการเปิดใช้งานรายการ "${tx.detail}" คืนสู่บัญชีหรือไม่?`;
+
+    setConfirmDialog({
+      isOpen: true,
+      title: willVoid ? 'ยืนยันการยกเลิกรายการ' : 'ยืนยันการกู้คืนรายการ',
+      message: confirmMsg,
+      type: willVoid ? 'warning' : 'info',
+      confirmText: willVoid ? 'ยกเลิกรายการ' : 'เปิดใช้งานรายการ',
+      onConfirm: async () => {
+        try {
+          const project = activities.find(a => a.id === tx.projectId);
+          if (!project) return;
+          const clone = JSON.parse(JSON.stringify(project));
+
+          if (tx.type === 'expense') {
+            clone.expenses = (clone.expenses || []).map(e => {
+              if (e.id === tx.id || (e.detail === tx.detail && Number(e.price) === Number(tx.amount))) {
+                return { ...e, is_voided: willVoid };
+              }
+              return e;
+            });
+          } else if (tx.type === 'income') {
+            if (clone.quotationItems && clone.quotationItems.length > 0) {
+              clone.quotationItems = clone.quotationItems.map(q => {
+                if (q.id === tx.id || (q.detail === tx.detail && Number(q.price) === Number(tx.amount))) {
+                  return { ...q, is_voided: willVoid };
+                }
+                return q;
+              });
+            }
+          }
+
+          const totalRev = (clone.quotationItems || []).reduce((s, q) => s + (q.is_voided ? 0 : Number(q.price) || 0), 0) || (Number(clone.wage) || 0) + (Number(clone.deliveryFee) || 0);
+          const totalExp = (clone.expenses || []).reduce((s, e) => s + (e.is_voided ? 0 : Number(e.price) || 0), 0);
+          clone.totalRevenue = totalRev;
+          clone.totalExpenses = totalExp;
+          clone.netProfit = totalRev - totalExp;
+
+          await saveProjectSync(clone);
+          if (onSaveActivity) onSaveActivity(clone);
+          showToast(willVoid ? 'ยกเลิกรายการเรียบร้อย' : 'กู้คืนรายการเรียบร้อย', 'success');
+        } catch (err) {
+          showToast('ยกเลิกรายการไม่สำเร็จ: ' + err.message, 'error');
+        } finally {
+          setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        }
+      }
+    });
+  };
+
+  const handleDeleteTx = (tx) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'ยืนยันการลบรายการ',
+      message: `ต้องการลบรายการ "${tx.detail}" (฿${tx.amount.toLocaleString()}) ออกจากระบบถาวรหรือไม่?`,
+      type: 'danger',
+      confirmText: 'ยืนยันลบ',
+      onConfirm: async () => {
+        try {
+          const project = activities.find(a => a.id === tx.projectId);
+          if (!project) return;
+          const clone = JSON.parse(JSON.stringify(project));
+
+          if (tx.type === 'expense') {
+            clone.expenses = (clone.expenses || []).filter(e => e.id !== tx.id && !(e.detail === tx.detail && Number(e.price) === Number(tx.amount)));
+          } else if (tx.type === 'income') {
+            if (clone.quotationItems && clone.quotationItems.length > 0) {
+              clone.quotationItems = clone.quotationItems.filter(q => q.id !== tx.id && !(q.detail === tx.detail && Number(q.price) === Number(tx.amount)));
+            }
+          } else if (tx.type === 'support') {
+            clone.customerSupport = (clone.customerSupport || []).filter(cs => cs.id !== tx.id);
+          }
+
+          const totalRev = (clone.quotationItems || []).reduce((s, q) => s + (q.is_voided ? 0 : Number(q.price) || 0), 0) || (Number(clone.wage) || 0) + (Number(clone.deliveryFee) || 0);
+          const totalExp = (clone.expenses || []).reduce((s, e) => s + (e.is_voided ? 0 : Number(e.price) || 0), 0);
+          clone.totalRevenue = totalRev;
+          clone.totalExpenses = totalExp;
+          clone.netProfit = totalRev - totalExp;
+
+          await saveProjectSync(clone);
+          if (onSaveActivity) onSaveActivity(clone);
+          showToast('ลบรายการเรียบร้อย', 'success');
+        } catch (err) {
+          showToast('ลบรายการไม่สำเร็จ: ' + err.message, 'error');
+        } finally {
+          setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        }
+      }
+    });
+  };
+
+  const handleCreateTx = async (e) => {
+    e.preventDefault();
+    const validItems = (newTxFormData.items || []).filter(it => it.detail.trim() && Number(it.price) > 0);
+    if (validItems.length === 0) {
+      showToast('กรุณากรอกรายละเอียดและราคาอย่างน้อย 1 รายการ', 'error');
+      return;
+    }
+
+    setIsTxSaving(true);
+    try {
+      const pId = (newTxFormData.projectId || '').trim() || `P-${Date.now().toString().slice(-4)}`;
+      let project = activities.find(a => a.id.toLowerCase() === pId.toLowerCase());
+
+      if (!project) {
+        // Create auto fallback project container so transaction is never lost
+        project = {
+          id: pId,
+          name: newTxFormData.customer ? `งาน ${newTxFormData.customer}` : `รายการ ${pId}`,
+          customer: newTxFormData.customer || 'ลูกค้าทั่วไป',
+          artist: newTxFormData.artist || '',
+          category: newTxFormData.category || (newTxFormData.type === 'income' ? 'ค่าจัดดอกไม้/บริการ' : 'ค่าใช้จ่ายทั่วไป'),
+          deliveryDate: newTxFormData.dateTime ? newTxFormData.dateTime.substring(0, 10) : new Date().toISOString().substring(0, 10),
+          rawDateTime: newTxFormData.dateTime || new Date().toISOString(),
+          paymentChannel: newTxFormData.channel || 'โอนเงิน',
+          paymentStatus: 'paid',
+          quotationItems: [],
+          expenses: [],
+          customerSupport: [],
+          totalRevenue: 0,
+          totalExpenses: 0,
+          netProfit: 0
+        };
+      }
+
+      const clone = JSON.parse(JSON.stringify(project));
+      if (newTxFormData.artist) clone.artist = newTxFormData.artist;
+      if (newTxFormData.customer) clone.customer = newTxFormData.customer;
+      if (newTxFormData.channel) clone.paymentChannel = newTxFormData.channel;
+
+      const txDate = newTxFormData.dateTime || new Date().toISOString();
+
+      validItems.forEach((it, idx) => {
+        const lineId = `tx_${Date.now()}_${idx}`;
+        const qty = Number(it.quantity) || 1;
+        const unitP = Number(it.price) || 0;
+        const linePrice = qty * unitP;
+
+        if (newTxFormData.type === 'expense') {
+          if (!clone.expenses) clone.expenses = [];
+          clone.expenses.push({
+            id: lineId,
+            category: newTxFormData.category || 'ค่าใช้จ่ายทั่วไป',
+            detail: it.detail.trim(),
+            quantity: qty,
+            unit_price: unitP,
+            unitPrice: unitP,
+            price: linePrice,
+            date: txDate,
+            paymentChannel: newTxFormData.channel || 'โอนเงิน',
+            is_voided: false
+          });
+        } else if (newTxFormData.type === 'income') {
+          if (!clone.quotationItems) clone.quotationItems = [];
+          clone.quotationItems.push({
+            id: lineId,
+            category: newTxFormData.category || 'ค่าจัดดอกไม้/บริการ',
+            detail: it.detail.trim(),
+            quantity: qty,
+            unit_price: unitP,
+            unitPrice: unitP,
+            price: linePrice,
+            date: txDate,
+            paymentChannel: newTxFormData.channel || 'โอนเงิน',
+            is_voided: false
+          });
+        }
+      });
+
+      // Recalculate totals
+      const totalRev = (clone.quotationItems || []).reduce((s, q) => s + (q.is_voided ? 0 : Number(q.price) || 0), 0) || (Number(clone.wage) || 0) + (Number(clone.deliveryFee) || 0);
+      const totalExp = (clone.expenses || []).reduce((s, e) => s + (e.is_voided ? 0 : Number(e.price) || 0), 0);
+      clone.totalRevenue = totalRev;
+      clone.totalExpenses = totalExp;
+      clone.netProfit = totalRev - totalExp;
+
+      await saveProjectSync(clone);
+      if (onSaveActivity) onSaveActivity(clone);
+      setIsAddTxModalOpen(false);
+      setNewTxFormData({
+        type: 'income',
+        code: 'INC-รอการบันทึก',
+        dateTime: new Date().toISOString(),
+        projectId: '',
+        channel: 'โอนเงิน',
+        category: 'ค่าจัดดอกไม้/บริการ',
+        artist: '',
+        customer: '',
+        items: [{ id: Date.now(), detail: '', quantity: 1, price: '' }],
+        discountValue: 0,
+        discountType: 'baht',
+        taxType: 'none',
+        note: ''
+      });
+      showToast(`บันทึก${newTxFormData.type === 'income' ? 'รายรับ' : 'รายจ่าย'} ${validItems.length} รายการ เรียบร้อย`, 'success');
+    } catch (err) {
+      showToast('เพิ่มรายการไม่สำเร็จ: ' + err.message, 'error');
+    } finally {
+      setIsTxSaving(false);
+    }
+  };
   const visibleSlipsData = useMemo(() => displayedSlipsData.slice(0, visibleCount), [displayedSlipsData, visibleCount]);
 
   // Reset visibleCount when search/filters change
@@ -444,7 +1280,7 @@ export default function FinanceView({
       : (tableDetailMode === 'detailed' ? 'detailed' : 'compact');
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      alert('เบราว์เซอร์บล็อกหน้าต่างใหม่ (Pop-up Blocked) กรุณากดอนุญาตให้เปิดหน้าต่าง Pop-up เพื่อพิมพ์เอกสาร');
+      showToast('เบราว์เซอร์บล็อกหน้าต่างใหม่ (Pop-up Blocked) กรุณากดอนุญาตให้เปิดหน้าต่าง Pop-up เพื่อพิมพ์เอกสาร', 'error');
       return;
     }
 
@@ -1335,7 +2171,7 @@ export default function FinanceView({
   // --- Export to CSV Handler ---
   const handleExportCSV = () => {
     if (processedData.length === 0) {
-      alert("ไม่มีข้อมูลสำหรับส่งออก");
+      showToast('ไม่มีข้อมูลสำหรับส่งออก', 'warning');
       return;
     }
 
@@ -1474,32 +2310,43 @@ export default function FinanceView({
          ========================================================================= */}
       <div className="no-print flex items-center justify-between gap-2 pb-1">
         {/* View Mode Toggle: Clean segmented control */}
-        <div className="bg-slate-100 p-1 rounded-xl flex items-center border border-slate-200 shrink-0">
+        <div className="bg-slate-100 p-1 rounded-xl flex items-center border border-slate-200 shrink-0 overflow-x-auto">
+          <button
+            onClick={() => handleViewModeChange('feed')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              viewMode === 'feed'
+                ? 'bg-white text-emerald-700 shadow-sm'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <LayoutList className="w-4 h-4 text-emerald-600" />
+            <span>รายรับ-รายจ่าย</span>
+          </button>
           <button
             onClick={() => handleViewModeChange('sheet')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               viewMode === 'sheet'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-500 hover:text-slate-800'
             }`}
           >
             <TableIcon className="w-4 h-4 text-indigo-600" />
-            <span>ตารางบัญชี</span>
+            <span>ตารางบัญชี (พิมพ์)</span>
           </button>
           <button
             onClick={() => handleViewModeChange('dashboard')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               viewMode === 'dashboard'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-500 hover:text-slate-800'
             }`}
           >
-            <BarChart2 className="w-4 h-4 text-emerald-600" />
+            <BarChart2 className="w-4 h-4 text-sky-600" />
             <span>การ์ดสรุป</span>
           </button>
           <button
             onClick={() => handleViewModeChange('slips')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               viewMode === 'slips'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-500 hover:text-slate-800'
@@ -1789,9 +2636,9 @@ export default function FinanceView({
           )}
         </div>
 
-        {/* --- DESKTOP FILTER LAYOUT (เหมือนหน้ารายการแผนงาน แบบ 2 แถวสูง 48px) --- */}
-        <div className="hidden md:flex flex-col gap-3">
-          {/* แถวที่ 1: ค้นหา + ตัวเลือกวันที่ */}
+        {/* --- DESKTOP FILTER LAYOUT (แถวเดียวเป็นค่าเริ่มต้น กดปุ่มเพื่อเปิดตัวกรองเพิ่มเติม) --- */}
+        <div className="hidden md:flex flex-col gap-2.5">
+          {/* แถวที่ 1: ค้นหา + ตัวเลือกวันที่ + ปุ่มตัวกรองเพิ่มเติม + ปุ่มรีเซ็ต */}
           <div className="flex gap-3 h-[48px]">
             {/* กล่องค้นหา Desktop */}
             <div className="relative flex-[2] bg-slate-50 border border-slate-200/70 rounded-2xl hover:border-indigo-300 focus-within:bg-white focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all shadow-xs">
@@ -1808,7 +2655,7 @@ export default function FinanceView({
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 p-1 rounded-md"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 p-1 rounded-md cursor-pointer"
                   title="ล้างข้อความค้นหา"
                 >
                   <X className="w-4 h-4" />
@@ -1817,7 +2664,7 @@ export default function FinanceView({
             </div>
 
             {/* เลือกวันที่ Desktop */}
-            <div className="flex-1 min-w-[300px]">
+            <div className="flex-1 min-w-[280px]">
               <DateFilterControl
                 mode={dateFilterMode}
                 setMode={setDateFilterMode}
@@ -1827,55 +2674,1046 @@ export default function FinanceView({
                 setRange={setFilterDateRange}
               />
             </div>
-          </div>
 
-          {/* แถวที่ 2: สถานะการชำระ + สลับเรียงลำดับ + ปุ่มรีเซ็ตตัวกรอง */}
-          <div className="flex gap-3 h-[48px]">
-            {/* สถานะการชำระ Dropdown */}
-            <div className="relative flex-1 bg-slate-50 border border-slate-200/70 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs group">
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors">
-                <Wallet className="w-4 h-4" />
-              </div>
-              <select
-                value={paymentStatusFilter}
-                onChange={(e) => setPaymentStatusFilter(e.target.value)}
-                className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
-              >
-                <option value="all">สถานะการชำระ: ทั้งหมด</option>
-                <option value="paid">ชำระครบแล้ว</option>
-                <option value="deposit">มัดจำแล้ว</option>
-                <option value="unpaid">รอชำระเงิน</option>
-                <option value="refunded">คืนเงิน/ยกเลิก</option>
-              </select>
-              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            {/* สลับการเรียงลำดับ Sort Toggle Button */}
+            {/* ปุ่มเปิด/ซ่อนตัวกรองเพิ่มเติม Desktop */}
             <button
-              onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
-              className="relative flex-1 bg-slate-50 border border-slate-200/70 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs px-4 flex items-center justify-between cursor-pointer group"
-              title={sortOrder === 'desc' ? 'เรียงล่าสุดก่อน' : 'เรียงเก่าสุดก่อน'}
+              type="button"
+              onClick={() => setIsDesktopFilterExpanded(!isDesktopFilterExpanded)}
+              className={`h-[48px] px-3.5 rounded-2xl font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 active:scale-95 border cursor-pointer ${
+                isDesktopFilterExpanded 
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-200' 
+                  : (paymentStatusFilter !== 'all' || sortOrder !== 'desc')
+                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:bg-slate-50'
+              }`}
+              title={isDesktopFilterExpanded ? "ซ่อนตัวกรองเพิ่มเติม" : "เปิดตัวกรองเพิ่มเติม"}
+              aria-label="ตัวกรอง"
             >
-              <div className="flex items-center gap-2.5">
-                <ArrowUpDown className="w-4 h-4 text-slate-400 group-hover:text-indigo-500 transition-colors" />
-                <span className="text-sm font-bold text-slate-700">การเรียงลำดับ</span>
-              </div>
-              <span className="text-xs font-semibold px-2 py-0.5 bg-white border border-slate-200/80 rounded-md text-slate-600">
-                {sortOrder === 'desc' ? 'ล่าสุดก่อน' : 'เก่าสุดก่อน'}
-              </span>
+              <SlidersHorizontal className="w-4 h-4" />
+              {(paymentStatusFilter !== 'all' || sortOrder !== 'desc') && (
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                  isDesktopFilterExpanded ? 'bg-white text-indigo-600' : 'bg-indigo-200 text-indigo-800'
+                }`}>
+                  {[paymentStatusFilter !== 'all', sortOrder !== 'desc'].filter(Boolean).length}
+                </span>
+              )}
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isDesktopFilterExpanded ? 'rotate-180' : ''}`} />
             </button>
 
             {/* ปุ่มรีเซ็ตฟิลเตอร์ Desktop */}
             <button
               onClick={handleResetFilters}
-              className="px-5 bg-slate-50 border border-slate-200/70 text-slate-500 rounded-2xl font-bold hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors flex items-center justify-center shadow-xs shrink-0"
+              className="px-5 bg-slate-50 border border-slate-200/70 text-slate-500 rounded-2xl font-bold hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors flex items-center justify-center shadow-xs shrink-0 cursor-pointer active:scale-95"
               title="ล้างค่าตัวกรองทั้งหมด"
             >
-              <RotateCcw className="w-5 h-5" />
+              <RotateCcw className="w-4 h-4" />
             </button>
           </div>
+
+          {/* แถวที่ 2: สถานะการชำระ + สลับเรียงลำดับ (ซ่อนเริ่มต้น แสดงเมื่อกดปุ่มตัวกรอง) */}
+          {isDesktopFilterExpanded && (
+            <div className="flex gap-3 h-[48px] pt-1 animate-in slide-in-from-top-2 fade-in duration-200">
+              {/* สถานะการชำระ Dropdown */}
+              <div className="relative flex-1 bg-slate-50 border border-slate-200/70 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs group">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors">
+                  <Wallet className="w-4 h-4" />
+                </div>
+                <select
+                  value={paymentStatusFilter}
+                  onChange={(e) => setPaymentStatusFilter(e.target.value)}
+                  className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
+                >
+                  <option value="all">สถานะการชำระ: ทั้งหมด</option>
+                  <option value="paid">ชำระครบแล้ว</option>
+                  <option value="deposit">มัดจำแล้ว</option>
+                  <option value="unpaid">รอชำระเงิน</option>
+                  <option value="refunded">คืนเงิน/ยกเลิก</option>
+                </select>
+                <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+
+              {/* สลับการเรียงลำดับ Sort Toggle Button */}
+              <button
+                onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
+                className="relative flex-1 bg-slate-50 border border-slate-200/70 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs px-4 flex items-center justify-between cursor-pointer group"
+                title={sortOrder === 'desc' ? 'เรียงล่าสุดก่อน' : 'เรียงเก่าสุดก่อน'}
+              >
+                <div className="flex items-center gap-2.5">
+                  <ArrowUpDown className="w-4 h-4 text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                  <span className="text-sm font-bold text-slate-700">การเรียงลำดับ</span>
+                </div>
+                <span className="text-xs font-semibold px-2 py-0.5 bg-white border border-slate-200/80 rounded-md text-slate-600">
+                  {sortOrder === 'desc' ? 'ล่าสุดก่อน' : 'เก่าสุดก่อน'}
+                </span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* =========================================================================
+          VIEW 0: FINANCIAL COLUMN TABLE VIEW (ตารางคอลัมน์การเงิน รายรับ-รายจ่าย)
+         ========================================================================= */}
+      {viewMode === 'feed' && (
+        <div className="space-y-4">
+          {/* Desktop View: Modern Financial Column Table (เหมือนหน้าแผนงาน คอลัมน์ชัดเจน โฟกัสเฉพาะตัวเลขการเงิน) */}
+          <div className="hidden md:block bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto custom-scrollbar">
+              <table className="w-full min-w-[1050px] table-auto border-collapse">
+                <thead>
+                  <tr className="text-slate-400 text-xs font-bold border-b border-slate-200 bg-slate-50/80 select-none">
+                    <th className="w-[13%] min-w-[125px] px-4 py-3.5 text-left">วันที่/เวลา</th>
+                    <th className="w-[11%] min-w-[110px] px-4 py-3.5 text-left">เลขที่บิล</th>
+                    <th className="w-[28%] min-w-[260px] px-4 py-3.5 text-left">รายละเอียด</th>
+                    <th className="w-[12%] min-w-[120px] px-4 py-3.5 text-left">ประเภท/หมวดหมู่</th>
+                    <th className="w-[14%] min-w-[140px] px-4 py-3.5 text-left">ลูกค้า / ศิลปิน</th>
+                    <th className="w-[12%] min-w-[120px] px-4 py-3.5 text-right font-black text-slate-700">จำนวนเงิน</th>
+                    <th className="w-[10%] min-w-[95px] px-4 py-3.5 text-center">สถานะ</th>
+                    <th className="w-[10%] min-w-[90px] px-4 py-3.5 text-right">ดำเนินการ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-sm">
+                  {visibleSheetData.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-16 text-center text-slate-400">
+                        <LayoutList className="w-12 h-12 mx-auto mb-2 text-slate-300 opacity-80" />
+                        <p className="font-medium text-slate-500">ไม่พบข้อมูลโปรเจกต์การเงินตามเงื่อนไขที่เลือก</p>
+                      </td>
+                    </tr>
+                  ) : (
+                    visibleSheetData.map((item, projectIdx) => {
+                      const statementRows = getProjectStatementRows(item);
+
+                      return (
+                        <React.Fragment key={item.id || projectIdx}>
+                          {statementRows.map((entry, rowIdx) => {
+                            const isFirstRow = rowIdx === 0;
+                            const dtParts = getItemLedgerDateTime(item, entry);
+
+                            return (
+                              <tr
+                                key={entry.key}
+                                onClick={() => onOpenProjectModal && onOpenProjectModal(item)}
+                                className={`transition-colors group cursor-pointer border-b border-slate-100 ${
+                                  isFirstRow
+                                    ? 'border-t-2 border-slate-200/90 bg-white hover:bg-slate-50/90'
+                                    : 'bg-slate-50/40 hover:bg-slate-100/70'
+                                }`}
+                              >
+                                {/* 1. วันที่/เวลา */}
+                                <td className="px-4 py-3.5 align-top">
+                                  <div className="flex flex-col items-start leading-tight">
+                                    <span className="font-bold text-xs text-slate-900">
+                                      {dtParts.date}
+                                    </span>
+                                    <span className="text-[11px] text-slate-500 font-mono mt-0.5">
+                                      {dtParts.time}
+                                    </span>
+                                  </div>
+                                </td>
+
+                                {/* 2. เลขที่บิล */}
+                                <td className="px-4 py-3.5 align-top">
+                                  <div className="flex items-center gap-1.5">
+                                    <span
+                                      className={`font-mono font-black text-xs px-2.5 py-1 rounded-lg border transition-colors ${
+                                        isFirstRow
+                                          ? 'text-sky-700 bg-sky-50 border-sky-200'
+                                          : 'text-slate-600 bg-slate-100/80 border-slate-200'
+                                      }`}
+                                    >
+                                      {item.id}
+                                    </span>
+                                    {!isFirstRow && (
+                                      <span className="text-[10px] text-slate-400 font-mono select-none">↳</span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* 3. รายละเอียด */}
+                                <td className="px-4 py-3.5 align-top">
+                                  <div className="flex flex-col gap-1">
+                                    <h4 className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors text-sm leading-snug">
+                                      {entry.title}
+                                    </h4>
+                                    {entry.items && entry.items.length > 0 && (
+                                      <div className="mt-1 space-y-0.5 text-xs text-slate-600">
+                                        {entry.items.map((it, itIdx) => (
+                                          <div key={itIdx} className="flex items-center gap-1.5 py-0.5">
+                                            <span className="text-slate-400">•</span>
+                                            <span className="font-medium text-slate-700">{it.name}</span>
+                                            {it.amount > 0 && (
+                                              <span className="text-slate-500 font-mono text-[11px]">
+                                                (฿{formatCurrency(it.amount)})
+                                              </span>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* 4. ประเภท/หมวดหมู่ */}
+                                <td className="px-4 py-3.5 align-top">
+                                  <div className="flex flex-col gap-1 items-start">
+                                    <span
+                                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border whitespace-nowrap ${entry.typeBadge}`}
+                                    >
+                                      {entry.typeLabel}
+                                    </span>
+                                    {entry.category && entry.category !== '-' && (
+                                      <span className="text-[10px] font-semibold text-slate-500 px-1.5 py-0.5 bg-slate-100 rounded border border-slate-200">
+                                        {entry.category}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* 5. ลูกค้า / ศิลปิน (Strictly Artist on top, Customer below) */}
+                                <td className="px-4 py-3.5 align-top">
+                                  <div className="flex flex-col gap-1 text-xs">
+                                    {item.artist ? (
+                                      <div className="flex items-center gap-1.5 text-indigo-600 font-bold">
+                                        <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                                        <span className="truncate">{item.artist}</span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-400 text-xs">-</span>
+                                    )}
+                                    {item.customer && (
+                                      <div className="flex items-center gap-1.5 text-slate-500 font-medium">
+                                        <Briefcase className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                        <span className="truncate">{item.customer}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* 6. จำนวนเงิน (+฿... emerald green, -฿... rose red) */}
+                                <td className="px-4 py-3.5 align-top text-right tabular-nums">
+                                  {entry.isIncome && entry.incomeAmount > 0 ? (
+                                    <div className="flex flex-col items-end">
+                                      <span className="font-black text-sm text-emerald-600">
+                                        +฿{formatCurrency(entry.incomeAmount)}
+                                      </span>
+                                      <span className="text-[10px] text-emerald-700/70 font-semibold">
+                                        {entry.type === 'support' ? 'เงินศิลปิน' : 'รายรับ'}
+                                      </span>
+                                    </div>
+                                  ) : !entry.isIncome && entry.expenseAmount > 0 ? (
+                                    <div className="flex flex-col items-end">
+                                      <span className="font-black text-sm text-rose-600">
+                                        -฿{formatCurrency(entry.expenseAmount)}
+                                      </span>
+                                      <span className="text-[10px] text-rose-600/70 font-semibold">รายจ่ายจริง</span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-300 font-mono">฿0</span>
+                                  )}
+                                </td>
+
+                                {/* 7. สถานะ */}
+                                <td className="px-4 py-3.5 align-top text-center">
+                                  <span
+                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border whitespace-nowrap ${
+                                      entry.paymentStatus === 'paid'
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                        : entry.paymentStatus === 'deposit'
+                                        ? 'bg-sky-50 text-sky-700 border-sky-200'
+                                        : entry.paymentStatus === 'cancelled'
+                                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                        : 'bg-amber-50 text-amber-700 border-amber-200'
+                                    }`}
+                                  >
+                                    <span
+                                      className={`w-1.5 h-1.5 rounded-full ${
+                                        entry.paymentStatus === 'paid'
+                                          ? 'bg-emerald-500'
+                                          : entry.paymentStatus === 'deposit'
+                                          ? 'bg-sky-500'
+                                          : entry.paymentStatus === 'cancelled'
+                                          ? 'bg-rose-500'
+                                          : 'bg-amber-500'
+                                      }`}
+                                    />
+                                    {entry.paymentStatus === 'paid'
+                                      ? 'ชำระแล้ว'
+                                      : entry.paymentStatus === 'deposit'
+                                      ? 'ชำระมัดจำ'
+                                      : entry.paymentStatus === 'cancelled'
+                                      ? 'ยกเลิก'
+                                      : 'รอชำระเงิน'}
+                                  </span>
+                                </td>
+
+                                {/* 8. ดำเนินการ */}
+                                <td className="px-4 py-3.5 align-top text-right" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {item._slips && item._slips.length > 0 && isFirstRow && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setPreviewSlipImage(item._slips[0])}
+                                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition font-bold text-xs cursor-pointer shadow-xs"
+                                        title="คลิกเพื่อดูสลิปหลักฐานโอนเงิน"
+                                      >
+                                        <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                                        <span>{item._slips.length}</span>
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => onOpenProjectModal && onOpenProjectModal(item)}
+                                      className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50 border border-transparent hover:border-indigo-100 transition cursor-pointer"
+                                      title="เปิดดูรายละเอียดโปรเจกต์"
+                                    >
+                                      <Eye className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setNewTxFormData(prev => ({
+                                          ...prev,
+                                          projectId: item.id,
+                                          customer: item.customer || '',
+                                          artist: item.artist || ''
+                                        }));
+                                        setIsAddTxModalOpen(true);
+                                      }}
+                                      className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 border border-transparent hover:border-emerald-100 transition cursor-pointer"
+                                      title="เพิ่มรายการในโปรเจกต์นี้"
+                                    >
+                                      <Plus className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </React.Fragment>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination / Progressive Load */}
+            {visibleCount < processedData.length && (
+              <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount(prev => prev + 35)}
+                  className="px-6 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs border border-slate-200 shadow-sm transition active:scale-95 cursor-pointer"
+                >
+                  โหลดข้อมูลเพิ่มเติม (แสดง {visibleSheetData.length} จาก {processedData.length} รายการ)
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Mobile View: Clean Financial Touch Cards (โฟกัสเฉพาะตัวเลขการเงิน 4 ลำดับ) */}
+          <div className="md:hidden flex flex-col gap-3.5">
+            {visibleSheetData.length === 0 ? (
+              <div className="py-12 text-center bg-white rounded-2xl border border-dashed border-slate-200">
+                <LayoutList className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                <p className="text-slate-500 text-xs font-medium">ไม่พบข้อมูลโปรเจกต์ตามเงื่อนไข</p>
+              </div>
+            ) : (
+              visibleSheetData.map((item, idx) => {
+                const statementRows = getProjectStatementRows(item);
+
+                return (
+                  <div
+                    key={item.id || idx}
+                    onClick={() => onOpenProjectModal && onOpenProjectModal(item)}
+                    className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4 flex flex-col gap-3.5 transition active:scale-[0.99] cursor-pointer"
+                  >
+                    {/* Header Row: ID + Date + Status */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono font-black text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-lg">
+                          {item.id}
+                        </span>
+                        <span className="text-xs text-slate-700 font-semibold flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                          {formatItemDateTime(item)}
+                        </span>
+                      </div>
+
+                      <span
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                          item._paymentStatus === 'paid'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : item._paymentStatus === 'deposit'
+                            ? 'bg-sky-50 text-sky-700 border-sky-200'
+                            : item._paymentStatus === 'cancelled'
+                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}
+                      >
+                        {item._paymentStatus === 'paid'
+                          ? 'ชำระแล้ว'
+                          : item._paymentStatus === 'deposit'
+                          ? 'มัดจำ'
+                          : item._paymentStatus === 'cancelled'
+                          ? 'ยกเลิก'
+                          : 'รอชำระ'}
+                      </span>
+                    </div>
+
+                    {/* Project & Category */}
+                    <div>
+                      <h4 className="font-black text-slate-900 text-base leading-snug line-clamp-2">
+                        {item.name || 'ไม่มีชื่อโปรเจกต์'}
+                      </h4>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        {item.category && (
+                          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                            {item.category}
+                          </span>
+                        )}
+                        {item.artist && (
+                          <span className="text-[11px] font-semibold text-indigo-600">
+                            ศิลปิน: {item.artist}
+                          </span>
+                        )}
+                        {item.customer && (
+                          <span className="text-[11px] text-slate-500">
+                            ลูกค้า: {item.customer}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Statement Entries Breakdown (สเตตเมนต์ธนาคาร: เงินศิลปิน, รายรับ, รายจ่าย) */}
+                    <div className="space-y-2 pt-1 border-t border-slate-100">
+                      {statementRows.map((entry) => (
+                        <div
+                          key={entry.key}
+                          className="bg-slate-50/80 rounded-xl p-2.5 border border-slate-200/70 flex flex-col gap-1.5"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${entry.typeBadge}`}
+                            >
+                              {entry.typeLabel}
+                            </span>
+                            <div className="text-right">
+                              {entry.isIncome && entry.incomeAmount > 0 ? (
+                                <span className="font-black text-xs text-emerald-600 tabular-nums">
+                                  +฿{formatCurrency(entry.incomeAmount)}
+                                </span>
+                              ) : !entry.isIncome && entry.expenseAmount > 0 ? (
+                                <span className="font-black text-xs text-rose-600 tabular-nums">
+                                  -฿{formatCurrency(entry.expenseAmount)}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300 font-mono text-xs">-</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Sub-items */}
+                          {entry.items && entry.items.length > 0 && (
+                            <div className="space-y-1 pl-1 pt-1 border-t border-slate-200/50">
+                              {entry.items.map((it, itIdx) => (
+                                <div
+                                  key={itIdx}
+                                  className="flex items-center justify-between text-[11px] text-slate-600 font-mono"
+                                >
+                                  <span className="truncate pr-2">• {it.name}</span>
+                                  {it.amount > 0 && (
+                                    <span className="font-semibold text-slate-700 shrink-0">
+                                      ฿{formatCurrency(it.amount)}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Card Actions */}
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100" onClick={(e) => e.stopPropagation()}>
+                      {item._slips && item._slips.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewSlipImage(item._slips[0])}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold cursor-pointer"
+                        >
+                          <Receipt className="w-3.5 h-3.5" />
+                          <span>ดูสลิป ({item._slips.length})</span>
+                        </button>
+                      ) : (
+                        <span className="text-xs text-slate-400">ไม่มีสลิป</span>
+                      )}
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewTxFormData(prev => ({ ...prev, projectId: item.id }));
+                            setIsAddTxModalOpen(true);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>เพิ่มรับ/จ่าย</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onOpenProjectModal && onOpenProjectModal(item)}
+                          className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm cursor-pointer"
+                        >
+                          เปิดดูงาน
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+
+            {visibleCount < processedData.length && (
+              <button
+                type="button"
+                onClick={() => setVisibleCount(prev => prev + 35)}
+                className="w-full py-3 rounded-2xl bg-white border border-slate-200 text-slate-700 font-bold text-xs shadow-sm active:scale-98 transition text-center"
+              >
+                โหลดเพิ่มเติม ({visibleSheetData.length}/{processedData.length})
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Edit Transaction Modal */}
+      {isEditTxModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
+            onClick={() => setIsEditTxModalOpen(false)}
+          />
+
+          <div
+            className="bg-white w-full max-w-lg sm:rounded-[2.5rem] rounded-2xl shadow-2xl relative z-10 overflow-hidden border border-slate-100 flex flex-col max-h-[90vh] modal-animate-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Sticky Header */}
+            <div className="px-5 py-4 sm:px-8 sm:py-6 border-b border-slate-100 flex justify-between items-center bg-white sticky top-0 z-20 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 sm:p-3 bg-amber-50 text-amber-600 rounded-xl sm:rounded-2xl shrink-0">
+                  <Edit className="w-5 h-5 sm:w-6 sm:h-6" />
+                </div>
+                <div>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                    <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
+                      แก้ไขรายการธุรกรรม
+                    </h3>
+                    {editingTx?.projectId && (
+                      <span className="bg-amber-50 text-amber-700 text-[10px] sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-amber-100 font-mono w-fit">
+                        {editingTx.projectId}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs sm:text-sm text-slate-500 font-medium">
+                    แก้ไขข้อมูลธุรกรรม หรือทำเครื่องหมาย Void
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditTxModalOpen(false)}
+                className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors active:scale-95 cursor-pointer"
+              >
+                <X className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditTx} className="flex flex-col flex-1 overflow-hidden">
+              {/* Scrollable Form Body */}
+              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-4 overscroll-contain">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">หมวดหมู่</label>
+                  <input
+                    type="text"
+                    value={editFormData.category}
+                    onChange={(e) => setEditFormData({ ...editFormData, category: e.target.value })}
+                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">รายละเอียดรายการ *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editFormData.detail}
+                    onChange={(e) => setEditFormData({ ...editFormData, detail: e.target.value })}
+                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">จำนวนเงิน (฿) *</label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    step="any"
+                    value={editFormData.amount}
+                    onChange={(e) => setEditFormData({ ...editFormData, amount: e.target.value })}
+                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-black text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                  />
+                </div>
+
+                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="void_checkbox"
+                    checked={editFormData.is_voided}
+                    onChange={(e) => setEditFormData({ ...editFormData, is_voided: e.target.checked })}
+                    className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
+                  />
+                  <label htmlFor="void_checkbox" className="text-xs font-bold text-slate-700 cursor-pointer">
+                    ยกเลิกรายการนี้ (Void) - ไม่นำยอดนี้ไปคิดกำไรขาดทุน
+                  </label>
+                </div>
+              </div>
+
+              {/* Sticky Footer */}
+              <div className="px-5 py-4 sm:px-8 sm:py-5 border-t border-slate-100 bg-white/95 backdrop-blur-xl sticky bottom-0 z-30 flex items-center justify-between gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsEditTxModalOpen(false)}
+                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-all active:scale-95 cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={isTxSaving}
+                  className="py-3 px-7 sm:px-8 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-emerald-200 hover:shadow-emerald-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+                >
+                  {isTxSaving ? (
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <Check className="w-4 h-4" />
+                  )}
+                  <span>{isTxSaving ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Transaction Modal */}
+      {isAddTxModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
+            onClick={() => setIsAddTxModalOpen(false)}
+          />
+
+          <div
+            className="bg-white w-full max-w-2xl sm:max-w-3xl sm:rounded-[2.5rem] rounded-2xl shadow-2xl relative z-10 overflow-hidden border border-slate-100 flex flex-col max-h-[92vh] modal-animate-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Sticky Header */}
+            <div className="px-5 py-4 sm:px-8 sm:py-5 border-b border-slate-100 flex justify-between items-center bg-white sticky top-0 z-20 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 sm:p-3 rounded-2xl shrink-0 shadow-sm ${
+                  newTxFormData.type === 'income'
+                    ? 'bg-emerald-500 text-white shadow-emerald-200'
+                    : 'bg-rose-500 text-white shadow-rose-200'
+                }`}>
+                  {newTxFormData.type === 'income' ? (
+                    <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6" />
+                  ) : (
+                    <TrendingDown className="w-5 h-5 sm:w-6 sm:h-6" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
+                    เพิ่มรายการใหม่
+                  </h3>
+                  <p className="text-xs font-black text-slate-400 tracking-wider uppercase mt-0.5">
+                    MANUAL TRANSACTION
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddTxModalOpen(false)}
+                className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors active:scale-95 cursor-pointer"
+                title="ปิดหน้าต่าง"
+              >
+                <X className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateTx} className="flex flex-col flex-1 overflow-hidden">
+              {/* Scrollable Form Body */}
+              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-4 overscroll-contain">
+                {/* 1. Transaction Type Toggle Cards (รายรับ vs รายจ่าย แบบการ์ดปุ่มกด) */}
+                <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setNewTxFormData(prev => ({ ...prev, type: 'income', code: 'INC-รอการบันทึก' }))}
+                    className={`py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2.5 transition-all cursor-pointer font-black text-sm sm:text-base border-2 ${
+                      newTxFormData.type === 'income'
+                        ? 'border-emerald-500 bg-emerald-50/70 text-emerald-800 shadow-sm shadow-emerald-100 ring-2 ring-emerald-400/20'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-500'
+                    }`}
+                  >
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                      newTxFormData.type === 'income' ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400'
+                    }`}>
+                      <TrendingUp className="w-4 h-4" />
+                    </div>
+                    <span>รายรับ</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewTxFormData(prev => ({ ...prev, type: 'expense', code: 'EXP-รอการบันทึก' }))}
+                    className={`py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2.5 transition-all cursor-pointer font-black text-sm sm:text-base border-2 ${
+                      newTxFormData.type === 'expense'
+                        ? 'border-rose-500 bg-rose-50/70 text-rose-800 shadow-sm shadow-rose-100 ring-2 ring-rose-400/20'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-500'
+                    }`}
+                  >
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                      newTxFormData.type === 'expense' ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-400'
+                    }`}>
+                      <TrendingDown className="w-4 h-4" />
+                    </div>
+                    <span>รายจ่าย</span>
+                  </button>
+                </div>
+
+                {/* 2. Top Row: เลขที่รายการ & วันที่ทำรายการ (ไว้ด้านบนสุดตามรูปถ่าย) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">เลขที่รายการ</label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={newTxFormData.code}
+                      className="w-full px-4 py-3 bg-slate-100/80 border border-slate-200 rounded-2xl text-sm font-mono font-bold text-slate-600 cursor-not-allowed select-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+                      <span>วันที่ทำรายการ *</span>
+                      <span className="text-[11px] text-indigo-600 font-semibold">(ระบุวันและเวลา)</span>
+                    </label>
+                    <ModernDateTimePicker
+                      value={newTxFormData.dateTime}
+                      onChange={(e) => setNewTxFormData(prev => ({ ...prev, dateTime: e.target.value }))}
+                      hasTime={true}
+                      placeholder="เลือกวันและเวลาทำรายการ..."
+                      className="w-full border-slate-200"
+                    />
+                  </div>
+                </div>
+
+                {/* 3. Project ID & Channel */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">รหัสงาน (Project ID) *</label>
+                    <input
+                      list="project-id-suggestions"
+                      type="text"
+                      value={newTxFormData.projectId}
+                      onChange={(e) => setNewTxFormData(prev => ({ ...prev, projectId: e.target.value }))}
+                      placeholder="เช่น P-0309"
+                      className="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm uppercase font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                    />
+                    <datalist id="project-id-suggestions">
+                      {activities.slice(0, 15).map(a => (
+                        <option key={a.id} value={a.id}>{a.name || a.customer}</option>
+                      ))}
+                    </datalist>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">ช่องทางการชำระเงิน</label>
+                    <select
+                      value={newTxFormData.channel}
+                      onChange={(e) => setNewTxFormData(prev => ({ ...prev, channel: e.target.value }))}
+                      className="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer"
+                    >
+                      <option value="โอนเงิน">โอนเงิน (Mobile Banking)</option>
+                      <option value="เงินสด">เงินสด (Cash)</option>
+                      <option value="บัตรเครดิต">บัตรเครดิต (Credit Card)</option>
+                      <option value="พร้อมเพย์">พร้อมเพย์ (PromptPay)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* 4. Artist & Customer Meta */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>ศิลปิน (Artist)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={newTxFormData.artist}
+                      onChange={(e) => setNewTxFormData(prev => ({ ...prev, artist: e.target.value }))}
+                      placeholder="เช่น Nunew DMD"
+                      className="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1">
+                      <Briefcase className="w-3.5 h-3.5 text-slate-400" />
+                      <span>ลูกค้า (Customer)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={newTxFormData.customer}
+                      onChange={(e) => setNewTxFormData(prev => ({ ...prev, customer: e.target.value }))}
+                      placeholder="เช่น คุณวิไลลักษณ์"
+                      className="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                    />
+                  </div>
+                </div>
+
+                {/* 5. Section: รายการสินค้าและบริการ (ตามรูปถ่าย เพิ่มได้เรื่อยๆ) */}
+                <div className="border border-slate-200/90 rounded-3xl p-4 sm:p-5 bg-white space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-black text-sm text-slate-800">
+                        รายการสินค้าและบริการ <span className="text-rose-500">*</span>
+                      </h4>
+                      <span className="text-xs text-slate-400 font-semibold">
+                        ({newTxFormData.items.length} รายการ)
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddTxItem}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-black transition-all active:scale-95 cursor-pointer shadow-xs"
+                    >
+                      <Plus className="w-4 h-4 text-sky-600" />
+                      <span>เพิ่มรายการ</span>
+                    </button>
+                  </div>
+
+                  {/* Header labels on desktop */}
+                  <div className="hidden sm:grid sm:grid-cols-12 gap-2 text-xs font-bold text-slate-400 px-2 py-1 select-none">
+                    <div className="col-span-6">รายละเอียด</div>
+                    <div className="col-span-2 text-center">จำนวน</div>
+                    <div className="col-span-2 text-right">ราคา</div>
+                    <div className="col-span-2 text-right">รวม</div>
+                  </div>
+
+                  {/* Item Rows */}
+                  <div className="space-y-2">
+                    {newTxFormData.items.map((it, idx) => {
+                      const itemTotal = (Number(it.quantity) || 1) * (Number(it.price) || 0);
+
+                      return (
+                        <div
+                          key={it.id || idx}
+                          className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-2.5 items-center bg-slate-50/80 p-2.5 sm:p-3 rounded-2xl border border-slate-200/70 hover:border-slate-300 transition-colors"
+                        >
+                          <div className="sm:col-span-6">
+                            <input
+                              type="text"
+                              placeholder="ค้นหาหรือพิมพ์ชื่อรายการ..."
+                              value={it.detail}
+                              onChange={(e) => handleUpdateTxItem(idx, 'detail', e.target.value)}
+                              required
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all placeholder:text-slate-400"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2 sm:col-span-2">
+                            <span className="text-xs text-slate-500 font-bold sm:hidden">จำนวน:</span>
+                            <input
+                              type="number"
+                              min="1"
+                              value={it.quantity}
+                              onChange={(e) => handleUpdateTxItem(idx, 'quantity', e.target.value)}
+                              className="w-full px-2 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-center text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2 sm:col-span-2">
+                            <span className="text-xs text-slate-500 font-bold sm:hidden">ราคา:</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              placeholder="0"
+                              value={it.price}
+                              onChange={(e) => handleUpdateTxItem(idx, 'price', e.target.value)}
+                              required
+                              className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-right text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                            />
+                          </div>
+                          <div className="flex items-center justify-between sm:justify-end gap-2 sm:col-span-2">
+                            <span className="text-xs text-slate-500 font-bold sm:hidden">รวม:</span>
+                            <span className="font-black text-sm text-slate-900 tabular-nums">
+                              {formatCurrency(itemTotal)} บาท
+                            </span>
+                            {newTxFormData.items.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveTxItem(idx)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                title="ลบรายการนี้"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 6. Section: สรุปคำนวณเงิน + ส่วนลด + ภาษี (ตามรูปถ่าย) */}
+                <div className="bg-slate-50/90 border border-slate-200/90 rounded-3xl p-4 sm:p-5 space-y-3.5">
+                  {/* รวมเป็นเงิน */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-slate-700">รวมเป็นเงิน</span>
+                    <span className="text-base font-black text-slate-900 tabular-nums">
+                      {formatCurrency(calcTxSubtotal)} บาท
+                    </span>
+                  </div>
+
+                  {/* ส่วนลด */}
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-bold text-slate-700">ส่วนลด</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={newTxFormData.discountValue || ''}
+                        onChange={(e) => setNewTxFormData(prev => ({ ...prev, discountValue: e.target.value }))}
+                        placeholder="0.00"
+                        className="w-28 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-right text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                      />
+                      <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5 shadow-2xs">
+                        <button
+                          type="button"
+                          onClick={() => setNewTxFormData(prev => ({ ...prev, discountType: 'baht' }))}
+                          className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
+                            newTxFormData.discountType === 'baht'
+                              ? 'bg-sky-500 text-white shadow-xs'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          บาท
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewTxFormData(prev => ({ ...prev, discountType: 'percent' }))}
+                          className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
+                            newTxFormData.discountType === 'percent'
+                              ? 'bg-sky-500 text-white shadow-xs'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          %
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* การคิดภาษี (รวม VAT | แยก VAT | ไม่มี VAT) */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-slate-200/60">
+                    <span className="text-sm font-bold text-slate-700">การคิดภาษี</span>
+                    <div className="flex items-center gap-4 text-xs font-bold text-slate-700">
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="taxType"
+                          checked={newTxFormData.taxType === 'include'}
+                          onChange={() => setNewTxFormData(prev => ({ ...prev, taxType: 'include' }))}
+                          className="w-4 h-4 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                        />
+                        <span>รวม VAT</span>
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="taxType"
+                          checked={newTxFormData.taxType === 'exclude'}
+                          onChange={() => setNewTxFormData(prev => ({ ...prev, taxType: 'exclude' }))}
+                          className="w-4 h-4 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                        />
+                        <span>แยก VAT</span>
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="taxType"
+                          checked={newTxFormData.taxType === 'none'}
+                          onChange={() => setNewTxFormData(prev => ({ ...prev, taxType: 'none' }))}
+                          className="w-4 h-4 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                        />
+                        <span>ไม่มี VAT</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* ยอดสุทธิ Hero Card */}
+                  <div className="bg-gradient-to-r from-sky-500 to-blue-600 text-white rounded-2xl p-4 flex items-center justify-between shadow-lg shadow-sky-500/25">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center shrink-0">
+                        <Activity className="w-5 h-5 text-white" />
+                      </div>
+                      <span className="font-black text-base sm:text-lg text-white">ยอดสุทธิ</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="font-black text-2xl sm:text-3xl tracking-tight tabular-nums text-white">
+                        {formatCurrency(calcTxNetTotal)} ฿
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sticky Footer */}
+              <div className="px-5 py-4 sm:px-8 sm:py-5 border-t border-slate-100 bg-white/95 backdrop-blur-xl sticky bottom-0 z-30 flex items-center justify-between gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsAddTxModalOpen(false)}
+                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-all active:scale-95 cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={isTxSaving}
+                  className="py-3 px-7 sm:px-8 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-emerald-200 hover:shadow-emerald-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+                >
+                  {isTxSaving ? (
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <Check className="w-4 h-4" />
+                  )}
+                  <span>{isTxSaving ? 'กำลังบันทึก...' : 'บันทึกรายการ'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* =========================================================================
           VIEW 1: ACCOUNTING SHEET VIEW (ตารางกำไรขาดทุนตามรูปถ่าย)
@@ -2826,7 +4664,11 @@ export default function FinanceView({
                                   return (
                                     <div
                                       key={slip.id || slipIdx}
-                                      onClick={() => setPreviewSlipImage(slipSrc)}
+                                      onClick={() => setPreviewSlipImage({
+                                        images: slips,
+                                        initialIndex: slipIdx,
+                                        title: `สลิปโอนเงิน - ${item.customerName || item.jobName || 'รายการ'}`
+                                      })}
                                       className={`group relative rounded-xl overflow-hidden border border-slate-200 bg-white shadow-2xs hover:shadow-md hover:border-indigo-400 transition-all cursor-pointer ${
                                         slipsPerRow === 3 ? 'h-64 sm:h-72' : 'h-48 sm:h-56'
                                       } w-auto max-w-full`}
@@ -2899,30 +4741,34 @@ export default function FinanceView({
 
       {/* Lightbox Modal for Slips View */}
       {previewSlipImage && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => setPreviewSlipImage(null)}
-        >
-          <div
-            className="relative max-w-2xl max-h-[90vh] bg-white rounded-2xl overflow-hidden shadow-2xl p-2 flex flex-col items-center"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={() => setPreviewSlipImage(null)}
-              className="absolute top-4 right-4 z-10 p-2 bg-black/60 hover:bg-black/80 text-white rounded-full transition shadow-md"
-              title="ปิด"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <img
-              src={processImageUrl(previewSlipImage)}
-              alt="สลิปโอนเงินขนาดเต็ม"
-              className="max-h-[82vh] w-auto max-w-full object-contain rounded-xl"
-              referrerPolicy="no-referrer"
-            />
-          </div>
-        </div>
+        <ImageViewer
+          src={previewSlipImage}
+          onClose={() => setPreviewSlipImage(null)}
+        />
+      )}
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmText={confirmDialog.confirmText}
+        cancelText="ยกเลิก"
+        type={confirmDialog.type}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
+
+      {/* Toast Notification */}
+      {toast.show && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast({ ...toast, show: false })}
+        />
       )}
     </div>
   );
 }
+
+export default React.memo(FinanceView);
