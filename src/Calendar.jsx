@@ -1,10 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { systemStatusTypes } from './constants/appConstants';
 import {
   ChevronLeft,
   ChevronRight,
-  Calendar,
+  Calendar as CalendarIcon,
   Clock,
   X,
   Truck,
@@ -27,11 +27,21 @@ const colorPresets = [
   { name: 'Rose', value: 'bg-rose-50 text-rose-700 border-rose-100', dot: 'bg-rose-500' },
 ];
 
-const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [], transportStatuses = [] }) => {
+const Calendar = ({ activities = [], onEventClick, onDayClick, dealStatuses = [], transportStatuses = [], onMonthChange }) => {
   const [viewDate, setViewDate] = useState(new Date());
   const [viewMode, setViewMode] = useState('month'); // 'month', 'week', 'day', 'list'
   const [selectedDayDetails, setSelectedDayDetails] = useState(null); // Data for modal
   const [isDayModalClosing, setIsDayModalClosing] = useState(false); // [ADDED] State for modal closing animation
+  
+  // แจ้งเตือน Parent ทันทีที่ผู้ใช้เลื่อนเปลี่ยนเดือน เพื่อดึงข้อมูลเข้าสู่ IndexedDB อัตโนมัติ 0-Click
+  useEffect(() => {
+    const y = viewDate.getFullYear();
+    const m = String(viewDate.getMonth() + 1).padStart(2, '0');
+    const ym = `${y}-${m}`;
+    if (onMonthChange) {
+      onMonthChange(ym);
+    }
+  }, [viewDate.getFullYear(), viewDate.getMonth(), onMonthChange]);
   
   const monthsTH = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
   // [FIX] Added missing monthsShortTH definition
@@ -72,7 +82,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
   // [OPTIMIZATION] Group events by day using rawDeliveryStart
   const eventsMap = useMemo(() => {
     const map = {};
-    activities.forEach(item => {
+    (activities || []).forEach(item => {
         // Requirement 4: Use rawDeliveryStart (Delivery Start Date) -> fallback to rawDateTime
         const dateStr = item.rawDeliveryStart || item.rawDeliveryDateTime || item.rawDateTime;
         if(!dateStr) return;
@@ -142,7 +152,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
           key={idx} 
           onClick={(e) => { e.stopPropagation(); onEventClick(ev); }}
           // [MODIFIED] Ultra compact for mobile (8px font, tighter tracking, hidden dot)
-          className={`text-[8px] sm:text-xs text-left px-0.5 py-0.5 sm:px-2 sm:py-1 rounded-[3px] sm:rounded-md border truncate transition-all w-full mb-0.5 sm:mb-1 flex items-center gap-0.5 sm:gap-1 shrink-0 h-auto min-h-[16px] sm:min-h-[26px] ${itemColor} leading-none`}
+          className={`text-xs text-left px-0.5 py-0.5 sm:px-2 sm:py-1 rounded-[3px] sm:rounded-md border truncate transition-all w-full mb-0.5 sm:mb-1 flex items-center gap-0.5 sm:gap-1 shrink-0 h-auto min-h-[16px] sm:min-h-[26px] ${itemColor} leading-none`}
           title={`${timeStr} ${ev.name} (${ev.artist})`}
        >
           <div className={`w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full shrink-0 ${dotColor} hidden sm:block`}></div>
@@ -163,7 +173,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                 <div className="w-full flex flex-col flex-1 h-full">
                     <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50/50 shrink-0">
                         {daysShortTH.map((d, i) => (
-                            <div key={d} className={`py-2 sm:py-3 text-center text-[10px] sm:text-sm font-bold ${i===0 || i===6 ? 'text-rose-500' : 'text-slate-500'}`}>{d}</div>
+                            <div key={d} className={`py-2 sm:py-3 text-center text-xs sm:text-sm font-bold ${i===0 || i===6 ? 'text-rose-500' : 'text-slate-500'}`}>{d}</div>
                         ))}
                     </div>
                     <div className="grid grid-cols-7 flex-1 auto-rows-fr bg-slate-50/10 overflow-y-auto">
@@ -184,10 +194,10 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                                     className={`border-b border-r border-slate-100 p-0.5 sm:p-2 flex flex-col gap-0.5 sm:gap-1 transition-colors hover:bg-indigo-50/30 group min-h-[50px] sm:min-h-[140px] relative cursor-pointer ${isCurrent ? 'bg-indigo-50/20' : 'bg-white'}`}
                                 >
                                     <div className="flex justify-between items-start p-0.5 sm:p-1">
-                                        <span className={`text-[10px] sm:text-sm font-bold w-4 h-4 sm:w-7 sm:h-7 flex items-center justify-center rounded-full ${isCurrent ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-700'}`}>
+                                        <span className={`text-xs sm:text-sm font-bold w-4 h-4 sm:w-7 sm:h-7 flex items-center justify-center rounded-full ${isCurrent ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-700'}`}>
                                             {day}
                                         </span>
-                                        {events.length > 0 && <span className="text-[8px] sm:text-[10px] font-bold text-slate-400 bg-slate-100 px-1 sm:px-1.5 rounded-full border border-slate-200">+{events.length}</span>}
+                                        {events.length > 0 && <span className="text-xs font-bold text-slate-400 bg-slate-100 px-1 sm:px-1.5 rounded-full border border-slate-200">+{events.length}</span>}
                                     </div>
                                     <div className="flex-1 flex flex-col gap-0.5 overflow-y-auto custom-scrollbar mt-0.5 sm:mt-1 px-0 max-h-[80px] sm:max-h-[140px]">
                                         {events.map((ev, idx) => renderEventItem(ev, idx))}
@@ -252,7 +262,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                  </div>
              </div>
              {/* Hint for mobile scroll */}
-             <div className="md:hidden absolute bottom-2 right-4 bg-black/20 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none backdrop-blur-sm animate-pulse">
+             <div className="md:hidden absolute bottom-2 right-4 bg-black/20 text-white text-xs px-2 py-1 rounded-full pointer-events-none backdrop-blur-sm animate-pulse">
                 เลื่อนซ้าย-ขวา เพื่อดูเพิ่มเติม
              </div>
         </div>
@@ -267,7 +277,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
           <div className="flex-1 bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden flex flex-col p-6">
               <div className="flex items-center gap-3 mb-6">
                   <div className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center border shadow-sm ${isCurrentDay ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-indigo-100 text-indigo-600 border-indigo-200'}`}>
-                      <span className="text-[10px] font-bold uppercase">{daysShortTH[viewDate.getDay()]}</span>
+                      <span className="text-xs font-bold uppercase">{daysShortTH[viewDate.getDay()]}</span>
                       <span className="text-xl font-black leading-none">{viewDate.getDate()}</span>
                   </div>
                   <div>
@@ -294,7 +304,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                           <div className="flex-1 min-w-0">
                               <div className="flex justify-between">
                                   <h4 className="font-bold text-slate-800 truncate">{ev.name}</h4>
-                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusInfo.color}`}>
+                                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${statusInfo.color}`}>
                                       {statusInfo.label}
                                   </span>
                               </div>
@@ -307,7 +317,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                       </div>
                   )}) : (
                       <div className="flex flex-col items-center justify-center h-48 text-slate-400">
-                          <Calendar className="w-10 h-10 mb-2 opacity-20" />
+                          <CalendarIcon className="w-10 h-10 mb-2 opacity-20" />
                           <p>ไม่มีรายการในวันนี้</p>
                       </div>
                   )}
@@ -356,7 +366,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                                           <div className="flex-1 min-w-0">
                                               <div className="flex justify-between items-start">
                                                   <span className="font-bold text-slate-800 text-sm truncate">{ev.name}</span>
-                                                  <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 rounded text-slate-500 whitespace-nowrap">{ev.category}</span>
+                                                  <span className="text-xs px-1.5 py-0.5 bg-slate-100 rounded text-slate-500 whitespace-nowrap">{ev.category}</span>
                                               </div>
                                               <div className="text-xs text-slate-500 mt-0.5 truncate">
                                                   <span className="font-medium text-indigo-600">{ev.artist}</span> • {ev.customer}
@@ -396,7 +406,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                 <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-white">
                     <div className="flex items-center gap-3">
                         <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex flex-col items-center justify-center border border-indigo-100">
-                            <span className="text-[10px] font-bold uppercase">{daysShortTH[date.getDay()]}</span>
+                            <span className="text-xs font-bold uppercase">{daysShortTH[date.getDay()]}</span>
                             <span className="text-xl font-black leading-none">{date.getDate()}</span>
                         </div>
                         <div>
@@ -464,11 +474,11 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                                                         <td className="p-4 align-top">
                                                             {/* [MODIFIED] Show both Deal and Transport Status */}
                                                             <div className="flex flex-col gap-1.5 items-start">
-                                                                <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${statusInfo.color}`}>
+                                                                <span className={`text-xs font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${statusInfo.color}`}>
                                                                     <div className={`w-1.5 h-1.5 rounded-full ${statusInfo.type === 'confirmed' || statusInfo.type === 'completed' ? 'bg-emerald-500' : 'bg-slate-400'}`}></div>
                                                                     {statusInfo.label}
                                                                 </span>
-                                                                <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${transportInfo.color}`}>
+                                                                <span className={`text-xs font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${transportInfo.color}`}>
                                                                     <Truck className="w-3 h-3" />
                                                                     {transportInfo.label}
                                                                 </span>
@@ -507,11 +517,11 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                                                 </div>
                                                 {/* [MODIFIED] Show both statuses stacked on mobile */}
                                                 <div className="flex flex-col gap-1 items-end">
-                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${statusInfo.color}`}>
+                                                    <span className={`text-xs font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${statusInfo.color}`}>
                                                         <div className={`w-1.5 h-1.5 rounded-full ${statusInfo.type === 'confirmed' || statusInfo.type === 'completed' ? 'bg-emerald-500' : 'bg-slate-400'}`}></div>
                                                         {statusInfo.label}
                                                     </span>
-                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${transportInfo.color}`}>
+                                                    <span className={`text-xs font-bold px-2 py-1 rounded-md border inline-flex items-center gap-1 ${transportInfo.color}`}>
                                                         <Truck className="w-3 h-3" />
                                                         {transportInfo.label}
                                                     </span>
@@ -525,18 +535,18 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
 
                                             <div className="grid grid-cols-2 gap-2 text-xs text-slate-600 bg-slate-50 p-2 rounded-xl border border-slate-100">
                                                 <div>
-                                                    <p className="text-[10px] text-slate-400">ศิลปิน</p>
+                                                    <p className="text-xs text-slate-500 font-semibold">ศิลปิน</p>
                                                     <p className="font-bold text-indigo-600 truncate">{item.artist}</p>
                                                 </div>
                                                 <div>
-                                                    <p className="text-[10px] text-slate-400">ลูกค้า</p>
+                                                    <p className="text-xs text-slate-500 font-semibold">ลูกค้า</p>
                                                     <p className="truncate">{item.customer}</p>
                                                 </div>
                                                 <div className="col-span-2 pt-1 border-t border-slate-200 mt-1">
-                                                    <p className="text-[10px] text-slate-400">ผู้รับ</p>
+                                                    <p className="text-xs text-slate-500 font-semibold">ผู้รับ</p>
                                                     <div className="flex items-center gap-1">
                                                         <span className="truncate font-medium">{item.recipient || '-'}</span>
-                                                        {item.recipientPhone && <span className="text-slate-400 text-[10px]">({item.recipientPhone})</span>}
+                                                        {item.recipientPhone && <span className="text-slate-500 text-xs font-medium">({item.recipientPhone})</span>}
                                                     </div>
                                                 </div>
                                             </div>
@@ -553,7 +563,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
                     ) : (
                         <div className="flex flex-col items-center justify-center h-64 text-slate-400">
                             <div className="p-4 bg-white rounded-full shadow-sm mb-3">
-                                <Calendar className="w-8 h-8 text-slate-300" />
+                                <CalendarIcon className="w-8 h-8 text-slate-300" />
                             </div>
                             <p className="font-bold">ไม่มีรายการงานในวันนี้</p>
                         </div>
@@ -609,7 +619,7 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
              {/* View Switcher - Grid layout on mobile for even spacing - MOVED UP */}
              <div className="grid grid-cols-4 gap-1 bg-slate-100 p-1 rounded-xl w-full xl:w-auto xl:flex">
                  {[
-                     { id: 'month', label: 'เดือน', icon: Calendar },
+                     { id: 'month', label: 'เดือน', icon: CalendarIcon },
                      { id: 'week', label: 'สัปดาห์', icon: TableIcon },
                      { id: 'day', label: 'วัน', icon: CalendarDays },
                      { id: 'list', label: 'รายการ', icon: LayoutList },
@@ -652,4 +662,4 @@ const CalendarView = ({ activities, onEventClick, onDayClick, dealStatuses = [],
   );
 };
 
-export default React.memo(CalendarView);
+export default React.memo(Calendar);

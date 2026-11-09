@@ -2,16 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { FileText, DollarSign, AlertCircle, Activity, Maximize2, User, Truck, Gift, StickyNote } from 'lucide-react';
 import ImageViewer from '../common/ImageViewer';
 import ShopFooter from '../common/ShopFooter';
+import { applyThemeVariables } from '../../utils/themeManager';
 import { processImageUrl, formatDate, renderDeliveryTime } from '../../utils/formatters';
 import { systemStatusTypes } from '../../constants/appConstants';
 
 export const CustomerQuotationView = ({ data, shopInfo, dealStatuses = [] }) => {
   const [previewImage, setPreviewImage] = useState(null);
 
-  // Set Document Title dynamically
+  // Set Document Title and apply active shop theme dynamically
   useEffect(() => {
     const title = shopInfo?.shopName ? `ใบเสนอราคา - ${shopInfo.shopName}` : 'ใบเสนอราคา';
     document.title = title;
+    if (shopInfo?.themeColor) {
+      applyThemeVariables(shopInfo.themeColor, shopInfo.themeMode, shopInfo.customColorValue);
+    }
   }, [shopInfo]);
 
   if (!data) return null;
@@ -41,8 +45,14 @@ export const CustomerQuotationView = ({ data, shopInfo, dealStatuses = [] }) => 
     <div className="min-h-screen bg-slate-50 pb-safe font-sans flex flex-col">
       {previewImage && <ImageViewer src={previewImage} onClose={() => setPreviewImage(null)} />}
 
-      {/* Compact Header */}
-      <div className="bg-indigo-600 text-white pt-8 pb-10 px-4 rounded-b-[2rem] shadow-md shadow-indigo-200 relative overflow-hidden z-0 md:pt-16 md:pb-28 md:rounded-b-[3rem]">
+      {/* Compact Header matching Active Theme */}
+      <div 
+        className="theme-logo-bg text-white pt-8 pb-10 px-4 rounded-b-[2rem] shadow-xl relative overflow-hidden z-0 md:pt-16 md:pb-28 md:rounded-b-[3rem] transition-all"
+        style={{
+          background: 'var(--theme-logo-bg, var(--theme-gradient-image, var(--theme-main, #8b5cf6)))',
+          boxShadow: '0 20px 25px -5px var(--theme-shadow, rgba(139, 92, 246, 0.25))'
+        }}
+      >
         <div className="absolute top-0 right-0 p-2 opacity-10">
           <FileText className="w-24 h-24 transform -rotate-12 md:w-64 md:h-64 md:opacity-20" />
         </div>
@@ -52,12 +62,12 @@ export const CustomerQuotationView = ({ data, shopInfo, dealStatuses = [] }) => 
           </h1>
           <div className="inline-flex items-center gap-1.5 bg-white/20 px-3 py-1 rounded-full backdrop-blur-md border border-white/10 shadow-sm md:px-6 md:py-2 md:mt-2">
             <DollarSign className="w-3.5 h-3.5 text-indigo-50 md:w-5 md:h-5" />
-            <p className="text-indigo-50 text-[10px] font-bold tracking-wide opacity-90 md:text-sm">ใบเสนอราคา (Quotation View)</p>
+            <p className="text-indigo-50 text-xs font-bold tracking-wide opacity-90 md:text-sm">ใบเสนอราคา (Quotation View)</p>
           </div>
         </div>
       </div>
 
-      <div className="w-full max-w-5xl mx-auto px-4 relative z-10 space-y-3 -mt-6 md:-mt-20 md:space-y-0 md:grid md:grid-cols-12 md:gap-8 mb-3 md:mb-0">
+      <div className="w-full max-w-5xl mx-auto px-4 relative z-10 space-y-3 -mt-6 md:-mt-20 md:space-y-0 md:grid md:grid-cols-12 md:gap-8 mb-12 md:mb-20 pb-4 md:pb-8 flex-1">
         {/* LEFT COLUMN (Desktop): Main Info & Details */}
         <div className="md:col-span-7 space-y-3 md:space-y-6">
           {/* Row 1: Main Card (Name, ID, Image) */}
@@ -69,7 +79,7 @@ export const CustomerQuotationView = ({ data, shopInfo, dealStatuses = [] }) => 
                   <span className="font-black text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-md text-xs border border-indigo-100 whitespace-nowrap md:text-sm md:px-3 md:py-1">
                     {data.id}
                   </span>
-                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 truncate ${dealStatusInfo.color} md:text-xs md:px-3 md:py-1`}>
+                  <span className={`px-2 py-0.5 rounded-md text-xs font-bold border flex items-center gap-1 truncate ${dealStatusInfo.color} md:text-xs md:px-3 md:py-1`}>
                     {data.dealStatus === 'cancelled' ? <AlertCircle className="w-3 h-3 md:w-4 md:h-4"/> : <Activity className="w-3 h-3 md:w-4 md:h-4"/>}
                     {dealStatusInfo.label}
                   </span>
@@ -107,35 +117,35 @@ export const CustomerQuotationView = ({ data, shopInfo, dealStatuses = [] }) => 
             <div className="flex flex-col gap-2 border-r border-slate-100 pr-2 md:gap-4 md:pr-6">
               <div className="flex items-center gap-1.5 text-indigo-500 mb-1 md:mb-2">
                 <User className="w-3.5 h-3.5 md:w-5 md:h-5" />
-                <span className="text-[10px] font-bold uppercase text-slate-400 md:text-sm">ข้อมูลทั่วไป</span>
+                <span className="text-xs font-bold uppercase text-slate-400 md:text-sm">ข้อมูลทั่วไป</span>
               </div>
               <div>
-                <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">วันที่</p>
+                <p className="text-xs text-slate-500 text-xs font-semibold md:mb-1">วันที่</p>
                 <p className="text-xs font-bold text-slate-700 truncate md:text-base">{formatDate(data.rawDateTime)}</p>
               </div>
               <div>
-                <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">ศิลปิน</p>
+                <p className="text-xs text-slate-500 text-xs font-semibold md:mb-1">ศิลปิน</p>
                 <p className="text-xs font-bold text-slate-700 truncate md:text-base">{data.artist}</p>
               </div>
               <div>
-                <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">ลูกค้า</p>
+                <p className="text-xs text-slate-500 text-xs font-semibold md:mb-1">ลูกค้า</p>
                 <p className="text-xs font-bold text-slate-700 truncate md:text-base">{data.customer}</p>
               </div>
             </div>
             <div className="flex flex-col gap-2 pl-1 md:gap-4 md:pl-4">
               <div className="flex items-center gap-1.5 text-rose-500 mb-1 md:mb-2">
                 <Truck className="w-3.5 h-3.5 md:w-5 md:h-5" />
-                <span className="text-[10px] font-bold uppercase text-slate-400 md:text-sm">จัดส่ง</span>
+                <span className="text-xs font-bold uppercase text-slate-400 md:text-sm">จัดส่ง</span>
               </div>
               <div>
-                <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">กำหนดส่ง</p>
+                <p className="text-xs text-slate-500 text-xs font-semibold md:mb-1">กำหนดส่ง</p>
                 <div className="text-xs font-bold text-slate-700 truncate md:text-base">{renderDeliveryTime(data)}</div>
               </div>
               <div>
                 <div className="flex justify-between items-center">
-                  <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">สถานที่</p>
+                  <p className="text-xs text-slate-500 text-xs font-semibold md:mb-1">สถานที่</p>
                   {data.mapLink && (
-                    <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-[9px] text-blue-600 font-bold hover:underline md:text-xs">
+                    <a href={data.mapLink} target="_blank" rel="noreferrer" className="text-xs text-blue-600 font-bold hover:underline md:text-xs">
                       Map
                     </a>
                   )}
@@ -144,9 +154,9 @@ export const CustomerQuotationView = ({ data, shopInfo, dealStatuses = [] }) => 
               </div>
               {(data.recipient || data.recipientPhone) && (
                 <div>
-                  <p className="text-[9px] text-slate-400 md:text-xs md:mb-1">ผู้รับ</p>
+                  <p className="text-xs text-slate-500 text-xs font-semibold md:mb-1">ผู้รับ</p>
                   <p className="text-xs font-bold text-slate-700 truncate md:text-base">{data.recipient || '-'}</p>
-                  {data.recipientPhone && <a href={`tel:${data.recipientPhone}`} className="text-[10px] text-indigo-600 font-bold block md:text-sm">{data.recipientPhone}</a>}
+                  {data.recipientPhone && <a href={`tel:${data.recipientPhone}`} className="text-xs text-indigo-600 font-bold block md:text-sm">{data.recipientPhone}</a>}
                 </div>
               )}
             </div>

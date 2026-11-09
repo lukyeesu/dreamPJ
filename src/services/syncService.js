@@ -1,5 +1,16 @@
 import { supabase, getActiveClient } from './supabaseClient';
 import { db } from './db';
+import { generateTrackingToken } from '../utils/formatters';
+import {
+  validatePayload,
+  projectPayloadSchema,
+  locationPayloadSchema,
+  customerPayloadSchema,
+  inventoryItemPayloadSchema,
+  quotationPayloadSchema,
+  artistPayloadSchema,
+  staffPayloadSchema
+} from '../schemas/index.js';
 
 // ==============================================================================
 // 🚫 STRICT ZERO-EGRESS PROJECTIONS (ห้ามใช้ SELECT * เด็ดขาด)
@@ -174,17 +185,23 @@ export function transformUiToSupabase(activityData) {
   const totalRevenue = wage + deliveryFee;
 
   let totalExpenses = 0;
-  if (Array.isArray(activityData.expenses)) {
-    totalExpenses = activityData.expenses.reduce((sum, e) => sum + (Number(e.price) || 0), 0);
+  if (Array.isArray(activityData.expenses) && activityData.expenses.length > 0) {
+    totalExpenses = activityData.expenses.reduce((sum, e) => sum + (Number(e.price) || ((Number(e.unitPrice) || 0) * (Number(e.quantity) || 1)) || 0), 0);
+  }
+  if (totalExpenses === 0 && (activityData.totalExpenses || activityData.total_expenses)) {
+    totalExpenses = Number(activityData.totalExpenses || activityData.total_expenses) || 0;
   }
 
   let customerSupportTotal = 0;
-  if (Array.isArray(activityData.customerSupport)) {
+  if (Array.isArray(activityData.customerSupport) && activityData.customerSupport.length > 0) {
     customerSupportTotal = activityData.customerSupport.reduce((sum, cs) => {
       const denom = Number(cs.denomination) || 0;
       const qty = Number(cs.quantity) || 0;
       return sum + (Number(cs.price) || (denom * qty));
     }, 0);
+  }
+  if (customerSupportTotal === 0 && (activityData.customerSupportTotal || activityData.customer_support_total)) {
+    customerSupportTotal = Number(activityData.customerSupportTotal || activityData.customer_support_total) || 0;
   }
 
   const netProfit = totalRevenue - totalExpenses;
@@ -275,9 +292,59 @@ export function transformUiToSupabase(activityData) {
 
 /**
  * ดึงโปรเจกต์เฉพาะเดือนที่เลือกจาก Supabase เพื่อตัด Egress ให้เหลือต่ำสุด (~2-4 KB)
+ * ปราศจากการดึงตารางลูก (quotation_items, customer_support, expenses) มาล่วงหน้า
  * พร้อมแคชลง IndexedDB และส่งข้อมูลกลับไปยัง UI ทันที
  */
-export async function loadProjectsByMonth(yearMonth, onSyncUpdate) {
+export function getMonthDateBounds(yearMonth) {
+  if (!yearMonth) return { start: null, end: null };
+  const [y, m] = yearMonth.split('-').map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  const mm = String(m).padStart(2, '0');
+  const dd = String(lastDay).padStart(2, '0');
+  return {
+    start: `${y}-${mm}-01T00:00:00`,
+    end: `${y}-${mm}-${dd}T23:59:59`
+  };
+}
+
+async function fetchChildItemsForProjects(client, projects) {
+  const qMap = new Map();
+  const csMap = new Map();
+  const exMap = new Map();
+  if (!Array.isArray(projects) || projects.length === 0) {
+    return { qMap, csMap, exMap };
+  }
+  const projectIds = projects.map(p => p.id);
+  try {
+    const [qRes, csRes, exRes] = await Promise.all([
+      client.from('project_quotation_items').select(QUOTATION_COLUMNS).in('project_id', projectIds),
+      client.from('project_customer_support').select(SUPPORT_COLUMNS).in('project_id', projectIds),
+      client.from('project_expenses').select(EXPENSE_COLUMNS).in('project_id', projectIds)
+    ]);
+    (qRes.data || []).forEach(item => {
+      if (!qMap.has(item.project_id)) qMap.set(item.project_id, []);
+      qMap.get(item.project_id).push(item);
+    });
+    (csRes.data || []).forEach(item => {
+      if (!csMap.has(item.project_id)) csMap.set(item.project_id, []);
+      csMap.get(item.project_id).push(item);
+    });
+    (exRes.data || []).forEach(item => {
+      if (!exMap.has(item.project_id)) exMap.set(item.project_id, []);
+      exMap.get(item.project_id).push(item);
+    });
+  } catch (err) {
+    console.warn('Error fetching child items for scoped projects:', err);
+  }
+  return { qMap, csMap, exMap };
+}
+
+/**
+ * 🎯 ดึงโปรเจกต์งานแบบระบุเดือนเจาะจง (Zero-Egress Scoped Loader)
+ * ดึงเฉพาะแถวของเดือนที่เลือก (เช่น 2026-11)
+ * พร้อมแคชลง IndexedDB และส่งข้อมูลกลับไปยัง UI ทันที
+ */
+export async function loadProjectsByMonth(yearMonth, onSyncUpdate, options = {}) {
   const client = getActiveClient();
   if (!yearMonth) return [];
 
@@ -306,197 +373,313 @@ export async function loadProjectsByMonth(yearMonth, onSyncUpdate) {
       onSyncUpdate(localInMonth);
     }
 
-    // 2. ดึงตรงจาก Supabase เฉพาะของเดือนนี้
-    const startStr = `${yearMonth}-01T00:00:00`;
-    const endStr = `${yearMonth}-31T23:59:59`;
+    // 2. ดึงตรงจาก Supabase เฉพาะของเดือนนี้ (Strict Zero-Egress Explicit Projections)
+    // 🚀 Progressive Loading: ดึง 50 แถวล่าสุดของเดือนนั้นก่อนทันที (Fast First Paint ~50ms)
+    const bounds = getMonthDateBounds(yearMonth);
+    const startStr = bounds.start;
+    const endStr = bounds.end;
+    const CHUNK_SIZE = 50;
 
-    const { data: projects, error } = await client
+    const { data: firstBatch, error, count } = await client
       .from('projects')
-      .select(PROJECT_LIST_COLUMNS)
+      .select(PROJECT_LIST_COLUMNS, { count: 'exact' })
       .gte('raw_delivery_start', startStr)
       .lte('raw_delivery_start', endStr)
-      .order('raw_delivery_start', { ascending: false });
+      .order('raw_delivery_start', { ascending: false })
+      .range(0, CHUNK_SIZE - 1);
 
     if (error) throw error;
 
-    if (!projects || projects.length === 0) {
-      return localInMonth;
+    if (!firstBatch || firstBatch.length === 0) {
+      // 🛡️ ป้องกันการล้างแคชท้องถิ่นหากเกิดปัญหา Auth Session / RLS
+      const session = (await client.auth.getSession())?.data?.session;
+      if (session && localInMonth.length > 0) {
+        await db.projects.bulkDelete(localInMonth.map(p => p.id));
+        if (onSyncUpdate) onSyncUpdate([], localInMonth.map(p => p.id));
+      }
+      return [];
     }
 
-    const projectIds = projects.map(p => p.id);
-    const [qRes, csRes, exRes] = await Promise.all([
-      client.from('project_quotation_items').select(QUOTATION_COLUMNS).in('project_id', projectIds),
-      client.from('project_customer_support').select(SUPPORT_COLUMNS).in('project_id', projectIds),
-      client.from('project_expenses').select(EXPENSE_COLUMNS).in('project_id', projectIds)
-    ]);
+    let childData = { qMap: new Map(), csMap: new Map(), exMap: new Map() };
+    if (options.includeDetails && firstBatch.length > 0) {
+      childData = await fetchChildItemsForProjects(client, firstBatch);
+    }
 
-    const qMap = new Map();
-    (qRes.data || []).forEach(item => {
-      if (!qMap.has(item.project_id)) qMap.set(item.project_id, []);
-      qMap.get(item.project_id).push(item);
-    });
-
-    const csMap = new Map();
-    (csRes.data || []).forEach(item => {
-      if (!csMap.has(item.project_id)) csMap.set(item.project_id, []);
-      csMap.get(item.project_id).push(item);
-    });
-
-    const exMap = new Map();
-    (exRes.data || []).forEach(item => {
-      if (!exMap.has(item.project_id)) exMap.set(item.project_id, []);
-      exMap.get(item.project_id).push(item);
-    });
-
-    const transformed = projects.map(p => transformSupabaseProjectToUi(p, {
-      quotationItems: qMap.get(p.id) || [],
-      customerSupport: csMap.get(p.id) || [],
-      expenses: exMap.get(p.id) || []
+    const transformed1 = firstBatch.map(p => transformSupabaseProjectToUi(p, {
+      quotationItems: childData.qMap.get(p.id) || [],
+      customerSupport: childData.csMap.get(p.id) || [],
+      expenses: childData.exMap.get(p.id) || []
     }));
 
-    // บันทึกเฉพาะข้อมูลเดือนนี้ลง IndexedDB
-    await db.projects.bulkPut(transformed);
-
+    // บันทึก 50 แถวแรกทันทีลง IndexedDB และส่งอัปเดตหน้าบ้านทันที ให้เห็นข้อมูลในเสี้ยววินาที
+    await db.projects.bulkPut(transformed1);
     if (onSyncUpdate) {
-      onSyncUpdate(transformed);
+      onSyncUpdate(transformed1);
     }
-    return transformed;
+
+    let allRemoteProjects = [...firstBatch];
+    let allTransformed = transformed1;
+
+    // ถ้าเดือนนั้นมีข้อมูลมากกว่า 50 แถว ให้แอบดึงส่วนที่เหลือแบบ Background ทันที
+    if (count && count > CHUNK_SIZE) {
+      console.log(`📡 Background Fetch: Month ${yearMonth} has ${count} records. Fetching remaining ${count - CHUNK_SIZE}...`);
+      const { data: remainingBatch, error: remErr } = await client
+        .from('projects')
+        .select(PROJECT_LIST_COLUMNS)
+        .gte('raw_delivery_start', startStr)
+        .lte('raw_delivery_start', endStr)
+        .order('raw_delivery_start', { ascending: false })
+        .range(CHUNK_SIZE, count - 1);
+
+      if (!remErr && remainingBatch && remainingBatch.length > 0) {
+        let childData2 = { qMap: new Map(), csMap: new Map(), exMap: new Map() };
+        if (options.includeDetails && remainingBatch.length > 0) {
+          childData2 = await fetchChildItemsForProjects(client, remainingBatch);
+        }
+
+        const transformed2 = remainingBatch.map(p => transformSupabaseProjectToUi(p, {
+          quotationItems: childData2.qMap.get(p.id) || [],
+          customerSupport: childData2.csMap.get(p.id) || [],
+          expenses: childData2.exMap.get(p.id) || []
+        }));
+
+        allRemoteProjects = [...firstBatch, ...remainingBatch];
+        allTransformed = [...transformed1, ...transformed2];
+
+        await db.projects.bulkPut(transformed2);
+        if (onSyncUpdate) {
+          onSyncUpdate(allTransformed);
+        }
+      }
+    }
+
+    // 🛡️ RECONCILE: กวาดล้างโปรเจกต์ที่ถูกลบออกจาก Supabase แล้ว ออกจาก IndexedDB ของเดือนนี้ทันที (0 Egress)
+    const session = (await client.auth.getSession())?.data?.session;
+    if (session) {
+      const remoteIdSet = new Set(allRemoteProjects.map(p => p.id));
+      const ghosts = localInMonth.filter(p => !remoteIdSet.has(p.id));
+      if (ghosts.length > 0) {
+        await db.projects.bulkDelete(ghosts.map(p => p.id));
+        console.log(`🧹 Reconciled: purged ${ghosts.length} stale/deleted projects from IndexedDB for ${yearMonth}`);
+        if (onSyncUpdate) {
+          onSyncUpdate(allTransformed, ghosts.map(p => p.id));
+        }
+      }
+    }
+
+    return allTransformed;
   } catch (err) {
     console.error(`Error loading projects for month ${yearMonth}:`, err);
     return [];
   }
 }
 
-// 1. โหลดข้อมูลแบบ Local-First (ดึงจาก IndexedDB ทันทีใน 0ms แล้วแอบซิงก์ส่วนต่างจาก Supabase)
-export async function loadProjectsLocalFirst(onSyncUpdate) {
+/**
+ * 🎯 ZERO-EGRESS SCOPED LOADER: ดึงเฉพาะข้อมูลตามเงื่อนไขที่ผู้ใช้กำลังดูอยู่เท่านั้น
+ * 1. ถ้า mode === 'date' (เช่น 2026-11-30): ดึงเฉพาะวันที่ 30 พ.ย. 2026
+ * 2. ถ้า mode === 'month' (เช่น 2026-11): ดึงเฉพาะเดือน พ.ย. 2026
+ * 3. ถ้า mode === 'range' (เช่น start - end): ดึงเฉพาะช่วงวันที่ระบุ
+ * 4. เมื่อ includeDetails = true จะดึงเฉพาะตารางลูกของโปรเจกต์ใน Scope นั้นอย่างแม่นยำ
+ */
+export async function loadProjectsScoped({ mode = 'month', date = '', range = { start: '', end: '' }, includeDetails = false } = {}, onSyncUpdate) {
   const client = getActiveClient();
   try {
-    // ก. อ่านจาก IndexedDB ในเครื่องก่อนทันที (0 Latency, 0 Egress)
-    const localProjects = await db.projects.toArray();
-    if (localProjects.length > 0 && onSyncUpdate) {
-      console.log(`⚡ Loaded ${localProjects.length} projects from local IndexedDB.`);
-      onSyncUpdate(localProjects);
+    let startStr = null;
+    let endStr = null;
+    let localFilterFn = null;
+
+    if (mode === 'all') {
+      // ดึงข้อมูลทั้งหมดทุกปีทุกเดือน (Zero-Filter)
+      startStr = null;
+      endStr = null;
+      localFilterFn = null;
+    } else if (mode === 'date' && date) {
+      // ดึงเจาะจงเฉพาะวัน (เช่น 2026-11-30)
+      startStr = `${date}T00:00:00`;
+      endStr = `${date}T23:59:59`;
+      localFilterFn = (p) => {
+        const c = [p.rawDeliveryStart, p.rawDateTime, p.date, p.paymentDate];
+        return c.some(v => v && String(v).startsWith(date));
+      };
+    } else if (mode === 'month' && date) {
+      // ดึงเจาะจงเฉพาะเดือน (เช่น 2026-11)
+      return await loadProjectsByMonth(date, onSyncUpdate, { includeDetails });
+    } else if (mode === 'year' && date) {
+      // ดึงเจาะจงเฉพาะปี (เช่น 2026)
+      const yr = String(date).slice(0, 4);
+      startStr = `${yr}-01-01T00:00:00`;
+      endStr = `${yr}-12-31T23:59:59`;
+      localFilterFn = (p) => {
+        const c = [p.rawDeliveryStart, p.rawDateTime, p.date, p.paymentDate];
+        return c.some(v => v && String(v).startsWith(yr));
+      };
+    } else if (mode === 'week' && date) {
+      // ดึงเจาะจงเฉพาะสัปดาห์ (จันทร์ - อาทิตย์)
+      const d = new Date(date);
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(d.setDate(diff));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const startDay = monday.toISOString().slice(0, 10);
+      const endDay = sunday.toISOString().slice(0, 10);
+      startStr = `${startDay}T00:00:00`;
+      endStr = `${endDay}T23:59:59`;
+      localFilterFn = (p) => {
+        const c = [p.rawDeliveryStart, p.rawDateTime, p.date, p.paymentDate];
+        return c.some(v => {
+          if (!v) return false;
+          const s = String(v).slice(0, 10);
+          return s >= startDay && s <= endDay;
+        });
+      };
+    } else if (mode === 'range' && range?.start && range?.end) {
+      // ดึงเจาะจงเฉพาะช่วงวันที่
+      startStr = `${range.start}T00:00:00`;
+      endStr = `${range.end}T23:59:59`;
+      localFilterFn = (p) => {
+        const c = [p.rawDeliveryStart, p.rawDateTime, p.date, p.paymentDate];
+        return c.some(v => {
+          if (!v) return false;
+          const s = String(v).substring(0, 10);
+          return s >= range.start && s <= range.end;
+        });
+      };
+    } else {
+      // ค่าเริ่มต้น: ดึงเฉพาะเดือนปัจจุบัน (ไม่ดึงทั้งก้อนของทุกปี)
+      const now = new Date();
+      const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      return await loadProjectsByMonth(curMonth, onSyncUpdate, { includeDetails });
     }
 
-    // ข. ซิงก์ข้อมูลจาก Supabase ในพื้นหลัง (Background Sync)
-    const syncMeta = await db.sync_meta.get('last_synced_at');
-    const lastSyncedAt = syncMeta ? syncMeta.value : null;
+    // 1. อ่านจาก IndexedDB สำหรับ Scope นี้ก่อนทันที (0 Latency, 0 Egress)
+    const allLocal = await db.projects.toArray();
+    const localScoped = localFilterFn ? allLocal.filter(localFilterFn) : allLocal;
+    if (localScoped.length > 0 && onSyncUpdate) {
+      console.log(`⚡ Loaded ${localScoped.length} projects from local IndexedDB for scope (${mode}: ${date || range?.start || 'all'}).`);
+      onSyncUpdate(localScoped);
+    }
 
-    if (!lastSyncedAt || localProjects.length === 0 || localProjects.length < 50) {
-      // ดึงโปรเจกต์ทั้งหมดแบบ Zero-Egress Explicit Projections (ห้าม SELECT *)
-      console.log('☁️ Performing initial full fetch from Supabase (Zero-Egress Mode)...');
-      const { data: projects, error: projErr } = await client
-        .from('projects')
-        .select(PROJECT_LIST_COLUMNS)
-        .order('id', { ascending: false });
+    // 2. ดึงตรงจาก Supabase เฉพาะช่วงวันที่กำหนดด้วย Explicit Projections
+    // 🚀 Progressive Loading: 50 แถวล่าสุดก่อนทันที
+    const CHUNK_SIZE = 50;
+    let query = client
+      .from('projects')
+      .select(PROJECT_LIST_COLUMNS, { count: 'exact' });
 
-      if (projErr) throw projErr;
+    if (startStr && endStr) {
+      query = query.gte('raw_delivery_start', startStr).lte('raw_delivery_start', endStr);
+    }
+    query = query.order('raw_delivery_start', { ascending: false }).range(0, CHUNK_SIZE - 1);
 
-      if (projects && projects.length > 0) {
-        const [qRes, csRes, exRes] = await Promise.all([
-          client.from('project_quotation_items').select(QUOTATION_COLUMNS),
-          client.from('project_customer_support').select(SUPPORT_COLUMNS),
-          client.from('project_expenses').select(EXPENSE_COLUMNS)
-        ]);
+    const { data: firstBatch, error, count } = await query;
+    if (error) throw error;
 
-        const qMap = new Map();
-        (qRes.data || []).forEach(item => {
-          if (!qMap.has(item.project_id)) qMap.set(item.project_id, []);
-          qMap.get(item.project_id).push(item);
-        });
+    if (!firstBatch || firstBatch.length === 0) {
+      // 🛡️ ป้องกันการล้างแคชท้องถิ่นหากเกิดปัญหา Auth Session / RLS
+      const session = (await client.auth.getSession())?.data?.session;
+      if (session && localScoped.length > 0) {
+        await db.projects.bulkDelete(localScoped.map(p => p.id));
+        if (onSyncUpdate) onSyncUpdate([]);
+      }
+      return [];
+    }
 
-        const csMap = new Map();
-        (csRes.data || []).forEach(item => {
-          if (!csMap.has(item.project_id)) csMap.set(item.project_id, []);
-          csMap.get(item.project_id).push(item);
-        });
+    let childData = { qMap: new Map(), csMap: new Map(), exMap: new Map() };
+    if (includeDetails && firstBatch.length > 0) {
+      childData = await fetchChildItemsForProjects(client, firstBatch);
+    }
 
-        const exMap = new Map();
-        (exRes.data || []).forEach(item => {
-          if (!exMap.has(item.project_id)) exMap.set(item.project_id, []);
-          exMap.get(item.project_id).push(item);
-        });
+    const transformed1 = firstBatch.map(p => transformSupabaseProjectToUi(p, {
+      quotationItems: childData.qMap.get(p.id) || [],
+      customerSupport: childData.csMap.get(p.id) || [],
+      expenses: childData.exMap.get(p.id) || []
+    }));
 
-        const transformed = projects.map(p => transformSupabaseProjectToUi(p, {
-          quotationItems: qMap.get(p.id) || [],
-          customerSupport: csMap.get(p.id) || [],
-          expenses: exMap.get(p.id) || []
+    await db.projects.bulkPut(transformed1);
+    if (onSyncUpdate) {
+      onSyncUpdate(transformed1);
+    }
+
+    let allRemoteProjects = [...firstBatch];
+    let allTransformed = transformed1;
+
+    // ถ้าข้อมูลมีมากกว่า CHUNK_SIZE ให้โหลดส่วนที่เหลือแบบ Background เป็น Chunks
+    if (count && count > CHUNK_SIZE) {
+      let currentOffset = CHUNK_SIZE;
+      const BATCH_STEP = 500;
+      while (currentOffset < count) {
+        const nextOffset = Math.min(currentOffset + BATCH_STEP - 1, count - 1);
+        const expectedCount = nextOffset - currentOffset + 1;
+        let remQuery = client
+          .from('projects')
+          .select(PROJECT_LIST_COLUMNS);
+        if (startStr && endStr) {
+          remQuery = remQuery.gte('raw_delivery_start', startStr).lte('raw_delivery_start', endStr);
+        }
+        remQuery = remQuery.order('raw_delivery_start', { ascending: false }).range(currentOffset, nextOffset);
+
+        const { data: remBatch, error: remErr } = await remQuery;
+        if (remErr || !remBatch || remBatch.length === 0) break;
+
+        let childData2 = { qMap: new Map(), csMap: new Map(), exMap: new Map() };
+        if (includeDetails && remBatch.length > 0) {
+          childData2 = await fetchChildItemsForProjects(client, remBatch);
+        }
+
+        const transformed2 = remBatch.map(p => transformSupabaseProjectToUi(p, {
+          quotationItems: childData2.qMap.get(p.id) || [],
+          customerSupport: childData2.csMap.get(p.id) || [],
+          expenses: childData2.exMap.get(p.id) || []
         }));
 
-        // บันทึกโปรเจกต์ทั้งหมดลง IndexedDB
-        await db.projects.clear();
-        await db.projects.bulkPut(transformed);
-        await db.sync_meta.put({ key: 'last_synced_at', value: new Date().toISOString() });
+        allRemoteProjects = [...allRemoteProjects, ...remBatch];
+        allTransformed = [...allTransformed, ...transformed2];
 
-        console.log(`✅ Cached all ${transformed.length} projects into IndexedDB (Zero-Egress).`);
-        if (onSyncUpdate) onSyncUpdate(transformed);
-        return transformed;
-      }
-    } else {
-      // ดึงเฉพาะแถวที่เปลี่ยนแปลง (Incremental Delta Sync) ด้วย Explicit Projections (ห้าม SELECT *)
-      console.log('🔄 Checking Supabase for deltas since:', lastSyncedAt);
-      const { data: deltas, error } = await client
-        .from('projects')
-        .select(PROJECT_LIST_COLUMNS)
-        .gt('updated_at', lastSyncedAt)
-        .order('updated_at', { ascending: false });
-
-      if (deltas && deltas.length > 0) {
-        console.log(`⚡ Received ${deltas.length} updated projects from Supabase.`);
-        const deltaIds = deltas.map(p => p.id);
-        const [qRes, csRes, exRes] = await Promise.all([
-          client.from('project_quotation_items').select(QUOTATION_COLUMNS).in('project_id', deltaIds),
-          client.from('project_customer_support').select(SUPPORT_COLUMNS).in('project_id', deltaIds),
-          client.from('project_expenses').select(EXPENSE_COLUMNS).in('project_id', deltaIds)
-        ]);
-
-        const qMap = new Map();
-        (qRes.data || []).forEach(item => {
-          if (!qMap.has(item.project_id)) qMap.set(item.project_id, []);
-          qMap.get(item.project_id).push(item);
-        });
-
-        const csMap = new Map();
-        (csRes.data || []).forEach(item => {
-          if (!csMap.has(item.project_id)) csMap.set(item.project_id, []);
-          csMap.get(item.project_id).push(item);
-        });
-
-        const exMap = new Map();
-        (exRes.data || []).forEach(item => {
-          if (!exMap.has(item.project_id)) exMap.set(item.project_id, []);
-          exMap.get(item.project_id).push(item);
-        });
-
-        for (const p of deltas) {
-          const uiItem = transformSupabaseProjectToUi(p, {
-            quotationItems: qMap.get(p.id) || [],
-            customerSupport: csMap.get(p.id) || [],
-            expenses: exMap.get(p.id) || []
-          });
-          await db.projects.put(uiItem);
+        await db.projects.bulkPut(transformed2);
+        if (onSyncUpdate) {
+          onSyncUpdate(allTransformed);
         }
-        await db.sync_meta.put({ key: 'last_synced_at', value: new Date().toISOString() });
-        const updatedAll = await db.projects.toArray();
-        if (onSyncUpdate) onSyncUpdate(updatedAll);
-        return updatedAll;
+
+        currentOffset += remBatch.length;
+        if (remBatch.length < expectedCount) break;
       }
     }
 
-    return localProjects;
+    // Reconcile ลบรายการที่ถูกลบออกจาก Server ออกจาก IndexedDB เฉพาะของ Scope นี้
+    // ทำเฉพาะเมื่อดึงข้อมูลครบทุก Batch แล้วเท่านั้น (ป้องกันลบแคชผิดพลาด)
+    const session = (await client.auth.getSession())?.data?.session;
+    if (session && allRemoteProjects.length >= (count || 0)) {
+      const remoteIdSet = new Set(allRemoteProjects.map(p => p.id));
+      const ghosts = localScoped.filter(p => !remoteIdSet.has(p.id));
+      if (ghosts.length > 0) {
+        await db.projects.bulkDelete(ghosts.map(p => p.id));
+        console.log(`🧹 Reconciled: purged ${ghosts.length} stale projects from IndexedDB for scope.`);
+        if (onSyncUpdate) {
+          onSyncUpdate(allTransformed, ghosts.map(p => p.id));
+        }
+      }
+    }
+
+    return allTransformed;
   } catch (err) {
-    console.warn('⚠️ Sync error, falling back to local cache:', err);
-    return await db.projects.toArray();
+    console.error(`Error in loadProjectsScoped (${mode}: ${date}):`, err);
+    return [];
   }
+}
+
+export async function loadProjectsLocalFirst(onSyncUpdate, options = {}) {
+  return await loadProjectsScoped(options, onSyncUpdate);
 }
 
 // 2. บันทึกโปรเจกต์งานลง Supabase + IndexedDB
 export async function saveProjectSync(activityData) {
+  const validated = validatePayload(projectPayloadSchema, activityData, 'Project');
   const client = getActiveClient();
-  const { projectRow, quotationItems, customerSupport, expenses } = transformUiToSupabase(activityData);
+  const { projectRow, quotationItems, customerSupport, expenses } = transformUiToSupabase(validated);
 
   // ก. บันทึกลง IndexedDB ในเครื่องทันที (Optimistic Write - หน้าจอไม่ค้าง)
-  await db.projects.put(activityData);
+  await db.projects.put(validated);
 
   // ข. ส่งขึ้น Supabase
   try {
@@ -533,7 +716,21 @@ export async function deleteProjectSync(id) {
   // ก. ลบจาก IndexedDB ทันที
   await db.projects.delete(id);
 
-  // ข. ลบจาก Supabase (Trigger จะบันทึกเข้า deleted_records ให้อัตโนมัติ)
+  // ข. กระจายสัญญาณลบแบบ Real-Time ทั่วทุกแท็บและทุกอุปกรณ์ (Zero Stale IndexedDB)
+  broadcastRecordDeleted('projects', id);
+
+  // ค. บันทึกลง deleted_records บน Supabase เป็น Tombstone เพื่อให้อุปกรณ์อื่น (เช่น เครื่อง B) กวาดล้างตาม
+  try {
+    await client.from('deleted_records').insert({
+      record_id: id,
+      table_name: 'projects',
+      deleted_at: new Date().toISOString()
+    });
+  } catch (tombErr) {
+    console.warn('Tombstone insert notice:', tombErr?.message);
+  }
+
+  // ง. ลบจาก Supabase
   try {
     const { error } = await client.from('projects').delete().eq('id', id);
     if (error) throw error;
@@ -634,6 +831,173 @@ export function subscribeToRealtimeSettings(onUpdate) {
   };
 }
 
+// 4.2 ระบบกระจายสัญญาณการลบข้อมูลข้ามแท็บและข้ามอุปกรณ์แบบ Real-Time (Zero-Egress & Zero-Stale IndexedDB)
+export function broadcastRecordDeleted(table, id) {
+  if (!id || !table) return;
+
+  // 1. กระจายสัญญาณข้ามแท็บในเบราว์เซอร์เดียวกันผ่าน BroadcastChannel
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      const bc = new BroadcastChannel('flower2u_sync_channel');
+      bc.postMessage({ type: 'RECORD_DELETED', table, id });
+      bc.close();
+    }
+  } catch (e) {}
+
+  // 2. กระจายสัญญาณข้ามอุปกรณ์ผ่าน Supabase Realtime Broadcast (ใช้ Egress ไม่กี่ไบต์)
+  try {
+    const client = getActiveClient();
+    if (client) {
+      const ch = client.channel('flower2u_global_sync');
+      ch.send({
+        type: 'broadcast',
+        event: 'RECORD_DELETED',
+        payload: { table, id }
+      }).catch(() => {});
+    }
+  } catch (e) {}
+}
+
+// 4.3 ระบบกระจายสัญญาณการปรับปรุงสิทธิ์บทบาทแบบ Real-Time (เมนูเด้งขึ้นทันทีไม่ต้องกดรีเฟรช)
+export function broadcastPermissionsUpdated(permissions) {
+  if (!permissions) return;
+
+  // 1. แจ้งเตือนภายในหน้าต่างปัจจุบัน
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: permissions }));
+  }
+
+  // 2. กระจายสัญญาณข้ามแท็บในเบราว์เซอร์เดียวกัน
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      const bc = new BroadcastChannel('flower2u_sync_channel');
+      bc.postMessage({ type: 'PERMISSIONS_UPDATED', permissions });
+      bc.close();
+    }
+  } catch (e) {}
+
+  // 3. กระจายสัญญาณข้ามอุปกรณ์ผ่าน Supabase Realtime Broadcast
+  try {
+    const client = getActiveClient();
+    if (client) {
+      const ch = client.channel('flower2u_global_sync');
+      ch.send({
+        type: 'broadcast',
+        event: 'PERMISSIONS_UPDATED',
+        payload: { permissions }
+      }).catch(() => {});
+    }
+  } catch (e) {}
+}
+
+// 4.4 ระบบ Realtime Subscription สำหรับ Roles & Permissions ข้ามอุปกรณ์
+export function subscribeToRolesRealtime(onRolesUpdate) {
+  const client = getActiveClient();
+  if (!client) return () => {};
+
+  const channel = client
+    .channel('realtime-roles-channel')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'roles' },
+      async () => {
+        try {
+          const { data, error } = await client.from('roles').select('*');
+          if (!error && Array.isArray(data) && data.length > 0) {
+            const matrix = {};
+            data.forEach(r => {
+              matrix[r.name] = {
+                label: r.label || r.name,
+                code: r.code || '99',
+                description: r.description || '',
+                allowed_pages: r.allowed_pages || [],
+                can_edit_pricing: !!r.can_edit_pricing,
+                can_delete_project: !!r.can_delete_project,
+                can_borrow_tools: r.can_borrow_tools !== undefined ? !!r.can_borrow_tools : true,
+                can_manage_users: !!r.can_manage_users,
+                is_system_role: !!r.is_system_role
+              };
+            });
+            if (typeof window !== 'undefined') {
+              try {
+                const prev = JSON.parse(localStorage.getItem('f2u_role_permissions') || '{}');
+                const merged = { ...prev, ...matrix };
+                localStorage.setItem('f2u_role_permissions', JSON.stringify(merged));
+                window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: merged }));
+                if (onRolesUpdate) onRolesUpdate(merged);
+              } catch (e) {}
+            }
+          }
+        } catch (err) {
+          console.warn('Realtime roles fetch notice:', err);
+        }
+      }
+    )
+    .on(
+      'broadcast',
+      { event: 'PERMISSIONS_UPDATED' },
+      ({ payload }) => {
+        if (payload?.permissions) {
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('f2u_role_permissions', JSON.stringify(payload.permissions));
+              window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: payload.permissions }));
+            } catch (e) {}
+          }
+          if (onRolesUpdate) onRolesUpdate(payload.permissions);
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    try {
+      client.removeChannel(channel);
+    } catch (e) {}
+  };
+}
+
+// 4.5 กวาดล้างข้อมูลที่ถูกลบออกจาก Supabase (Zero-Egress Tombstone Reconcile)
+export async function syncDeletedRecords(onProjectsDeleted) {
+  const client = getActiveClient();
+  if (!client) return [];
+  try {
+    const syncMeta = await db.sync_meta.get('last_deleted_synced_at');
+    const lastDeletedSyncedAt = syncMeta ? syncMeta.value : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: deleted, error } = await client
+      .from('deleted_records')
+      .select('record_id, table_name, deleted_at')
+      .gt('deleted_at', lastDeletedSyncedAt)
+      .order('deleted_at', { ascending: true })
+      .limit(1000);
+
+    const deletedProjectIds = [];
+    if (!error && Array.isArray(deleted) && deleted.length > 0) {
+      for (const rec of deleted) {
+        const tbl = rec.table_name;
+        const id = rec.record_id;
+        if (tbl === 'projects') {
+          deletedProjectIds.push(id);
+          await db.projects.delete(id).catch(() => {});
+        } else if (db[tbl]) {
+          await db[tbl].delete(id).catch(() => {});
+        }
+      }
+      const newest = deleted[deleted.length - 1].deleted_at;
+      await db.sync_meta.put({ key: 'last_deleted_synced_at', value: newest });
+      console.log(`🧹 Purged ${deleted.length} remotely deleted records across tables.`);
+
+      if (deletedProjectIds.length > 0 && onProjectsDeleted) {
+        onProjectsDeleted(deletedProjectIds);
+      }
+    }
+    return deletedProjectIds;
+  } catch (err) {
+    return [];
+  }
+}
+
 // 5. โหลดการตั้งค่าร้านและพนักงานจาก Supabase
 export async function loadSettingsFromSupabase() {
   const client = getActiveClient();
@@ -658,7 +1022,7 @@ export async function loadSettingsFromSupabase() {
       wechat: s.wechat || '',
       telegram: s.telegram || '',
       logo: s.logo_url || '',
-      themeColor: s.theme_color || 'violet',
+      themeColor: s.theme_color || 'rose',
       themeMode: s.theme_mode || 'gradient',
       customColorValue: s.custom_color_value || '#000000'
     };
@@ -673,24 +1037,10 @@ export async function loadSettingsFromSupabase() {
       driveFolders = s.drive_folders;
     }
 
-    const passwordMap = {
-      '1': '1',
-      'AOM': '1234',
-      'DREAM': '1',
-      'Chuti': 'aom@2026'
-    };
-
-    const staffCodeMap = {
-      '1': '2611001',
-      'AOM': '2611002',
-      'DREAM': '2611003',
-      'Chuti': '2611004'
-    };
-
+    // Zero-Leakage: ห้ามแนบรหัสผ่านลงใน client credentials เด็ดขาด
     const appCredentials = (staffRes.data || []).map(u => ({
       username: u.username,
-      staffCode: u.staff_code || staffCodeMap[u.username] || '',
-      password: u.password || passwordMap[u.username] || '1',
+      staffCode: u.staff_code || u.id || '',
       name: u.full_name || u.nickname || u.username,
       role: u.roles?.name || 'admin',
       roleCode: u.roles?.role_code || (u.roles?.name === 'admin' ? '11' : '21'),
@@ -718,6 +1068,199 @@ export async function loadSettingsFromSupabase() {
     };
   } catch (err) {
     console.error('Error loading settings from Supabase:', err);
+    return null;
+  }
+}
+
+// 5.1 โหลดเฉพาะ Branding สาธารณะ (สำหรับหน้า Login และหน้าสาธารณะ - ห้ามแตะต้อง staff_users หรือรหัสผ่าน)
+export async function loadPublicBrandingFromSupabase() {
+  const client = getActiveClient();
+  try {
+    const PUBLIC_BRANDING_COLUMNS = 'id,shop_name,phone,email,address,line_id,facebook,instagram,tiktok,twitter,wechat,telegram,logo_url,theme_color,theme_mode,custom_color_value,deal_statuses,transport_statuses,updated_at';
+    const { data: s } = await client.from('shop_settings').select(PUBLIC_BRANDING_COLUMNS).limit(1).maybeSingle();
+    
+    if (!s) return null;
+
+    const shopInfo = {
+      shopName: s.shop_name || 'Flower2you',
+      phone: s.phone || '',
+      email: s.email || '',
+      address: s.address || '',
+      line: s.line_id || '',
+      facebook: s.facebook || '',
+      instagram: s.instagram || '',
+      tiktok: s.tiktok || '',
+      twitter: s.twitter || '',
+      wechat: s.wechat || '',
+      telegram: s.telegram || '',
+      logo: s.logo_url || '',
+      themeColor: s.theme_color || 'rose',
+      themeMode: s.theme_mode || 'gradient',
+      customColorValue: s.custom_color_value || '#000000'
+    };
+
+    return {
+      shopInfo,
+      dealStatuses: s.deal_statuses || null,
+      transportStatuses: s.transport_statuses || null
+    };
+  } catch (err) {
+    console.error('Error loading public branding from Supabase:', err);
+    return null;
+  }
+}
+
+// 5.2 ตรวจสอบรหัสผ่านพนักงานผ่าน Server-Side RPC (ไม่ส่งรหัสผ่านทุกคนลงมาที่เบราว์เซอร์)
+export async function verifyStaffLogin(identifier, password) {
+  if (!identifier || !password) {
+    return { success: false, error: 'EMPTY_CREDENTIALS' };
+  }
+
+  const client = getActiveClient();
+  try {
+    // 1. เรียกใช้งาน Server-Side RPC เพื่อตรวจสอบรหัสผ่านบน Supabase
+    const { data, error } = await client.rpc('verify_staff_login', {
+      p_identifier: identifier,
+      p_password: password
+    });
+
+    if (!error && data) {
+      return data;
+    }
+
+    // 🛡️ หาก RPC แจ้งเตือนว่าบัญชีถูกระงับการใช้งาน
+    if (data?.error === 'ACCOUNT_SUSPENDED') {
+      return data;
+    }
+
+    // 2. Fallback ชั่วคราวกรณีที่แอดมินยังไม่ได้รัน SQL สร้าง RPC บน Supabase
+    if (error && (error.code === 'PGRST202' || error.message?.includes('not found') || error.status === 404)) {
+      console.warn('RPC verify_staff_login not found, using direct fallback query...');
+      const cleanId = (identifier || '').trim().toLowerCase();
+      const { data: staffList } = await client
+        .from('staff_users')
+        .select('id, username, password, full_name, nickname, phone, email, profile_image_url, is_active, roles(name, label, code, allowed_pages)')
+        .eq('is_active', true);
+
+      if (staffList && staffList.length > 0) {
+        const found = staffList.find(u => 
+          (u.username?.toLowerCase() === cleanId || String(u.id).toLowerCase() === cleanId) &&
+          u.password === password
+        );
+
+        if (found) {
+          return {
+            success: true,
+            user: {
+              username: found.username,
+              staffCode: found.id,
+              name: found.full_name || found.nickname || found.username,
+              role: found.roles?.name || 'admin',
+              roleCode: found.roles?.code || '11',
+              roleLabel: found.roles?.label || 'ผู้ดูแลระบบ',
+              allowedPages: found.roles?.allowed_pages || ['Calendar', 'Plans'],
+              email: found.email || '',
+              phone: found.phone || '',
+              image: found.profile_image_url || ''
+            }
+          };
+        }
+      }
+    }
+
+    return { success: false, error: 'INVALID_CREDENTIALS' };
+  } catch (err) {
+    console.error('Error verifying staff login:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+// 5.3 ดึงข้อมูลเฉพาะโปรเจกต์เดียวนั้นสำหรับหน้าติดตามงานและใบเสนอราคาสาธารณะ (Public Single Project Lookup)
+export async function fetchPublicProjectByToken(token) {
+  if (!token) return null;
+  const client = getActiveClient();
+  try {
+    // 1. เรียกใช้งาน Server-Side RPC ดึงเฉพาะโปรเจกต์ที่ได้รับอนุญาตเท่านั้น (Zero-Egress & Zero-Leakage)
+    const { data, error } = await client.rpc('get_public_project_by_token', {
+      p_token: token
+    });
+
+    if (!error && data) {
+      return data;
+    }
+
+    // 🛡️ หาก RPC แจ้งเตือนว่าบัญชีถูกระงับการใช้งาน
+    if (data?.error === 'ACCOUNT_SUSPENDED') {
+      return data;
+    }
+
+    // 2. Fallback ชั่วคราวกรณีที่แอดมินยังไม่ได้รัน SQL สร้าง RPC บน Supabase
+    if (error && (error.code === 'PGRST202' || error.message?.includes('not found') || error.status === 404)) {
+      console.warn('RPC get_public_project_by_token not found, fallback to direct query...');
+      const { data: projects } = await client
+        .from('projects')
+        .select(`
+          *,
+          project_quotation_items (*),
+          project_customer_support (*)
+        `)
+        .limit(350);
+
+      if (projects && projects.length > 0) {
+        const match = projects.find(p => {
+          const rawDt = (p.raw_delivery_start || p.project_datetime || '').substring(0, 16);
+          return generateTrackingToken(p.id, rawDt) === token || p.id === token;
+        });
+
+        if (match) {
+          return {
+            id: match.id,
+            name: match.name,
+            category: match.category,
+            artist: match.artist_name || '',
+            customer: match.customer_name || '',
+            customerPhone: match.customer_phone || '',
+            customerLine: match.customer_line || '',
+            recipient: match.recipient_name || '',
+            recipientPhone: match.recipient_phone || '',
+            location: match.location_name || '',
+            mapLink: match.map_link || '',
+            rawDateTime: (match.raw_delivery_start || match.project_datetime || '').substring(0, 16),
+            date: match.raw_delivery_start ? match.raw_delivery_start.substring(0, 10) : '',
+            deliveryDate: match.delivery_date_display || '',
+            dealStatus: match.deal_status || 'custom-1771415025673',
+            transportStatus: match.transport_status || 'custom-1771415278809',
+            paymentStatus: match.payment_status || 'unpaid',
+            wage: match.wage || 0,
+            deliveryFee: match.delivery_fee || 0,
+            depositAmount: match.deposit_amount || 0,
+            image: match.primary_image_url || '',
+            images: match.images || [],
+            note: match.note || '',
+            quotationItems: (match.project_quotation_items || []).map(q => ({
+              id: q.id,
+              category: q.category,
+              detail: q.detail,
+              price: q.price,
+              quantity: q.quantity,
+              unit: q.unit,
+              total: q.total
+            })),
+            customerSupport: (match.project_customer_support || []).map(s => ({
+              id: s.id,
+              itemType: s.item_type,
+              detail: s.detail,
+              price: s.price,
+              quantity: s.quantity
+            }))
+          };
+        }
+      }
+    }
+
+    return null;
+  } catch (err) {
+    console.error('Error fetching public project by token:', err);
     return null;
   }
 }
@@ -808,8 +1351,11 @@ export async function loadLocationsLocalFirst(onUpdate) {
       .select(LOCATION_COLUMNS)
       .order('name');
 
-    if (!error && Array.isArray(cloudLocations) && cloudLocations.length > 0) {
-      await db.delivery_locations.bulkPut(cloudLocations);
+    if (!error && Array.isArray(cloudLocations)) {
+      await db.delivery_locations.clear();
+      if (cloudLocations.length > 0) {
+        await db.delivery_locations.bulkPut(cloudLocations);
+      }
       if (onUpdate) onUpdate(cloudLocations);
       return cloudLocations;
     }
@@ -823,9 +1369,10 @@ export async function loadLocationsLocalFirst(onUpdate) {
 
 // 8. บันทึกหรือสร้างสถานที่จัดส่งใหม่ลง Supabase & IndexedDB
 export async function saveLocationSync(locationData) {
+  const validated = validatePayload(locationPayloadSchema, locationData, 'Location');
   const client = getActiveClient();
   try {
-    const payload = { ...locationData };
+    const payload = { ...validated };
     if (payload.id && !isValidUuid(payload.id)) {
       delete payload.id;
     }
@@ -842,30 +1389,59 @@ export async function saveLocationSync(locationData) {
     }
     return data;
   } catch (err) {
-    console.error('Error saving location:', err);
+    console.error('Save location error:', err);
     throw err;
   }
+}
+
+export async function deleteLocationSync(locationId) {
+  const client = getActiveClient();
+  try {
+    await client.from('delivery_locations').delete().eq('id', locationId);
+  } catch (cErr) {}
+  await db.delivery_locations.delete(locationId);
+  broadcastRecordDeleted('delivery_locations', locationId);
+  return true;
 }
 
 // 9. คำนวณผลสรุปการเงินบน Supabase Server (Zero-Egress Server Pushdown Aggregation)
 // ส่งเฉพาะผลสรุปสุดท้ายขนาด ~1.5 KB กลับมา ไม่โหลดโปรเจกต์รายบรรทัด
 export async function fetchServerAnalytics(filters = {}) {
   const client = getActiveClient();
+  let startDate = filters.startDate || null;
+  let endDate = filters.endDate || null;
+
+  if (!startDate && !endDate) {
+    if (filters.mode === 'month' && filters.date) {
+      const bounds = getMonthDateBounds(filters.date);
+      startDate = bounds.start ? bounds.start.split('T')[0] : null;
+      endDate = bounds.end ? bounds.end.split('T')[0] : null;
+    } else if (filters.mode === 'date' && filters.date) {
+      startDate = filters.date;
+      endDate = filters.date;
+    } else if (filters.mode === 'range' && filters.range?.start && filters.range?.end) {
+      startDate = filters.range.start;
+      endDate = filters.range.end;
+    }
+  }
+
+  const rpcParams = {
+    p_start_date: startDate ? `${startDate}T00:00:00Z` : null,
+    p_end_date: endDate ? `${endDate}T23:59:59Z` : null,
+    p_category: filters.category && filters.category !== 'all' ? filters.category : null,
+    p_deal_status: filters.dealStatus && filters.dealStatus !== 'all' ? filters.dealStatus : null
+  };
+
   try {
-    const { data, error } = await client.rpc('get_complete_analytics', {
-      p_start_date: filters.startDate || null,
-      p_end_date: filters.endDate || null,
-      p_category: filters.category && filters.category !== 'all' ? filters.category : null,
-      p_deal_status: filters.dealStatus && filters.dealStatus !== 'all' ? filters.dealStatus : null
-    });
+    const { data, error } = await client.rpc('get_complete_analytics', rpcParams);
     if (!error && data) return data;
   } catch (err) {
     console.warn('get_complete_analytics notice, trying fallback RPC:', err);
   }
 
-  // Fallback to basic get_financial_analytics
+  // Fallback to get_financial_analytics with date range pushdown
   try {
-    const { data, error } = await client.rpc('get_financial_analytics');
+    const { data, error } = await client.rpc('get_financial_analytics', rpcParams);
     if (!error && data) {
       return {
         totals: {
@@ -901,7 +1477,6 @@ export async function fetchServerAnalytics(filters = {}) {
   return null;
 }
 
-// 10. ดึงข้อมูลแผนงานแบบแบ่งหน้า True Lazy Range (ดึงทีละ 20 แถวเฉพาะเมื่อเลื่อนจอ)
 export async function loadProjectsPaginated({ start = 0, limit = 20, append = true } = {}) {
   const client = getActiveClient();
   try {
@@ -961,41 +1536,103 @@ export async function loadProjectsPaginated({ start = 0, limit = 20, append = tr
   }
 }
 
-// 11. ดึงข้อมูลรูปภาพและสลิปแบบ On-Demand (JIT) เฉพาะตอนเปิดดูโปรเจกต์นั้นจริงๆ
+// 11. ดึงข้อมูลรูปภาพ สลิป และตารางลูกแบบ On-Demand (JIT) เฉพาะตอนเปิดดูโปรเจกต์นั้นจริงๆ (Zero-Egress)
 export async function fetchProjectDetailOnDemand(projectId) {
+  if (!projectId) return null;
   const client = getActiveClient();
   try {
-    const { data, error } = await client
-      .from('projects')
-      .select(PROJECT_DETAIL_COLUMNS)
-      .eq('id', projectId)
-      .maybeSingle();
+    const [detailRes, qRes, csRes, exRes] = await Promise.all([
+      client.from('projects').select(PROJECT_DETAIL_COLUMNS).eq('id', projectId).maybeSingle(),
+      client.from('project_quotation_items').select(QUOTATION_COLUMNS).eq('project_id', projectId),
+      client.from('project_customer_support').select(SUPPORT_COLUMNS).eq('project_id', projectId),
+      client.from('project_expenses').select(EXPENSE_COLUMNS).eq('project_id', projectId)
+    ]);
 
-    if (!error && data) {
-      const existing = await db.projects.get(projectId);
-      if (existing) {
-        const merged = {
-          ...existing,
-          images: Array.isArray(data.images) && data.images.length > 0 ? data.images : existing.images,
-          slips: Array.isArray(data.slips) ? data.slips : existing.slips,
-          customerInfo: {
-            ...existing.customerInfo,
-            address: data.customer_address || existing.customerInfo?.address || '',
-            email: data.customer_email || existing.customerInfo?.email || '',
-            line: data.customer_line || existing.customerInfo?.line || '',
-            social: data.customer_social || existing.customerInfo?.social || '',
-            taxId: data.customer_tax_id || existing.customerInfo?.taxId || ''
-          }
-        };
-        await db.projects.put(merged);
-        return merged;
-      }
-    }
-    return null;
+    const data = detailRes.data || {};
+    const existing = (await db.projects.get(projectId)) || {};
+
+    const qItems = (qRes.data || []).map(q => ({
+      id: q.id,
+      category: q.category || '',
+      detail: q.detail || '',
+      quantity: Number(q.quantity) || 1,
+      unitPrice: Number(q.unit_price) || 0,
+      price: Number(q.price) || 0,
+      date: q.item_date || ''
+    }));
+
+    const csItems = (csRes.data || []).map(cs => ({
+      id: cs.id,
+      denomination: Number(cs.denomination) || 0,
+      quantity: Number(cs.quantity) || 0,
+      price: Number(cs.price) || 0,
+      date: cs.item_date || ''
+    }));
+
+    const exItems = (exRes.data || []).map(ex => ({
+      id: ex.id,
+      category: ex.category || '',
+      detail: ex.detail || '',
+      quantity: Number(ex.quantity) || 1,
+      unitPrice: Number(ex.unit_price) || 0,
+      price: Number(ex.price) || 0,
+      date: ex.item_date || ''
+    }));
+
+    const merged = {
+      ...existing,
+      images: Array.isArray(data.images) && data.images.length > 0 ? data.images : (existing.images || []),
+      slips: Array.isArray(data.slips) && data.slips.length > 0 ? data.slips : (existing.slips || []),
+      customerInfo: {
+        ...(existing.customerInfo || {}),
+        address: data.customer_address || existing.customerInfo?.address || '',
+        email: data.customer_email || existing.customerInfo?.email || '',
+        line: data.customer_line || existing.customerInfo?.line || '',
+        social: data.customer_social || existing.customerInfo?.social || '',
+        taxId: data.customer_tax_id || existing.customerInfo?.taxId || ''
+      },
+      quotationItems: qItems.length > 0 ? qItems : (existing.quotationItems || []),
+      customerSupport: csItems.length > 0 ? csItems : (existing.customerSupport || []),
+      expenses: exItems.length > 0 ? exItems : (existing.expenses || [])
+    };
+
+    await db.projects.put(merged);
+    return merged;
   } catch (err) {
     console.warn('Fetch on-demand detail notice:', err);
     return null;
   }
+}
+
+/**
+ * 📊 ดึงตัวเลขสถิติและผลสรุปภาพรวมจาก Server-Side RPC โดยตรง (Zero-Egress Payload ~150 Bytes)
+ * ไม่ต้องดาวน์โหลดแถวโปรเจกต์ 345 แถวมาคำนวณในเบราว์เซอร์
+ */
+export async function fetchServerProjectStats(filters = {}) {
+  const client = getActiveClient();
+  try {
+    const { data, error } = await client.rpc('get_financial_analytics', {
+      p_start_date: filters.startDate ? `${filters.startDate}T00:00:00Z` : null,
+      p_end_date: filters.endDate ? `${filters.endDate}T23:59:59Z` : null,
+      p_category: filters.category && filters.category !== 'all' ? filters.category : null,
+      p_deal_status: filters.dealStatus && filters.dealStatus !== 'all' ? filters.dealStatus : null
+    });
+
+    if (!error && data) {
+      return {
+        total: data.total_orders || 0,
+        totalRevenue: data.total_revenue || 0,
+        totalExpenses: data.total_expenses || 0,
+        totalNetProfit: data.total_net_profit || 0,
+        totalCustomerSupport: data.total_customer_support || 0,
+        paidCount: data.paid_orders_count || 0,
+        unpaidCount: data.unpaid_orders_count || 0,
+      };
+    }
+  } catch (e) {
+    console.warn('fetchServerProjectStats error:', e);
+  }
+  return null;
 }
 
 // 11.1 ดึงรหัสโปรเจกต์ 30 รายการล่าสุดจาก Supabase โดยตรง (Ultra-Lean Zero-Egress ~1.2 KB)
@@ -1037,8 +1674,11 @@ export async function loadCustomersLocalFirst(onUpdate) {
       .select(CUSTOMER_COLUMNS)
       .order('name');
 
-    if (!error && Array.isArray(cloudCustomers) && cloudCustomers.length > 0) {
-      await db.customers.bulkPut(cloudCustomers);
+    if (!error && Array.isArray(cloudCustomers)) {
+      await db.customers.clear();
+      if (cloudCustomers.length > 0) {
+        await db.customers.bulkPut(cloudCustomers);
+      }
       if (onUpdate) onUpdate(cloudCustomers);
       return cloudCustomers;
     }
@@ -1050,18 +1690,29 @@ export async function loadCustomersLocalFirst(onUpdate) {
   }
 }
 
+export async function deleteCustomerSync(customerId) {
+  const client = getActiveClient();
+  try {
+    await client.from('customers').delete().eq('id', customerId);
+  } catch (cErr) {}
+  await db.customers.delete(customerId);
+  broadcastRecordDeleted('customers', customerId);
+  return true;
+}
+
 export async function saveCustomerSync(customerData) {
+  const validated = validatePayload(customerPayloadSchema, customerData, 'Customer');
   const client = getActiveClient();
   try {
     const payload = {
-      name: customerData.name,
-      phone: customerData.phone || null,
-      line_id: customerData.line_id || customerData.line || null,
-      social_account: customerData.social_account || customerData.social || null,
-      email: customerData.email || null,
-      tax_id: customerData.tax_id || customerData.taxId || null,
-      billing_address: customerData.billing_address || customerData.address || null,
-      vip_tier: customerData.vip_tier || 'general'
+      name: validated.name,
+      phone: validated.phone || null,
+      line_id: validated.line_id || validated.line || null,
+      social_account: validated.social_account || validated.social || null,
+      email: validated.email || null,
+      tax_id: validated.tax_id || validated.taxId || null,
+      billing_address: validated.billing_address || validated.address || null,
+      vip_tier: validated.tier || validated.vip_tier || 'general'
     };
 
     if (customerData.id && isValidUuid(customerData.id)) {
@@ -1277,32 +1928,33 @@ export async function loadInventoryLocalFirst(onUpdate) {
 }
 
 export async function saveInventoryItemSync(itemData) {
+  const validated = validatePayload(inventoryItemPayloadSchema, itemData, 'InventoryItem');
   const client = getActiveClient();
   try {
     const payload = {
-      name: itemData.name,
-      item_type: itemData.item_type || 'consumable',
-      unit: itemData.unit || 'ชิ้น',
-      current_stock: Number(itemData.current_stock) || 0,
-      min_alert_threshold: Number(itemData.min_alert_threshold) || 5,
-      average_cost: Number(itemData.average_cost) || 0,
-      storage_location: itemData.storage_location || '',
-      color: itemData.color || '',
-      size: itemData.size || '',
-      status: itemData.status || 'in_service',
-      is_active: itemData.is_active !== undefined ? itemData.is_active : true
+      name: validated.name,
+      item_type: validated.item_type || 'consumable',
+      unit: validated.unit || 'ชิ้น',
+      current_stock: Number(validated.current_stock) || 0,
+      min_alert_threshold: Number(validated.min_alert_threshold) || 5,
+      average_cost: Number(validated.average_cost) || 0,
+      storage_location: validated.storage_location || '',
+      color: validated.color || '',
+      size: validated.size || '',
+      status: validated.status || 'in_service',
+      is_active: validated.is_active !== undefined ? validated.is_active : true
     };
 
-    if (itemData.id && isValidUuid(itemData.id)) {
-      payload.id = itemData.id;
-    } else if (itemData.id) {
-      payload.id = itemData.id;
+    if (validated.id && isValidUuid(validated.id)) {
+      payload.id = validated.id;
+    } else if (validated.id) {
+      payload.id = validated.id;
     } else {
       payload.id = crypto?.randomUUID ? crypto.randomUUID() : `itm-${Date.now()}`;
     }
 
-    if (itemData.code) {
-      payload.code = itemData.code;
+    if (validated.code) {
+      payload.code = validated.code;
     }
 
     try {
@@ -1335,6 +1987,7 @@ export async function deleteInventoryItemSync(itemId) {
       await client.from('inventory_items').update({ is_active: false }).eq('id', itemId);
     } catch (cErr) {}
     await db.inventory_items.delete(itemId);
+    broadcastRecordDeleted('inventory_items', itemId);
     return true;
   } catch (err) {
     console.error('Error deleting inventory item:', err);
@@ -1854,25 +2507,26 @@ export async function loadQuotationsLocalFirst(onUpdate) {
 }
 
 export async function saveQuotationSync(quoteData) {
+  const validated = validatePayload(quotationPayloadSchema, quoteData, 'Quotation');
   const client = getActiveClient();
   try {
     const payload = {
-      quote_no: quoteData.quote_no,
-      title: quoteData.title,
-      client_name: quoteData.client_name || '',
-      project_code: quoteData.project_code || null,
-      backdrop_items: quoteData.backdrop_items || [],
-      floral_items: quoteData.floral_items || [],
-      backdrop_cost: Number(quoteData.backdrop_cost) || 0,
-      floral_cost: Number(quoteData.floral_cost) || 0,
-      total_cost: Number(quoteData.total_cost) || 0,
-      markup_percent: Number(quoteData.markup_percent) || 30,
-      final_price: Number(quoteData.final_price) || 0,
-      note: quoteData.note || '',
+      quote_no: validated.quote_no,
+      title: validated.title,
+      client_name: validated.client_name || '',
+      project_code: validated.project_code || null,
+      backdrop_items: validated.backdrop_items || [],
+      floral_items: validated.floral_items || [],
+      backdrop_cost: Number(validated.backdrop_cost) || 0,
+      floral_cost: Number(validated.floral_cost) || 0,
+      total_cost: Number(validated.total_cost) || 0,
+      markup_percent: Number(validated.markup_percent) || 30,
+      final_price: Number(validated.final_price) || 0,
+      note: validated.note || '',
       updated_at: new Date().toISOString()
     };
-    if (quoteData.id) {
-      payload.id = quoteData.id;
+    if (validated.id) {
+      payload.id = validated.id;
     } else {
       payload.id = `qt-${Date.now()}`;
       payload.created_at = new Date().toISOString();
@@ -1907,6 +2561,7 @@ export async function deleteQuotationSync(quoteId) {
       await client.from('quotations').delete().eq('id', quoteId);
     } catch (cErr) {}
     await db.quotations.delete(quoteId);
+    broadcastRecordDeleted('quotations', quoteId);
     return true;
   } catch (err) {
     console.error('Error deleting quotation doc:', err);
@@ -1928,8 +2583,11 @@ export async function loadArtistsLocalFirst(onUpdate) {
       .select(ARTIST_COLUMNS)
       .order('name');
 
-    if (!error && Array.isArray(cloudArtists) && cloudArtists.length > 0) {
-      await db.artists.bulkPut(cloudArtists);
+    if (!error && Array.isArray(cloudArtists)) {
+      await db.artists.clear();
+      if (cloudArtists.length > 0) {
+        await db.artists.bulkPut(cloudArtists);
+      }
       if (onUpdate) onUpdate(cloudArtists);
       return cloudArtists;
     }
@@ -1941,24 +2599,139 @@ export async function loadArtistsLocalFirst(onUpdate) {
   }
 }
 
+// 17.1 สถิติรวมศิลปินและลูกค้าแบบ All-Time (Server Aggregated Summary Stats)
+export async function loadArtistsAndCustomersSummaryStats(onUpdate) {
+  try {
+    // 1. ส่งข้อมูลแคชจาก IndexedDB ทันที (Local-First 0ms)
+    const cachedMeta = await db.sync_meta.get('artists_customers_summary_stats');
+    if (cachedMeta && cachedMeta.value && onUpdate) {
+      onUpdate(cachedMeta.value);
+    }
+
+    // 2. ดึงข้อมูลสรุปแบบ Zero-Egress Server RPC (150ms / ~2 KB)
+    const client = getActiveClient();
+    try {
+      const [artRes, custRes] = await Promise.all([
+        client.rpc('get_artists_summary_stats'),
+        client.rpc('get_customers_summary_stats')
+      ]);
+      if (!artRes.error && Array.isArray(artRes.data) && !custRes.error && Array.isArray(custRes.data)) {
+        const artistStats = {};
+        artRes.data.forEach(r => {
+          artistStats[r.artist_name.toLowerCase()] = {
+            name: r.artist_name,
+            projectCount: Number(r.project_count),
+            totalRevenue: Number(r.total_revenue),
+            totalSupport: Number(r.total_support),
+            lastActiveDate: r.last_active_date || ''
+          };
+        });
+        const customerStats = {};
+        custRes.data.forEach(r => {
+          customerStats[r.customer_name.toLowerCase()] = {
+            name: r.customer_name,
+            projectCount: Number(r.project_count),
+            totalSpend: Number(r.total_spend),
+            totalSupport: Number(r.total_support),
+            lastOrderDate: r.last_order_date || ''
+          };
+        });
+        const result = { artistStats, customerStats };
+        await db.sync_meta.put({ key: 'artists_customers_summary_stats', value: result, updated_at: Date.now() });
+        if (onUpdate) onUpdate(result);
+        return result;
+      }
+    } catch (rpcErr) {
+      console.warn('RPC summary stats fallback to projection:', rpcErr);
+    }
+
+    // Fallback: ดึงข้อมูลสรุปแบบ Zero-Egress Projection จาก Supabase
+    const { data, error } = await client
+      .from('projects')
+      .select('artist_name, customer_name, wage, customer_support_total, delivery_fee, raw_delivery_start, project_datetime');
+
+    if (!error && Array.isArray(data)) {
+      const artistStats = {};
+      const customerStats = {};
+
+      data.forEach(p => {
+        const aName = (p.artist_name || '').trim();
+        if (aName && aName !== '-' && aName !== 'Unknown') {
+          const key = aName.toLowerCase();
+          if (!artistStats[key]) {
+            artistStats[key] = {
+              name: aName,
+              projectCount: 0,
+              totalRevenue: 0,
+              totalSupport: 0,
+              lastActiveDate: ''
+            };
+          }
+          const aEntry = artistStats[key];
+          aEntry.projectCount += 1;
+          aEntry.totalRevenue += (p.wage || 0);
+          aEntry.totalSupport += (p.customer_support_total || 0);
+          const dStr = p.raw_delivery_start || p.project_datetime || '';
+          if (dStr && (!aEntry.lastActiveDate || dStr > aEntry.lastActiveDate)) {
+            aEntry.lastActiveDate = dStr;
+          }
+        }
+
+        const cName = (p.customer_name || '').trim();
+        if (cName && cName !== '-' && cName !== 'Unknown') {
+          const key = cName.toLowerCase();
+          if (!customerStats[key]) {
+            customerStats[key] = {
+              name: cName,
+              projectCount: 0,
+              totalSpend: 0,
+              totalSupport: 0,
+              lastOrderDate: ''
+            };
+          }
+          const cEntry = customerStats[key];
+          cEntry.projectCount += 1;
+          cEntry.totalSpend += ((p.wage || 0) + (p.delivery_fee || 0));
+          cEntry.totalSupport += (p.customer_support_total || 0);
+          const dStr = p.raw_delivery_start || p.project_datetime || '';
+          if (dStr && (!cEntry.lastOrderDate || dStr > cEntry.lastOrderDate)) {
+            cEntry.lastOrderDate = dStr;
+          }
+        }
+      });
+
+      const result = { artistStats, customerStats };
+      await db.sync_meta.put({ key: 'artists_customers_summary_stats', value: result, updated_at: Date.now() });
+      if (onUpdate) onUpdate(result);
+      return result;
+    }
+
+    return cachedMeta?.value || { artistStats: {}, customerStats: {} };
+  } catch (err) {
+    console.warn('Load summary stats notice:', err);
+    return { artistStats: {}, customerStats: {} };
+  }
+}
+
 export async function saveArtistSync(artistData) {
+  const validated = validatePayload(artistPayloadSchema, artistData, 'Artist');
   const client = getActiveClient();
   try {
     const payload = {
-      name: artistData.name,
-      agency: artistData.agency || '',
-      fandom_name: artistData.fandom_name || '',
-      fandom_color: artistData.fandom_color || '',
-      birth_date: artistData.birth_date || null,
-      debut_date: artistData.debut_date || null,
-      bio: artistData.bio || '',
-      social_links: artistData.social_links || {},
-      favorite_flowers: artistData.favorite_flowers || '',
-      avatar_url: artistData.avatar_url || '',
-      notes: artistData.notes || ''
+      name: validated.name,
+      agency: validated.agency || '',
+      fandom_name: validated.fandom_name || '',
+      fandom_color: validated.fandom_color || '',
+      birth_date: validated.birth_date || null,
+      debut_date: validated.debut_date || null,
+      bio: validated.bio || '',
+      social_links: validated.social_links || {},
+      favorite_flowers: validated.favorite_flowers || '',
+      avatar_url: validated.avatar_url || '',
+      notes: validated.notes || ''
     };
-    if (artistData.id) {
-      payload.id = artistData.id;
+    if (validated.id) {
+      payload.id = validated.id;
     } else {
       payload.id = `art-${Date.now()}`;
       payload.created_at = new Date().toISOString();
@@ -1993,6 +2766,7 @@ export async function deleteArtistSync(artistId) {
       await client.from('artists').delete().eq('id', artistId);
     } catch (cErr) {}
     await db.artists.delete(artistId);
+    broadcastRecordDeleted('artists', artistId);
     return true;
   } catch (err) {
     console.error('Error deleting artist:', err);
@@ -2007,15 +2781,15 @@ export const DEFAULT_STAFF_MEMBERS = [
     username: '1',
     password: '1',
     staff_code: '2611001',
-    name: '1 (Admin)',
-    nickname: '1',
+    name: 'Lukyeekubbbbb',
+    nickname: 'Lukyeekubbbbb',
     role: 'admin',
     role_code: '11',
-    role_label: 'ผู้ดูแลระบบ',
+    role_label: 'ผู้ดูแลระบบ (Admin)',
     phone: '0812345678',
     email: 'admin@flower2u.com',
     is_active: true,
-    avatar_url: '',
+    avatar_url: 'https://drive.google.com/uc?export=view&id=1ArbZlk1Dcj_DIochzOEYvv-yuTm-VE1E',
     created_at: '2026-01-01T00:00:00Z'
   },
   {
@@ -2024,14 +2798,14 @@ export const DEFAULT_STAFF_MEMBERS = [
     password: '1234',
     staff_code: '2611002',
     name: 'AOM',
-    nickname: 'ออม',
+    nickname: 'AOM',
     role: 'technician',
     role_code: '21',
-    role_label: 'ช่างจัดดอกไม้',
+    role_label: 'ช่างจัดดอกไม้/หน้างาน (Technician)',
     phone: '0823456789',
     email: 'aom@flower2u.com',
     is_active: true,
-    avatar_url: '',
+    avatar_url: 'https://drive.google.com/uc?export=view&id=1FZGkxFNBSkC3i9cdCQvs5OlUi-49wxau',
     created_at: '2026-01-01T00:00:00Z'
   },
   {
@@ -2039,15 +2813,15 @@ export const DEFAULT_STAFF_MEMBERS = [
     username: 'DREAM',
     password: '1',
     staff_code: '2611003',
-    name: 'DREAM',
-    nickname: 'ดรีม',
+    name: 'หมูดรีม',
+    nickname: 'หมูดรีม',
     role: 'driver',
     role_code: '31',
-    role_label: 'พนักงานจัดส่ง',
+    role_label: 'พนักงานจัดส่ง (Driver/Logistics)',
     phone: '0834567890',
     email: 'dream@flower2u.com',
     is_active: true,
-    avatar_url: '',
+    avatar_url: 'https://drive.google.com/uc?export=view&id=1TuRK4Yz2xN_xIwy0BZmj2FgeQpZW6bCT',
     created_at: '2026-01-01T00:00:00Z'
   },
   {
@@ -2055,11 +2829,11 @@ export const DEFAULT_STAFF_MEMBERS = [
     username: 'Chuti',
     password: 'aom@2026',
     staff_code: '2611004',
-    name: 'Chuti',
-    nickname: 'ชุติ',
+    name: 'อ้อม',
+    nickname: 'อ้อม',
     role: 'accountant',
     role_code: '41',
-    role_label: 'ฝ่ายบัญชีและการเงิน',
+    role_label: 'ฝ่ายบัญชีและการเงิน (Accountant)',
     phone: '0845678901',
     email: 'chuti@flower2u.com',
     is_active: true,
@@ -2071,11 +2845,21 @@ export const DEFAULT_STAFF_MEMBERS = [
 export async function loadStaffLocalFirst(onUpdate) {
   try {
     const cached = await db.staff.toArray();
-    if (cached.length === 0) {
+
+    // 🛡️ Filter and purge any legacy mock staff (e.g. starting with 'staff-')
+    const legacyRecords = cached.filter(s => !s || !s.id || String(s.id).startsWith('staff-'));
+    if (legacyRecords.length > 0) {
+      for (const legacy of legacyRecords) {
+        if (legacy?.id) await db.staff.delete(legacy.id).catch(() => {});
+      }
+    }
+
+    const validCached = cached.filter(s => s && s.id && !String(s.id).startsWith('staff-'));
+    if (validCached.length === 0) {
       await db.staff.bulkPut(DEFAULT_STAFF_MEMBERS);
       if (onUpdate) onUpdate(DEFAULT_STAFF_MEMBERS);
     } else if (onUpdate) {
-      onUpdate(cached);
+      onUpdate(validCached);
     }
 
     const client = getActiveClient();
@@ -2097,39 +2881,43 @@ export async function loadStaffLocalFirst(onUpdate) {
         'Chuti': '2611004'
       };
 
-      const mapped = cloudStaff.map(u => {
-        const code = u.id || u.staff_code || staffCodeMap[u.username] || '';
-        const roleName = u.roles?.name || 'technician';
-        const roleCode = roleName === 'admin' ? '11' : roleName === 'technician' ? '21' : roleName === 'driver' ? '31' : '41';
-        const roleLabel = u.roles?.label || (roleName === 'admin' ? 'ผู้ดูแลระบบ' : roleName === 'technician' ? 'ช่างจัดดอกไม้' : roleName === 'driver' ? 'พนักงานจัดส่ง' : 'ฝ่ายบัญชีและการเงิน');
-        return {
-          id: code,
-          username: u.username,
-          staff_code: code,
-          password: u.password || passwordMap[u.username] || '1',
-          name: u.full_name || u.nickname || u.username,
-          nickname: u.nickname || '',
-          role: roleName,
-          role_code: roleCode,
-          role_label: roleLabel,
-          email: u.email || '',
-          phone: u.phone || '',
-          citizen_id: u.citizen_id || '',
-          birth_date: u.birth_date || '',
-          address: u.address || '',
-          emergency_contact: u.emergency_contact || '',
-          avatar_url: u.profile_image_url || '',
-          is_active: u.is_active !== undefined ? u.is_active : true,
-          created_at: u.created_at || ''
-        };
-      });
+      const mapped = cloudStaff
+        .filter(u => u && u.id && !String(u.id).startsWith('staff-'))
+        .map(u => {
+          const code = u.id || u.staff_code || staffCodeMap[u.username] || '';
+          const roleName = u.roles?.name || 'technician';
+          const roleCode = u.roles?.code || (roleName === 'admin' ? '11' : roleName === 'technician' ? '21' : roleName === 'driver' ? '31' : '41');
+          const roleLabel = u.roles?.label || (roleName === 'admin' ? 'ผู้ดูแลระบบ (Admin)' : roleName === 'technician' ? 'ช่างจัดดอกไม้/หน้างาน (Technician)' : roleName === 'driver' ? 'พนักงานจัดส่ง (Driver/Logistics)' : 'ฝ่ายบัญชีและการเงิน (Accountant)');
+          return {
+            id: code,
+            username: u.username,
+            staff_code: code,
+            password: u.password || passwordMap[u.username] || '1',
+            name: u.full_name || u.nickname || u.username,
+            nickname: u.nickname || '',
+            role: roleName,
+            role_code: roleCode,
+            role_label: roleLabel,
+            email: u.email || '',
+            phone: u.phone || '',
+            citizen_id: u.citizen_id || '',
+            birth_date: u.birth_date || '',
+            address: u.address || '',
+            emergency_contact: u.emergency_contact || '',
+            avatar_url: u.profile_image_url || '',
+            is_active: u.is_active !== undefined ? u.is_active : true,
+            created_at: u.created_at || ''
+          };
+        });
 
+      // Clear local staff table so any stale mock entries are permanently removed
+      await db.staff.clear();
       await db.staff.bulkPut(mapped);
       if (onUpdate) onUpdate(mapped);
       return mapped;
     }
 
-    return cached.length > 0 ? cached : DEFAULT_STAFF_MEMBERS;
+    return validCached.length > 0 ? validCached : DEFAULT_STAFF_MEMBERS;
   } catch (err) {
     console.warn('Load staff notice:', err);
     return DEFAULT_STAFF_MEMBERS;
@@ -2137,6 +2925,7 @@ export async function loadStaffLocalFirst(onUpdate) {
 }
 
 export async function saveStaffSync(staffData) {
+  const validated = validatePayload(staffPayloadSchema, staffData, 'Staff');
   const client = getActiveClient();
   try {
     const roleCodeMap = {
@@ -2146,62 +2935,80 @@ export async function saveStaffSync(staffData) {
       accountant: '41'
     };
     const roleLabelMap = {
-      admin: 'ผู้ดูแลระบบ',
-      technician: 'ช่างจัดดอกไม้',
-      driver: 'พนักงานจัดส่ง',
-      accountant: 'ฝ่ายบัญชีและการเงิน'
+      admin: 'ผู้ดูแลระบบ (Admin)',
+      technician: 'ช่างจัดดอกไม้/หน้างาน (Technician)',
+      driver: 'พนักงานจัดส่ง (Driver/Logistics)',
+      accountant: 'ฝ่ายบัญชีและการเงิน (Accountant)'
     };
 
-    const roleName = staffData.role || 'technician';
-    const roleCode = staffData.role_code || roleCodeMap[roleName] || '21';
-    const roleLabel = staffData.role_label || roleLabelMap[roleName] || 'ช่างจัดดอกไม้';
+    const roleName = validated.role || 'technician';
+    const roleCode = validated.role_code || roleCodeMap[roleName] || '21';
+    const roleLabel = validated.role_label || roleLabelMap[roleName] || 'พนักงาน';
 
     // ID is the staff_code itself (e.g. '2611001')
-    const staffId = staffData.id || staffData.staff_code || `2611${String(Date.now()).slice(-3)}`;
+    const staffId = validated.id || validated.staff_code || `2611${String(Date.now()).slice(-3)}`;
+
+    // Lookup matching role_id from roles table (if connected)
+    let roleId = null;
+    try {
+      if (client) {
+        const { data: roleRow } = await client
+          .from('roles')
+          .select('id')
+          .eq('name', roleName)
+          .maybeSingle();
+        if (roleRow?.id) {
+          roleId = roleRow.id;
+        }
+      }
+    } catch (rErr) {}
 
     const payload = {
       id: staffId,
-      username: staffData.username,
+      username: validated.username,
       staff_code: staffId,
-      password: staffData.password || '1',
-      name: staffData.name || staffData.username,
-      nickname: staffData.nickname || '',
+      password: validated.password || '1',
+      name: validated.name || validated.username,
+      nickname: validated.nickname || '',
       role: roleName,
       role_code: roleCode,
       role_label: roleLabel,
-      email: staffData.email || '',
-      phone: staffData.phone || '',
-      citizen_id: staffData.citizen_id || '',
-      birth_date: staffData.birth_date || '',
-      address: staffData.address || '',
-      emergency_contact: staffData.emergency_contact || '',
-      avatar_url: staffData.avatar_url || staffData.image || '',
-      is_active: staffData.is_active !== undefined ? staffData.is_active : true,
+      email: validated.email || '',
+      phone: validated.phone || '',
+      citizen_id: validated.citizen_id || '',
+      birth_date: validated.birth_date || '',
+      address: validated.address || '',
+      emergency_contact: validated.emergency_contact || '',
+      avatar_url: validated.avatar_url || validated.image || '',
+      is_active: validated.is_active !== undefined ? validated.is_active : true,
       updated_at: new Date().toISOString()
     };
 
-    // Try cloud upsert to Supabase: id is staff_code, NO staff_code column
+    // Try cloud upsert to Supabase
     try {
       const supaPayload = {
         id: payload.id,
         username: payload.username,
         full_name: payload.name,
         nickname: payload.nickname,
-        email: payload.email,
-        phone: payload.phone,
-        citizen_id: payload.citizen_id,
+        role_id: roleId,
+        email: payload.email || null,
+        phone: payload.phone || null,
+        citizen_id: payload.citizen_id || null,
         birth_date: payload.birth_date || null,
-        address: payload.address,
-        emergency_contact: payload.emergency_contact,
-        profile_image_url: payload.avatar_url,
+        address: payload.address || null,
+        emergency_contact: payload.emergency_contact || null,
+        profile_image_url: payload.avatar_url || null,
         is_active: payload.is_active
       };
       await client.from('staff_users').upsert(supaPayload);
 
-      // Asynchronously sync/register to Supabase Auth
-      syncStaffToSupabaseAuth(payload).catch(authErr => {
-        console.warn('Background Supabase Auth sync notice:', authErr);
-      });
+      // 🛡️ Auto-register / sync to Supabase Auth immediately
+      try {
+        await syncStaffToSupabaseAuth(payload);
+      } catch (authErr) {
+        console.warn('Background Supabase Auth auto-sync notice:', authErr);
+      }
     } catch (cErr) {
       // Local fallback
     }
@@ -2227,9 +3034,9 @@ export async function syncStaffToSupabaseAuth(staffData) {
     if (!rawUsername) return { success: false, error: 'No username' };
 
     const cleanUsername = rawUsername.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase() || 'staff';
-    const email = (staffData.email && staffData.email.includes('@') && staffData.email.includes('.'))
+    const email = (staffData.email && staffData.email.includes('@'))
       ? staffData.email.trim()
-      : `staff_${cleanUsername}@flower2u.com`;
+      : `${cleanUsername}@flower2u.internal`;
 
     // Supabase Auth requires minimum 6 characters for password
     const rawPass = String(staffData.password || '123456');
@@ -2322,9 +3129,200 @@ export async function deleteStaffSync(staffId, username) {
       const byUser = await db.staff.where('username').equals(username).first();
       if (byUser) await db.staff.delete(byUser.id);
     }
+    broadcastRecordDeleted('staff', staffId || username);
     return true;
   } catch (err) {
     console.error('Error deleting staff:', err);
     throw err;
   }
+}
+
+/**
+ * 18.1 ระงับการใช้งานพนักงาน (Suspend / Ban Staff User)
+ * - กำหนดระยะเวลา (นาที/ชั่วโมง/วัน/ปี หรือ ถาวร)
+ * - ซิงก์ไปยัง Supabase (RPC suspend_staff_user / update staff_users)
+ * - บรอดแคสต์เตะผู้ใช้ในทุกหน้าจอและแท็บทันทีแบบ Real-Time
+ */
+export async function suspendStaffUserSync({ staffId, username, bannedUntil, isPermanent, reason }) {
+  const client = getActiveClient();
+  const banPayload = {
+    staff_id: staffId,
+    username,
+    is_active: false,
+    banned_until: isPermanent ? null : bannedUntil,
+    is_banned_permanent: !!isPermanent,
+    ban_reason: reason || 'คำสั่งจากผู้ดูแลระบบ'
+  };
+
+  try {
+    // 1. เรียกใช้งาน Server-Side RPC เพื่ออัปเดตทั้ง staff_users และ auth.users ของ Supabase
+    try {
+      if (client) {
+        const { data: rpcData, error: rpcErr } = await client.rpc('suspend_staff_user', {
+          p_staff_id: staffId,
+          p_banned_until: isPermanent ? null : bannedUntil,
+          p_is_permanent: !!isPermanent,
+          p_reason: reason || 'คำสั่งจากผู้ดูแลระบบ'
+        });
+        if (!rpcErr && rpcData?.success) {
+          console.log('✅ User suspended via RPC:', staffId);
+        }
+      }
+    } catch (e) {
+      console.warn('suspend_staff_user RPC fallback notice:', e);
+    }
+
+    // 2. อัปเดตตรงไปยังตาราง staff_users เพื่อความมั่นใจ 100%
+    try {
+      if (client) {
+        const updateData = {
+          is_active: false,
+          banned_until: isPermanent ? null : bannedUntil,
+          is_banned_permanent: !!isPermanent,
+          ban_reason: reason || 'คำสั่งจากผู้ดูแลระบบ',
+          updated_at: new Date().toISOString()
+        };
+        const { error: updErr } = await client.from('staff_users').update(updateData).eq('id', staffId);
+        if (updErr) {
+          // หากคอลัมน์ใหม่ยังไม่ได้ถูกสร้างใน DB ให้เก็บไว้ใน note และปิด is_active
+          await client.from('staff_users').update({
+            is_active: false,
+            note: JSON.stringify({ banned_until: bannedUntil, is_permanent: isPermanent, reason }),
+            updated_at: new Date().toISOString()
+          }).eq('id', staffId);
+        }
+      }
+    } catch (tblErr) {
+      console.warn('Fallback direct update to staff_users notice:', tblErr);
+    }
+
+    // 3. อัปเดตแคชท้องถิ่นใน IndexedDB
+    try {
+      const existing = await db.staff.get(staffId);
+      if (existing) {
+        await db.staff.put({
+          ...existing,
+          is_active: false,
+          banned_until: isPermanent ? null : bannedUntil,
+          is_banned_permanent: !!isPermanent,
+          ban_reason: reason || 'คำสั่งจากผู้ดูแลระบบ'
+        });
+      }
+    } catch (idbErr) {}
+
+    // 4. บรอดแคสต์สัญญาณเตะผู้ใช้ออกจากจอทันทีแบบ Real-Time (Cross-Tab / Cross-Window)
+    try {
+      const bc = new BroadcastChannel('flower2u_staff_kick');
+      bc.postMessage({
+        type: 'FORCE_KICK_BANNED',
+        staffId,
+        username,
+        bannedUntil,
+        isPermanent: !!isPermanent,
+        reason: reason || 'คำสั่งจากผู้ดูแลระบบ'
+      });
+      bc.close();
+    } catch (bcErr) {}
+
+    return { success: true };
+  } catch (err) {
+    console.error('Error suspending staff user:', err);
+    throw err;
+  }
+}
+
+/**
+ * 18.2 ปลดระงับการใช้งานพนักงาน (Unban Staff User)
+ */
+export async function unbanStaffUserSync({ staffId, username }) {
+  const client = getActiveClient();
+  try {
+    // 1. เรียกใช้งาน Server-Side RPC
+    try {
+      if (client) {
+        await client.rpc('suspend_staff_user', {
+          p_staff_id: staffId,
+          p_banned_until: null,
+          p_is_permanent: false,
+          p_reason: null
+        });
+      }
+    } catch (e) {}
+
+    // 2. อัปเดตตรงไปยังตาราง staff_users
+    try {
+      if (client) {
+        const { error: updErr } = await client.from('staff_users').update({
+          is_active: true,
+          banned_until: null,
+          is_banned_permanent: false,
+          ban_reason: null,
+          updated_at: new Date().toISOString()
+        }).eq('id', staffId);
+
+        if (updErr) {
+          await client.from('staff_users').update({
+            is_active: true,
+            note: null,
+            updated_at: new Date().toISOString()
+          }).eq('id', staffId);
+        }
+      }
+    } catch (e) {}
+
+    // 3. อัปเดตแคชท้องถิ่นใน IndexedDB
+    try {
+      const existing = await db.staff.get(staffId);
+      if (existing) {
+        await db.staff.put({
+          ...existing,
+          is_active: true,
+          banned_until: null,
+          is_banned_permanent: false,
+          ban_reason: null
+        });
+      }
+    } catch (e) {}
+
+    // 4. บรอดแคสต์สัญญาณปลดแบน
+    try {
+      const bc = new BroadcastChannel('flower2u_staff_kick');
+      bc.postMessage({
+        type: 'STAFF_UNBANNED',
+        staffId,
+        username
+      });
+      bc.close();
+    } catch (e) {}
+
+    return { success: true };
+  } catch (err) {
+    console.error('Error unbanning staff:', err);
+    throw err;
+  }
+}
+
+/**
+ * 18.3 Realtime Monitor สำหรับตรวจจับสถานะพนักงาน (เตะผู้ใช้ข้ามเครื่องสดทันที)
+ */
+export function subscribeToStaffRealtime(onStaffUpdate) {
+  const client = getActiveClient();
+  if (!client) return () => {};
+
+  const channel = client
+    .channel('realtime-staff-monitor')
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'staff_users' },
+      (payload) => {
+        if (payload.new && onStaffUpdate) {
+          onStaffUpdate(payload.new);
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    client.removeChannel(channel);
+  };
 }

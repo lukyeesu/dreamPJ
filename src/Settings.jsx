@@ -55,11 +55,11 @@ import {
 import Toast from './components/common/Toast';
 import ConfirmDialog from './components/common/ConfirmDialog';
 import ModernDateTimePicker from './components/common/ModernDateTimePicker';
-import { saveStaffSync } from './services/syncService';
+import { saveStaffSync, broadcastPermissionsUpdated } from './services/syncService';
 import { getActiveClient } from './services/supabaseClient';
 import db from './services/db';
 import { applyThemeVariables, broadcastShopInfoSync } from './utils/themeManager';
-import { parseCoordinatesFromInput, DEFAULT_FLOWER2U_HUB } from './VenuesView';
+import { parseCoordinatesFromInput, DEFAULT_FLOWER2U_HUB } from './Locations';
 
 // Custom Social Icons
 const LineIcon = ({ className }) => (
@@ -167,7 +167,7 @@ export const DEFAULT_PERMISSION_MATRIX = {
   admin: {
     label: 'แอดมิน (Admin)',
     code: '11',
-    allowed_pages: ['Calendar', 'Plans', 'Finance', 'Quotations', 'Inventory', 'Venues', 'Artists', 'Customers', 'Staff', 'Analytics', 'Settings'],
+    allowed_pages: ['Calendar', 'Plans', 'Finance', 'Quotations', 'Inventory', 'Locations', 'Artists', 'Customers', 'Staff', 'Analytics', 'Settings'],
     can_edit_pricing: true,
     can_delete_project: true,
     can_borrow_tools: true,
@@ -176,7 +176,7 @@ export const DEFAULT_PERMISSION_MATRIX = {
   technician: {
     label: 'ช่างจัดดอกไม้ (Technician)',
     code: '21',
-    allowed_pages: ['Calendar', 'Plans', 'Inventory', 'Venues', 'Artists'],
+    allowed_pages: ['Calendar', 'Plans', 'Inventory', 'Locations', 'Artists'],
     can_edit_pricing: false,
     can_delete_project: false,
     can_borrow_tools: true,
@@ -185,7 +185,7 @@ export const DEFAULT_PERMISSION_MATRIX = {
   driver: {
     label: 'พนักงานจัดส่ง (Driver)',
     code: '31',
-    allowed_pages: ['Calendar', 'Plans', 'Venues'],
+    allowed_pages: ['Calendar', 'Plans', 'Locations'],
     can_edit_pricing: false,
     can_delete_project: false,
     can_borrow_tools: false,
@@ -206,9 +206,9 @@ export const SYSTEM_MODULES = [
   { id: 'Calendar', label: 'ปฏิทิน & คิวงาน (Calendar)', tag: 'calendar', desc: 'ตารางคิวงานจัดดอกไม้ ส่งมอบ นัดหมาย' },
   { id: 'Plans', label: 'แผนงาน & โปรเจกต์ (Plans)', tag: 'plans', desc: 'การจัดการโปรเจกต์ สเปกจัดฉาก ช่างหน้างาน' },
   { id: 'Finance', label: 'การเงิน & รายรับ-รายจ่าย (Finance)', tag: 'finance', desc: 'ยอดจ้าง เงินศิลปิน รายจ่ายจริง กำไรสุทธิ สลิป' },
-  { id: 'Quotations', label: 'ใบเสนอราคา (Quotations)', tag: 'quotations', desc: 'คำนวณต้นทุนฉาก/ดอกไม้ ออกใบเสนอราคา PDF' },
+  { id: 'Quotations', label: 'คำนวณราคา (Pricing)', tag: 'quotations', desc: 'คำนวณต้นทุนฉาก/ดอกไม้ ประเมินราคาและออกใบเสนอราคา PDF' },
   { id: 'Inventory', label: 'คลังพัสดุ & ยืม-คืน (Inventory)', tag: 'inventory', desc: 'สต็อกพัสดุ โฟม/ขาตั้ง และประวัติยืม-คืนอุปกรณ์' },
-  { id: 'Venues', label: 'สถานที่จัดส่ง & ลายแทง (Venues)', tag: 'venues', desc: 'พิกัดส่งลูกค้า จุดโหลดของ Loading Dock เบอร์ รปภ.' },
+  { id: 'Locations', label: 'สถานที่จัดส่ง & นำทาง (Locations)', tag: 'location', desc: 'พิกัดส่งลูกค้า จุดโหลดของ Loading Dock เบอร์ รปภ.' },
   { id: 'Artists', label: 'ข้อมูลศิลปิน (Artists)', tag: 'artists', desc: 'ทำเนียบศิลปิน ดอกไม้ที่ชอบ ยอดซัพพอร์ตสะสม' },
   { id: 'Customers', label: 'ข้อมูลลูกค้า (Customers)', tag: 'customers', desc: 'ทะเบียนลูกค้า บ้านเบสแฟนคลับ VIP และยอดซื้อ' },
   { id: 'Staff', label: 'พนักงาน & ทีมงาน (Staff)', tag: 'staff', desc: 'บัญชีพนักงาน รหัสพนักงาน เบอร์โทร และสิทธิ์' },
@@ -464,7 +464,7 @@ const SortableListManager = ({
 
         {/* Color preview row */}
         <div className="flex items-center gap-1.5 flex-wrap pt-1">
-          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mr-1">สีพรีเซ็ต:</span>
+          <span className="text-xs text-slate-400 font-bold uppercase tracking-wider mr-1">สีพรีเซ็ต:</span>
           {colorPresets.map(preset => (
             <button
               key={preset.name}
@@ -523,7 +523,7 @@ const SortableListManager = ({
   );
 };
 
-function SettingsView({
+function Settings({
   isSyncingSettings,
   isUploadingProfile,
   handleProfileImageUpload,
@@ -749,9 +749,13 @@ function SettingsView({
     setPermissionMatrix(prev => {
       const currentRole = prev[roleKey] || { allowed_pages: [] };
       const pages = currentRole.allowed_pages || [];
-      const updatedPages = pages.includes(pageId)
-        ? pages.filter(p => p !== pageId)
-        : [...pages, pageId];
+      const hasPage = pages.includes(pageId) || (pageId === 'Locations' && pages.includes('Venues'));
+      let updatedPages;
+      if (hasPage) {
+        updatedPages = pages.filter(p => p !== pageId && (pageId !== 'Locations' || p !== 'Venues'));
+      } else {
+        updatedPages = [...pages.filter(p => pageId !== 'Locations' || p !== 'Venues'), pageId];
+      }
       return {
         ...prev,
         [roleKey]: {
@@ -781,7 +785,7 @@ function SettingsView({
     setIsSavingPermissions(true);
     try {
       localStorage.setItem('f2u_role_permissions', JSON.stringify(permissionMatrix));
-      window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: permissionMatrix }));
+      broadcastPermissionsUpdated(permissionMatrix);
 
       // Upsert all roles to Supabase roles table
       try {
@@ -880,7 +884,7 @@ function SettingsView({
 
     setPermissionMatrix(updated);
     localStorage.setItem('f2u_role_permissions', JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: updated }));
+    broadcastPermissionsUpdated(updated);
 
     // Persist to Supabase if connected
     try {
@@ -917,7 +921,7 @@ function SettingsView({
 
     setPermissionMatrix(copy);
     localStorage.setItem('f2u_role_permissions', JSON.stringify(copy));
-    window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: copy }));
+    broadcastPermissionsUpdated(copy);
 
     try {
       const client = getActiveClient();
@@ -972,7 +976,7 @@ function SettingsView({
         {/* Left Column: Categorized Navigation (Sticky on Desktop) */}
         <aside className="w-full lg:w-64 xl:w-72 shrink-0 lg:sticky lg:top-16 self-start space-y-4">
           <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200/80 shadow-sm p-2 sm:p-3 overflow-hidden">
-            <div className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider px-3 py-2 hidden lg:block">
+            <div className="text-xs font-extrabold text-slate-400 uppercase tracking-wider px-3 py-2 hidden lg:block">
               หมวดหมู่การตั้งค่า
             </div>
             
@@ -997,7 +1001,7 @@ function SettingsView({
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="truncate">{cat.label}</div>
-                      <div className={`text-[10px] font-normal truncate hidden lg:block ${isActive ? 'text-violet-100' : 'text-slate-400'}`}>
+                      <div className={`text-xs font-normal truncate hidden lg:block ${isActive ? 'text-violet-100' : 'text-slate-400'}`}>
                         {cat.desc}
                       </div>
                     </div>
@@ -1093,7 +1097,7 @@ function SettingsView({
                                   </button>
                                 )}
                               </div>
-                              <span className="font-mono text-[10px] font-bold text-violet-700 bg-violet-100/70 px-2 py-0.5 rounded-full border border-violet-200/60 shadow-xs">
+                              <span className="font-mono text-xs font-bold text-violet-700 bg-violet-100/70 px-2 py-0.5 rounded-full border border-violet-200/60 shadow-xs">
                                 รหัส {r.code || '99'}
                               </span>
                             </div>
@@ -1106,7 +1110,7 @@ function SettingsView({
                   <tbody className="divide-y divide-slate-100">
                     {/* Section 1: Modules / Pages */}
                     <tr className="bg-slate-100/70 border-y border-slate-200/80">
-                      <td colSpan={Object.keys(permissionMatrix).length + 1} className="py-2.5 px-5 text-[11px] font-extrabold text-slate-600 uppercase tracking-wider">
+                      <td colSpan={Object.keys(permissionMatrix).length + 1} className="py-2.5 px-5 text-xs font-extrabold text-slate-600 uppercase tracking-wider">
                         <div className="flex items-center gap-2">
                           <Layers className="w-3.5 h-3.5 text-violet-600" />
                           <span>การเข้าถึงหน้าจอและเมนูนำทาง (Navigation Access)</span>
@@ -1118,11 +1122,11 @@ function SettingsView({
                       <tr key={mod.id} className="hover:bg-violet-50/20 transition-colors group">
                         <td className="py-3 px-5 font-medium sticky left-0 z-10 bg-white group-hover:bg-violet-50/20 border-r border-slate-200/80 shadow-[2px_0_5px_rgba(0,0,0,0.02)] transition-colors">
                           <div className="text-slate-800 font-bold text-xs sm:text-sm">{mod.label}</div>
-                          <div className="text-[11px] text-slate-400 font-normal mt-0.5 leading-snug">{mod.desc}</div>
+                          <div className="text-xs text-slate-500 font-medium mt-0.5 leading-snug">{mod.desc}</div>
                         </td>
 
                         {Object.keys(permissionMatrix).map(roleKey => {
-                          const isAllowed = permissionMatrix[roleKey]?.allowed_pages?.includes(mod.id);
+                          const isAllowed = permissionMatrix[roleKey]?.allowed_pages?.includes(mod.id) || (mod.id === 'Locations' && permissionMatrix[roleKey]?.allowed_pages?.includes('Venues'));
                           return (
                             <td 
                               key={roleKey} 
@@ -1146,7 +1150,7 @@ function SettingsView({
 
                     {/* Section 2: Special Actions */}
                     <tr className="bg-slate-100/70 border-y border-slate-200/80">
-                      <td colSpan={Object.keys(permissionMatrix).length + 1} className="py-2.5 px-5 text-[11px] font-extrabold text-slate-600 uppercase tracking-wider">
+                      <td colSpan={Object.keys(permissionMatrix).length + 1} className="py-2.5 px-5 text-xs font-extrabold text-slate-600 uppercase tracking-wider">
                         <div className="flex items-center gap-2">
                           <Lock className="w-3.5 h-3.5 text-violet-600" />
                           <span>สิทธิ์การทำรายการพิเศษ (Action Permissions)</span>
@@ -1158,7 +1162,7 @@ function SettingsView({
                       <tr key={action.key} className="hover:bg-violet-50/20 transition-colors group">
                         <td className="py-3 px-5 font-medium sticky left-0 z-10 bg-white group-hover:bg-violet-50/20 border-r border-slate-200/80 shadow-[2px_0_5px_rgba(0,0,0,0.02)] transition-colors">
                           <div className="text-slate-800 font-bold text-xs sm:text-sm">{action.label}</div>
-                          <div className="text-[11px] text-slate-400 font-normal mt-0.5 leading-snug">{action.desc}</div>
+                          <div className="text-xs text-slate-500 font-medium mt-0.5 leading-snug">{action.desc}</div>
                         </td>
 
                         {Object.keys(permissionMatrix).map(roleKey => {
@@ -1258,7 +1262,7 @@ function SettingsView({
                         <div>
                           <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
                             <span>Key ระบบ (ภาษาอังกฤษพิมพ์เล็ก)</span>
-                            <span className="text-[10px] text-slate-400">เว้นว่างไว้เพื่อสร้างอัตโนมัติ</span>
+                            <span className="text-xs text-slate-400">เว้นว่างไว้เพื่อสร้างอัตโนมัติ</span>
                           </label>
                           <input
                             type="text"
@@ -1288,7 +1292,7 @@ function SettingsView({
                             <label className="text-xs font-bold text-slate-800">
                               กำหนดหน้าจอที่มองเห็นได้:
                             </label>
-                            <div className="flex items-center gap-2 text-[11px]">
+                            <div className="flex items-center gap-2 text-xs">
                               <button
                                 type="button"
                                 onClick={() => setNewRoleForm({ ...newRoleForm, allowed_pages: SYSTEM_MODULES.map(m => m.id) })}
@@ -1309,7 +1313,7 @@ function SettingsView({
 
                           <div className="grid grid-cols-2 gap-2 max-h-44 overflow-y-auto custom-scrollbar p-2 bg-slate-50 rounded-xl border border-slate-200/60">
                             {SYSTEM_MODULES.map(mod => {
-                              const checked = (newRoleForm.allowed_pages || []).includes(mod.id);
+                              const checked = (newRoleForm.allowed_pages || []).includes(mod.id) || (mod.id === 'Locations' && (newRoleForm.allowed_pages || []).includes('Venues'));
                               return (
                                 <label
                                   key={mod.id}
@@ -1322,9 +1326,9 @@ function SettingsView({
                                     checked={checked}
                                     onChange={() => {
                                       const cur = newRoleForm.allowed_pages || [];
-                                      const next = cur.includes(mod.id)
-                                        ? cur.filter(id => id !== mod.id)
-                                        : [...cur, mod.id];
+                                      const next = checked
+                                        ? cur.filter(id => id !== mod.id && (mod.id !== 'Locations' || id !== 'Venues'))
+                                        : [...cur.filter(id => mod.id !== 'Locations' || id !== 'Venues'), mod.id];
                                       setNewRoleForm({ ...newRoleForm, allowed_pages: next });
                                     }}
                                     className="rounded border-slate-300 text-violet-600 focus:ring-violet-500 accent-violet-600"
@@ -1509,7 +1513,7 @@ function SettingsView({
                         <h4 className="text-xs sm:text-sm font-black text-slate-900">
                           พิกัด GPS หน้าร้าน / คลังกระจายสินค้า (Logistics Hub)
                         </h4>
-                        <p className="text-[11px] text-slate-500">
+                        <p className="text-xs text-slate-500">
                           พิกัดนี้จะใช้เป็นจุดเริ่มต้นคำนวณระยะทางและเส้นทางในหน้า <b>"สถานที่จัดส่ง"</b> โดยอัตโนมัติ
                         </p>
                       </div>
@@ -1542,7 +1546,7 @@ function SettingsView({
                         }}
                         className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400"
                       />
-                      <span className="text-[10px] text-slate-400 mt-1 block">
+                      <span className="text-xs text-slate-400 mt-1 block">
                         รองรับทั้งตัวเลขพิกัด หรือวางลิงก์ Google Maps ทุกรูปแบบ
                       </span>
                     </div>
@@ -1557,7 +1561,7 @@ function SettingsView({
                             href={shopInfo.mapLink}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+                            className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
                           >
                             <span>ทดสอบเปิดแผนที่</span>
                             <ExternalLink className="w-3 h-3" />
@@ -1571,7 +1575,7 @@ function SettingsView({
                         onChange={(e) => setShopInfo(prev => ({ ...prev, mapLink: e.target.value }))}
                         className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400"
                       />
-                      <span className="text-[10px] text-slate-400 mt-1 block">
+                      <span className="text-xs text-slate-400 mt-1 block">
                         ลิงก์ Google Maps สำหรับให้ทีมงานหรือลูกค้าเปิดดูพิกัดร้าน
                       </span>
                     </div>
@@ -1632,7 +1636,7 @@ function SettingsView({
                       <Palette className="w-4 h-4 text-violet-600" />
                       <span>ธีมสีหลักของระบบ (Theme Color)</span>
                     </h4>
-                    <span className="text-[11px] text-slate-400 font-medium">
+                    <span className="text-xs text-slate-600 font-medium">
                       เลือกสีสำเร็จรูป หรือคลิกหลอดดูดเพื่อเลือกสีเองแบบ Real-time
                     </span>
                   </div>
@@ -2002,19 +2006,19 @@ function SettingsView({
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
-                  <span className="text-[11px] font-bold text-emerald-600 uppercase block">ฐานข้อมูลออฟไลน์</span>
+                  <span className="text-xs font-bold text-emerald-600 uppercase block">ฐานข้อมูลออฟไลน์</span>
                   <span className="text-lg font-black text-emerald-950 block mt-1">IndexedDB Active</span>
-                  <p className="text-xs text-emerald-700 mt-1">จัดเก็บข้อมูลโปรเจกต์ ใบเสนอราคา และพัสดุในเครื่อง 0ms</p>
+                  <p className="text-xs text-emerald-700 mt-1">จัดเก็บข้อมูลโปรเจกต์ คำนวณราคา และพัสดุในเครื่อง 0ms</p>
                 </div>
 
                 <div className="p-4 bg-violet-50 rounded-2xl border border-violet-100">
-                  <span className="text-[11px] font-bold text-violet-600 uppercase block">คลาวด์ซิงค์</span>
+                  <span className="text-xs font-bold text-violet-600 uppercase block">คลาวด์ซิงค์</span>
                   <span className="text-lg font-black text-violet-950 block mt-1">Supabase Cloud</span>
                   <p className="text-xs text-violet-700 mt-1">เชื่อมต่อตาราง staff_users, projects, quotations แบบ Realtime</p>
                 </div>
 
                 <div className="p-4 bg-slate-100/70 rounded-2xl border border-slate-200/80">
-                  <span className="text-[11px] font-bold text-slate-600 uppercase block">ความปลอดภัย</span>
+                  <span className="text-xs font-bold text-slate-600 uppercase block">ความปลอดภัย</span>
                   <span className="text-lg font-black text-slate-900 block mt-1">Role-Based Guard</span>
                   <p className="text-xs text-slate-600 mt-1">ระบบจำกัดสิทธิ์หน้าจอตามตำแหน่งงาน 100%</p>
                 </div>
@@ -2058,4 +2062,4 @@ function SettingsView({
   );
 }
 
-export default React.memo(SettingsView);
+export default React.memo(Settings);

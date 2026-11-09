@@ -1,7 +1,7 @@
 import React from 'react';
 import { Plus } from 'lucide-react';
 
-const PlansView = ({
+const Plans = ({
   stats = [],
   renderFilterCard,
   renderTable,
@@ -10,7 +10,7 @@ const PlansView = ({
   renderBatchBanner
 }) => {
   return (
-    <div className="space-y-6 sm:space-y-8 flex flex-col min-h-full pb-24 md:pb-6">
+    <div className="flex flex-col min-h-full pb-24 md:pb-6 gap-6">
       {/* 4 Summary KPI Cards */}
       {stats.length > 0 && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 px-4 sm:px-8 lg:px-10 pt-4">
@@ -29,10 +29,10 @@ const PlansView = ({
               <p className="text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 tracking-tight tabular-nums">
                 {stat.value}
               </p>
-              <div className="mt-1.5 pt-1.5 border-t border-slate-50 text-[11px] text-slate-400 font-medium flex items-center justify-between">
+              <div className="mt-1.5 pt-1.5 border-t border-slate-100 text-xs text-slate-500 font-medium flex items-center justify-between">
                 <span>{stat.change}</span>
                 {stat.onClick && (
-                  <span className="text-indigo-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity text-[10px] hidden sm:inline">
+                  <span className="text-indigo-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity text-xs hidden sm:inline">
                     กรองข้อมูล →
                   </span>
                 )}
@@ -49,7 +49,7 @@ const PlansView = ({
       {renderFilterCard && renderFilterCard()}
 
       {/* Main Table */}
-      <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden p-2 mx-4 sm:mx-8 lg:mx-10 mb-10">
+      <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden p-2 mx-4 sm:mx-8 lg:mx-10 mb-6">
         <div className="px-6 py-5 sm:px-8 sm:py-6 flex items-center justify-between border-b border-slate-50">
           <h3 className="text-lg sm:text-xl font-bold text-slate-900">แผนงานทั้งหมด</h3>
           <div className="flex gap-2">
@@ -68,4 +68,4 @@ const PlansView = ({
   );
 };
 
-export default React.memo(PlansView);
+export default React.memo(Plans);

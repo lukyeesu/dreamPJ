@@ -58,8 +58,9 @@ import {
 import ModernDateTimePicker from './components/common/ModernDateTimePicker';
 import Toast from './components/common/Toast';
 import ConfirmDialog from './components/common/ConfirmDialog';
+import { useStickyFilter } from './hooks/useStickyFilter';
 
-function InventoryView({
+function Inventory({
   inventoryItems = [],
   assetLoans = [],
   activities = [],
@@ -69,6 +70,7 @@ function InventoryView({
   onRefresh
 }) {
   // 4 Tabs: 'stock' | 'checklist' | 'units' | 'loans'
+  const { isFilterStuck, filterSentinelRef } = useStickyFilter();
   const [activeTab, setActiveTab] = useState('checklist');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState('all');
@@ -680,7 +682,7 @@ function InventoryView({
   };
 
   return (
-    <div className="space-y-6 sm:space-y-8 flex flex-col min-h-full pb-24 md:pb-6 px-4 sm:px-8 lg:px-10 pt-4">
+    <div className="flex flex-col gap-6 min-h-full pb-24 md:pb-6 px-4 sm:px-8 lg:px-10 pt-4">
       {/* 4 Summary Metric Cards */}
       {activeTab === 'stock' ? (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 no-print">
@@ -692,7 +694,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-slate-900">{stockStats.totalItems} รายการ</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-slate-400">ครบ 5 ประเภทตามสเปก</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-slate-400">ครบ 5 ประเภทตามสเปก</div>
           </div>
 
           <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -703,7 +705,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-rose-600">{stockStats.lowStockCount} รายการ</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-rose-600">ถึงเกณฑ์แจ้งเตือน</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-rose-600">ถึงเกณฑ์แจ้งเตือน</div>
           </div>
 
           <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -714,7 +716,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-emerald-600">{stockStats.inServiceCount} รายการ</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-emerald-600">สภาพสมบูรณ์พร้อมใช้</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-emerald-600">สภาพสมบูรณ์พร้อมใช้</div>
           </div>
 
           <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -725,7 +727,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-indigo-700">฿{Math.round(stockStats.totalValuation).toLocaleString()}</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-indigo-600">คำนวณตามต้นทุนและหน้าเงิน</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-indigo-600">คำนวณตามต้นทุนและหน้าเงิน</div>
           </div>
         </div>
       ) : activeTab === 'checklist' ? (
@@ -751,7 +753,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-emerald-800">฿{checklistStats.banknoteValue.toLocaleString()}</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-slate-500">{checklistStats.banknoteCount} รายการธนบัตร</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-slate-500">{checklistStats.banknoteCount} รายการธนบัตร</div>
           </div>
 
           <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -762,7 +764,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-pink-600">{checklistStats.reusableCount} รายการ</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-pink-600">นับคืนของดีหลังจบงาน</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-pink-600">นับคืนของดีหลังจบงาน</div>
           </div>
 
           <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -773,7 +775,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-indigo-600">{checklistStats.assetCount} รายการ</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-indigo-600">ระบุรหัสชิ้นและช่างที่ยืม</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-indigo-600">ระบุรหัสชิ้นและช่างที่ยืม</div>
           </div>
         </div>
       ) : activeTab === 'units' ? (
@@ -786,7 +788,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-slate-900">{unitStats.total} ชิ้น</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-slate-400">item0001, item0002...</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-slate-400">item0001, item0002...</div>
           </div>
 
           <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -797,7 +799,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-emerald-600">{unitStats.available} ชิ้น</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-emerald-600">อยู่ในคลังพร้อมให้ยืม</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-emerald-600">อยู่ในคลังพร้อมให้ยืม</div>
           </div>
 
           <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -808,7 +810,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-amber-600">{unitStats.borrowed} ชิ้น</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-amber-600">ช่างถืออยู่หน้างาน</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-amber-600">ช่างถืออยู่หน้างาน</div>
           </div>
 
           <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -819,7 +821,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-rose-600">{unitStats.broken} ชิ้น</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-rose-600">รอซ่อมหรือตัดจำหน่าย</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-rose-600">รอซ่อมหรือตัดจำหน่าย</div>
           </div>
         </div>
       ) : (
@@ -832,7 +834,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-amber-600">{loanStats.borrowed} รายการ</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-amber-600">อยู่หน้างาน / ทีมงานถืออยู่</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-amber-600">อยู่หน้างาน / ทีมงานถืออยู่</div>
           </div>
 
           <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -843,7 +845,7 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-rose-600">{loanStats.overdue} รายการ</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-rose-600">ต้องติดตามทวงคืน</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-rose-600">ต้องติดตามทวงคืน</div>
           </div>
 
           <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -854,21 +856,46 @@ function InventoryView({
               </div>
             </div>
             <p className="text-2xl sm:text-3xl font-black text-emerald-600">{loanStats.returned} ครั้ง</p>
-            <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-emerald-600">ประวัติการยืมในอดีต</div>
+            <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-emerald-600">ประวัติการยืมในอดีต</div>
           </div>
         </div>
       )}
 
       {/* Tabs Navigation Toolbar */}
-      <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm space-y-4 no-print">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          {/* Sub-tabs (4 Tabs) */}
-          <div className="flex gap-1.5 p-1 bg-slate-100 rounded-2xl w-full sm:w-auto overflow-x-auto">
+      <div 
+        ref={filterSentinelRef} 
+        className="w-full h-0 -my-3 pointer-events-none opacity-0"
+      />
+      <div className={`bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out z-20 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 space-y-3.5 no-print ${
+        isFilterStuck
+          ? '-mx-4 sm:-mx-8 lg:-mx-10 py-2 sm:py-2.5 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
+          : 'p-3 sm:p-3.5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
+      }`}>
+        {/* Row 1: Sub-tabs (Select on mobile, clean segmented pills on sm+) */}
+        <div className="flex items-center justify-between gap-3">
+          {/* Mobile Tab Select */}
+          <div className="relative sm:hidden w-full">
+            <select
+              value={activeTab}
+              onChange={(e) => setActiveTab(e.target.value)}
+              className="w-full pl-3.5 pr-8 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 appearance-none cursor-pointer"
+            >
+              <option value="checklist">📋 เช็กลิสต์เตรียมของ & เบิก-คืน</option>
+              <option value="stock">📦 สต็อกพัสดุ ({inventoryItems.length})</option>
+              <option value="units">🏷️ รหัสรายชิ้นอุปกรณ์ ({assetUnits.length})</option>
+              <option value="loans">🔄 ประวัติยืม-คืน</option>
+            </select>
+            <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+
+          {/* Desktop Tab Buttons */}
+          <div className="hidden sm:flex gap-1.5 p-1 bg-slate-100 rounded-2xl w-auto overflow-x-auto">
             <button
+              type="button"
               onClick={() => setActiveTab('checklist')}
-              className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              className={`py-1.5 px-3.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
                 activeTab === 'checklist'
-                  ? 'bg-white text-slate-900 shadow-sm'
+                  ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
@@ -876,10 +903,11 @@ function InventoryView({
               <span>📋 เช็กลิสต์เตรียมของ & เบิก-คืน</span>
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('stock')}
-              className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              className={`py-1.5 px-3.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
                 activeTab === 'stock'
-                  ? 'bg-white text-slate-900 shadow-sm'
+                  ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
@@ -887,10 +915,11 @@ function InventoryView({
               <span>📦 สต็อกพัสดุ ({inventoryItems.length})</span>
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('units')}
-              className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              className={`py-1.5 px-3.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
                 activeTab === 'units'
-                  ? 'bg-white text-slate-900 shadow-sm'
+                  ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
@@ -898,10 +927,11 @@ function InventoryView({
               <span>🏷️ รหัสรายชิ้นอุปกรณ์ ({assetUnits.length})</span>
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('loans')}
-              className={`py-2 px-3.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              className={`py-1.5 px-3.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
                 activeTab === 'loans'
-                  ? 'bg-white text-slate-900 shadow-sm'
+                  ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
@@ -909,183 +939,179 @@ function InventoryView({
               <span>🔄 ประวัติยืม-คืน</span>
             </button>
           </div>
-
-          {/* Tab Actions */}
-          <div className="flex items-center gap-2">
-            {activeTab === 'checklist' && (
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <Printer className="w-4 h-4 text-slate-600" />
-                <span>พิมพ์ใบเตรียมของ</span>
-              </button>
-            )}
-
-            {activeTab === 'checklist' && (
-              <button
-                type="button"
-                onClick={() => setIsAddChecklistModalOpen(true)}
-                className="px-3.5 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-sm shadow-violet-200/50 transition-all active:scale-95 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>+ เพิ่มรายการเช็ก</span>
-              </button>
-            )}
-
-            {activeTab === 'stock' && (
-              <button
-                type="button"
-                onClick={() => handleOpenItemModal()}
-                className="px-3.5 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-sm shadow-violet-200/50 transition-all active:scale-95 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>+ เพิ่มพัสดุใหม่</span>
-              </button>
-            )}
-
-            {activeTab === 'units' && (
-              <button
-                type="button"
-                onClick={() => setIsUnitModalOpen(true)}
-                className="px-3.5 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-sm shadow-violet-200/50 transition-all active:scale-95 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>+ สร้างรหัสรายชิ้น</span>
-              </button>
-            )}
-          </div>
         </div>
 
-        {/* Filters according to active tab */}
+        {/* Row 2: Tab-specific Filter Controls (Slim Dropdowns + Reset Button) */}
         {activeTab === 'checklist' && (
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
-            {/* Project Picker (Active / Quoting Only according to Spec 5.1) */}
-            <div className="flex-1 max-w-xl">
-              <label className="text-[11px] font-bold text-slate-500 block mb-1 flex items-center gap-1.5">
-                <FileCheck2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>เลือกโปรเจกต์ที่ต้องเตรียมของ (เฉพาะงานที่ยังไม่เสร็จสิ้น):</span>
-              </label>
-              <div className="relative">
-                <select
-                  value={selectedProjectId}
-                  onChange={(e) => setSelectedProjectId(e.target.value)}
-                  className="w-full py-2.5 pl-3 pr-8 rounded-xl border border-slate-200 bg-slate-50 text-xs sm:text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 appearance-none cursor-pointer"
-                >
-                  {activeProjects.length === 0 ? (
-                    <option value="">-- ไม่พบงานที่กำลังดำเนินการ --</option>
-                  ) : (
-                    activeProjects.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.id} — {p.name || p.artist || 'งานจัดดอกไม้'} {p.customer ? `(${p.customer})` : ''} [{p.date || p.deliveryDate || 'รอกำหนด'}]
-                      </option>
-                    ))
-                  )}
-                </select>
-                <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2 border-t border-slate-100">
+            <div className="relative flex-1">
+              <select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+                className="w-full py-2.5 pl-3.5 pr-8 rounded-xl border border-slate-200 bg-slate-50 text-xs sm:text-sm font-bold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 appearance-none cursor-pointer"
+              >
+                {activeProjects.length === 0 ? (
+                  <option value="">-- ไม่พบงานที่กำลังดำเนินการ --</option>
+                ) : (
+                  activeProjects.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.id} — {p.name || p.artist || 'งานจัดดอกไม้'} {p.customer ? `(${p.customer})` : ''} [{p.date || p.deliveryDate || 'รอกำหนด'}]
+                    </option>
+                  ))
+                )}
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
 
-            {/* Quick Demo Seed */}
-            {checklistItems.length === 0 && (
+            <div className="flex items-center gap-2 shrink-0">
+              {checklistItems.length === 0 && (
+                <button
+                  type="button"
+                  onClick={handleSeedDemoChecklist}
+                  className="py-2.5 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">โหลดตัวอย่างเช็กลิสต์</span>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={handleSeedDemoChecklist}
-                className="py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer self-end"
+                onClick={() => setSelectedProjectId(activeProjects[0]?.id || '')}
+                className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer shadow-2xs"
+                title="รีเซ็ตโปรเจกต์ที่เลือก"
               >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>โหลดตัวอย่างเช็กลิสต์ตามสเปก</span>
+                <RotateCcw className="w-4 h-4" />
               </button>
-            )}
+            </div>
           </div>
         )}
 
         {activeTab === 'stock' && (
-          <div className="space-y-3 pt-2 border-t border-slate-100">
-            {/* 5-Types Pills Filter */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 custom-scrollbar">
-              <span className="text-xs font-bold text-slate-400 mr-1 shrink-0">หมวดหมู่:</span>
-              {[
-                { id: 'all', label: 'ทั้งหมด' },
-                { id: 'asset', label: '✂️ อุปกรณ์ยืม-คืน (Asset)' },
-                { id: 'reusable', label: '🌸 วัสดุหมุนเวียน (Reusable)' },
-                { id: 'consumable', label: '📦 พัสดุสิ้นเปลือง (Consumable)' },
-                { id: 'banknote', label: '💵 ธนบัตร (Banknote)' },
-                { id: 'task', label: '🛠️ งานบริการ/ขั้นตอน (Task)' }
-              ].map(t => (
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 pt-2 border-t border-slate-100">
+            {/* Search Input */}
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="ค้นหาชื่อพัสดุ, รหัส, จุดจัดเก็บ, สี..."
+                className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 bg-slate-50 focus:bg-white transition-colors"
+              />
+              {searchQuery && (
                 <button
-                  key={t.id}
-                  onClick={() => setSelectedType(t.id)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                    selectedType === t.id
-                      ? 'bg-amber-500 text-white shadow-xs'
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                  }`}
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition cursor-pointer"
+                  title="ล้างข้อความค้นหา"
                 >
-                  {t.label}
+                  <X className="w-3.5 h-3.5" />
                 </button>
-              ))}
+              )}
             </div>
 
-            <div className="flex flex-col sm:flex-row items-center gap-3">
-              <div className="relative flex-1 w-full">
-                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="ค้นหาชื่อพัสดุ, รหัส, จุดจัดเก็บ, สี..."
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 bg-slate-50 focus:bg-white transition-colors"
-                />
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Category Dropdown (Converted from bulky pills) */}
+              <div className="relative w-44 sm:w-56 shrink-0">
+                <select
+                  value={selectedType}
+                  onChange={(e) => setSelectedType(e.target.value)}
+                  className="w-full pl-3.5 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
+                >
+                  <option value="all">ทุกหมวดหมู่พัสดุ</option>
+                  <option value="asset">✂️ อุปกรณ์ยืม-คืน (Asset)</option>
+                  <option value="reusable">🌸 วัสดุหมุนเวียน (Reusable)</option>
+                  <option value="consumable">📦 พัสดุสิ้นเปลือง (Consumable)</option>
+                  <option value="banknote">💵 ธนบัตร (Banknote)</option>
+                  <option value="task">🛠️ งานบริการ/ขั้นตอน (Task)</option>
+                </select>
+                <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
 
-              <select
-                value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value)}
-                className="text-xs sm:text-sm py-2.5 px-3 rounded-xl border border-slate-200 bg-slate-50 font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500 w-full sm:w-auto"
+              {/* Status Dropdown */}
+              <div className="relative w-36 sm:w-44 shrink-0">
+                <select
+                  value={selectedStatus}
+                  onChange={(e) => setSelectedStatus(e.target.value)}
+                  className="w-full pl-3 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
+                >
+                  <option value="all">ทุกสถานะความพร้อม</option>
+                  <option value="in_service">พร้อมใช้งานปกติ</option>
+                  <option value="maintenance">ส่งซ่อม / บำรุง</option>
+                  <option value="written_off">ปลดระวาง</option>
+                </select>
+                <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+
+              {/* Reset Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  setSelectedType('all');
+                  setSelectedStatus('all');
+                }}
+                className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer shadow-2xs"
+                title="ล้างค่าตัวกรองสต็อกทั้งหมด"
               >
-                <option value="all">ทุกสถานะความพร้อม</option>
-                <option value="in_service">พร้อมใช้งานปกติ</option>
-                <option value="maintenance">ส่งซ่อม / บำรุง</option>
-                <option value="written_off">ปลดระวาง</option>
-              </select>
+                <RotateCcw className="w-4 h-4" />
+              </button>
             </div>
           </div>
         )}
 
         {activeTab === 'units' && (
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-slate-100">
-            <div className="relative flex-1 w-full">
-              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 pt-2 border-t border-slate-100">
+            {/* Search Input */}
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="ค้นหารหัสรายชิ้น เช่น item0001, ชื่ออุปกรณ์, ผู้ยืม..."
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 focus:bg-white transition-colors"
+                className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 focus:bg-white transition-colors"
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition cursor-pointer"
+                  title="ล้างข้อความค้นหา"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
-            <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
-              {[
-                { id: 'all', label: 'ทั้งหมด' },
-                { id: 'AVAILABLE', label: '🟢 พร้อมใช้ (ว่าง)' },
-                { id: 'BORROWED', label: '🟠 กำลังใช้งาน' },
-                { id: 'BROKEN', label: '🔴 ชำรุด/สูญหาย' }
-              ].map(s => (
-                <button
-                  key={s.id}
-                  onClick={() => setUnitStatusFilter(s.id)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                    unitStatusFilter === s.id
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                  }`}
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Unit Status Dropdown (Converted from bulky pills) */}
+              <div className="relative w-44 sm:w-56 shrink-0">
+                <select
+                  value={unitStatusFilter}
+                  onChange={(e) => setUnitStatusFilter(e.target.value)}
+                  className="w-full pl-3.5 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
                 >
-                  {s.label}
-                </button>
-              ))}
+                  <option value="all">สถานะ: ทั้งหมด</option>
+                  <option value="AVAILABLE">🟢 พร้อมใช้ (ว่าง)</option>
+                  <option value="BORROWED">🟠 กำลังใช้งาน</option>
+                  <option value="BROKEN">🔴 ชำรุด/สูญหาย</option>
+                </select>
+                <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+
+              {/* Reset Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  setUnitStatusFilter('all');
+                }}
+                className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer shadow-2xs"
+                title="ล้างค่าตัวกรองรหัสรายชิ้นทั้งหมด"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
             </div>
           </div>
         )}
@@ -1096,6 +1122,31 @@ function InventoryView({
       {/* ========================================================================= */}
       {activeTab === 'checklist' && (
         <div id="project-checklist" className="space-y-4">
+          {/* Action Bar for Checklist */}
+          <div className="flex flex-wrap items-center justify-between gap-3 no-print">
+            <div className="text-sm font-bold text-slate-700">
+              รายการเช็กสำหรับโปรเจกต์นี้ ({checklistItems.length} รายการ)
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Printer className="w-4 h-4 text-slate-600" />
+                <span>พิมพ์ใบเตรียมของ</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsAddChecklistModalOpen(true)}
+                className="px-3.5 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-sm shadow-violet-200/50 transition-all active:scale-95 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ เพิ่มรายการเช็ก</span>
+              </button>
+            </div>
+          </div>
+
           {/* Print-Only Header (แสดงเฉพาะเวลาสั่งพิมพ์ A4) */}
           <div className="print-only hidden p-6 text-center border-b border-slate-300">
             <h2 className="text-xl font-black">Flower2U Workshop & Warehouse Hub</h2>
@@ -1112,7 +1163,7 @@ function InventoryView({
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="bg-slate-50/90 border-b border-slate-100 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <tr className="bg-slate-50/90 border-b border-slate-100 text-xs font-bold text-slate-600 uppercase tracking-wider">
                     <th className="py-3.5 px-4 text-center w-12">เช็ก</th>
                     <th className="py-3.5 px-4 w-36">หมวดหมู่</th>
                     <th className="py-3.5 px-4">รายการ</th>
@@ -1166,7 +1217,7 @@ function InventoryView({
                               {chk.item_name}
                             </span>
                             {chk.unit_cost > 0 && !isBanknote && (
-                              <span className="text-[11px] text-slate-400 font-normal block">
+                              <span className="text-xs text-slate-500 font-medium block">
                                 ต้นทุน: ฿{Number(chk.unit_cost).toLocaleString()} / {chk.unit}
                               </span>
                             )}
@@ -1190,7 +1241,7 @@ function InventoryView({
                                 <span className="font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-md inline-block">
                                   มูลค่า: ฿{((Number(chk.required_qty) || 0) * (Number(chk.unit_cost) || 100)).toLocaleString()} บาท
                                 </span>
-                                <span className="text-slate-400 block text-[10px]">เบิกยอดจากตู้เซฟ</span>
+                                <span className="text-slate-500 block text-xs font-medium">เบิกยอดจากตู้เซฟ</span>
                               </div>
                             )}
 
@@ -1207,7 +1258,7 @@ function InventoryView({
                                     <button
                                       type="button"
                                       onClick={() => handleReturnAssetUnitDirectly(chk.assigned_codes[0])}
-                                      className="text-[10px] text-rose-500 hover:underline font-bold no-print cursor-pointer"
+                                      className="text-xs text-rose-500 hover:underline font-bold no-print cursor-pointer"
                                     >
                                       คืนของ
                                     </button>
@@ -1254,7 +1305,7 @@ function InventoryView({
                                       damaged_qty: 0
                                     });
                                   }}
-                                  className="text-[11px] px-2 py-0.5 bg-pink-50 hover:bg-pink-100 text-pink-700 font-bold rounded-lg border border-pink-200/60 no-print cursor-pointer"
+                                  className="text-xs px-2 py-0.5 bg-pink-50 hover:bg-pink-100 text-pink-700 font-bold rounded-lg border border-pink-200/60 no-print cursor-pointer"
                                 >
                                   🔄 คืนของ & คิดของเสียหาย
                                 </button>
@@ -1304,7 +1355,7 @@ function InventoryView({
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="bg-slate-50/80 border-b border-slate-100 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <tr className="bg-slate-50/80 border-b border-slate-100 text-xs font-bold text-slate-600 uppercase tracking-wider">
                     <th className="py-3.5 px-5">รหัสพัสดุ</th>
                     <th className="py-3.5 px-4">ชื่อพัสดุ / สเปก</th>
                     <th className="py-3.5 px-4">ประเภท (5 Types)</th>
@@ -1335,7 +1386,7 @@ function InventoryView({
                             {item.name}
                           </div>
                           {(item.color || item.size) && (
-                            <div className="text-xs text-slate-400 font-normal mt-0.5">
+                            <div className="text-xs text-slate-500 font-medium mt-0.5">
                               {item.color && <span>สี: {item.color} </span>}
                               {item.size && <span>ขนาด: {item.size}</span>}
                             </div>
@@ -1428,7 +1479,7 @@ function InventoryView({
                 <div key={item.id || item.code} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3">
                   <div className="flex items-start justify-between">
                     <div>
-                      <span className="text-[10px] font-mono font-bold text-slate-400">{item.code || '-'}</span>
+                      <span className="text-xs font-mono font-bold text-slate-400">{item.code || '-'}</span>
                       <h4 className="font-bold text-slate-900 text-sm">{item.name}</h4>
                     </div>
                     {getItemTypeBadge(item.item_type)}
@@ -1436,11 +1487,11 @@ function InventoryView({
 
                   <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-50">
                     <div>
-                      <span className="text-slate-400 block text-[10px]">คงเหลือ</span>
+                      <span className="text-slate-500 block text-xs font-medium">คงเหลือ</span>
                       <span className="font-black text-slate-800">{item.current_stock} {item.unit}</span>
                     </div>
                     <div>
-                      <span className="text-slate-400 block text-[10px]">ต้นทุน</span>
+                      <span className="text-slate-500 block text-xs font-medium">ต้นทุน</span>
                       <span className="font-black text-slate-800">฿{Number(item.average_cost || 0).toLocaleString()}</span>
                     </div>
                   </div>
@@ -1466,11 +1517,24 @@ function InventoryView({
       {/* ========================================================================= */}
       {activeTab === 'units' && (
         <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 no-print">
+            <div className="text-sm font-bold text-slate-700">
+              รายการอุปกรณ์ติดรหัส ({filteredUnits.length} รายการ)
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsUnitModalOpen(true)}
+              className="px-3.5 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-sm shadow-violet-200/50 transition-all active:scale-95 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ สร้างรหัสรายชิ้น</span>
+            </button>
+          </div>
           <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="bg-slate-50/80 border-b border-slate-100 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <tr className="bg-slate-50/80 border-b border-slate-100 text-xs font-bold text-slate-600 uppercase tracking-wider">
                     <th className="py-3.5 px-5">รหัสชิ้น (Unit Code)</th>
                     <th className="py-3.5 px-4">ชื่ออุปกรณ์แม่</th>
                     <th className="py-3.5 px-4 text-center">สถานะ</th>
@@ -1522,7 +1586,7 @@ function InventoryView({
                             {unit.borrowed_by ? (
                               <div className="space-y-0.5">
                                 <span className="font-bold text-indigo-900 block">{unit.borrowed_by}</span>
-                                {unit.project_id && <span className="text-[10px] text-slate-400">โปรเจกต์: {unit.project_id}</span>}
+                                {unit.project_id && <span className="text-xs text-slate-400">โปรเจกต์: {unit.project_id}</span>}
                               </div>
                             ) : (
                               <span className="text-slate-400">-</span>
@@ -1577,7 +1641,7 @@ function InventoryView({
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50/80 border-b border-slate-100 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                <tr className="bg-slate-50/80 border-b border-slate-100 text-xs font-bold text-slate-600 uppercase tracking-wider">
                   <th className="py-3.5 px-5">อุปกรณ์ที่ยืม</th>
                   <th className="py-3.5 px-4">ผู้ยืม</th>
                   <th className="py-3.5 px-4">โปรเจกต์</th>
@@ -1697,7 +1761,7 @@ function InventoryView({
                         }`}
                       >
                         <span className="text-xs font-bold text-slate-900 block">{t.label}</span>
-                        <span className="text-[11px] text-slate-500 block mt-0.5">{t.desc}</span>
+                        <span className="text-xs text-slate-500 block mt-0.5">{t.desc}</span>
                       </div>
                     ))}
                   </div>
@@ -2197,4 +2261,4 @@ function InventoryView({
   );
 }
 
-export default InventoryView;
+export default Inventory;

@@ -16,6 +16,10 @@ export const supabase = createClient(supabaseUrl, anonKey, {
   },
 });
 
+if (typeof window !== 'undefined') {
+  window.supabase = supabase;
+}
+
 export function getActiveClient() {
   return supabase;
 }

@@ -434,7 +434,7 @@ const ModernDateTimePicker = ({
           <div className="border-t border-slate-100 pt-3 mt-2 flex flex-col gap-3">
             {hasTime && viewMode === 'days' && pickerType === 'date' && (
               <div className="flex flex-col gap-1 w-full">
-                <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase tracking-wide">เวลา (24 ชม.)</label>
+                <label className="text-xs font-bold text-slate-400 ml-1 uppercase tracking-wide">เวลา (24 ชม.)</label>
                 <div className="flex items-center bg-slate-50 rounded-xl px-3 py-2 border border-slate-200 hover:border-indigo-300 transition-all group focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:bg-white">
                   <Clock className="w-4 h-4 text-slate-400 mr-2 group-focus-within:text-indigo-500 transition-colors" />
                   <input 

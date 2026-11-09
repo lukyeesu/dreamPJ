@@ -46,4 +46,24 @@ if (typeof window !== 'undefined' && navigator.storage && navigator.storage.pers
   }).catch(() => {});
 }
 
+if (typeof window !== 'undefined') {
+  window.db = db;
+}
+
+// ฟังก์ชันล้างข้อมูลแคชทั้งหมดใน IndexedDB (เรียกใช้เมื่อผู้ใช้กด Logout หรือถูกระงับ เพื่อความปลอดภัยสูงสุด)
+export async function clearAllLocalDatabase() {
+  try {
+    if (db && Array.isArray(db.tables)) {
+      await Promise.allSettled(
+        db.tables.map(table => table.clear().catch(e => console.warn(`Error clearing ${table.name}:`, e)))
+      );
+    }
+    // ทำลายฐานข้อมูลใน IndexedDB เพื่อไม่ให้มีโครงสร้างหรือแคชค้างบนเครื่อง
+    await db.delete().catch(() => {});
+    console.log('🛡️ All IndexedDB tables and database purged cleanly.');
+  } catch (err) {
+    console.warn('Error clearing IndexedDB:', err);
+  }
+}
+
 export default db;

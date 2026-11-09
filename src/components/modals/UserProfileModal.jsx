@@ -249,7 +249,7 @@ export default function UserProfileModal({
 
                 <label className="absolute inset-0 bg-black/45 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer text-white" title="คลิกเพื่อเปลี่ยนรูปถ่าย">
                   <Camera className="w-5 h-5 text-white" />
-                  <span className="text-[9px] font-bold mt-0.5">เปลี่ยนรูป</span>
+                  <span className="text-xs font-bold mt-0.5">เปลี่ยนรูป</span>
                   <input
                     type="file"
                     accept="image/*"
@@ -374,7 +374,7 @@ export default function UserProfileModal({
                     <Calendar className="w-3.5 h-3.5 text-indigo-500" />
                     <span>วันเดือนปีเกิด (พ.ศ.)</span>
                   </span>
-                  <span className="text-[10px] text-slate-400 font-normal">ปฏิทินไทย</span>
+                  <span className="text-xs text-slate-500 font-medium">ปฏิทินไทย</span>
                 </label>
                 <ModernDateTimePicker
                   value={formData.birth_date}
@@ -455,7 +455,7 @@ export default function UserProfileModal({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  <label className="block text-xs font-bold text-slate-600 mb-1">
                     รหัสผ่านใหม่
                   </label>
                   <div className="relative">
@@ -478,15 +478,15 @@ export default function UserProfileModal({
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center justify-between">
                     <span>ยืนยันรหัสผ่านใหม่</span>
                     {formData.confirmPassword && (
                       formData.password === formData.confirmPassword ? (
-                        <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-0.5">
+                        <span className="text-xs text-emerald-600 font-bold flex items-center gap-0.5">
                           <Check className="w-3 h-3" /> รหัสตรงกัน
                         </span>
                       ) : (
-                        <span className="text-[10px] text-rose-500 font-bold">
+                        <span className="text-xs text-rose-500 font-bold">
                           รหัสไม่ตรงกัน
                         </span>
                       )

@@ -50,6 +50,85 @@
 
 ## 3. ประวัติการทำงานและข้อตกลงล่าสุด (Session History)
 
+### [2026-11-10 - รอบดึก (Missing Numbers Bug Fix, Filter Clean-up & Mobile Multi-Item Card UX Overhaul)]
+- **1. แก้บั๊กตัวเลขรายจ่ายจริงไม่ขึ้นบนตาราง (Missing Financial Numbers Root-Cause Fix)**:
+  - สาเหตุที่แท้จริง: โปรเจกต์ในฐานข้อมูลจำนวน 309 รายการมีคีย์ `expenses: []` (array ว่าง) ทำให้โค้ดเดิมรัน `[].reduce(...)` แล้วได้ 0 แทนที่จะดึงยอดสรุปจาก `project.totalExpenses` ที่บันทึกไว้
+  - ดำเนินการแก้ไข Fallback Logic แบบครอบคลุม 100% ในทุกไฟล์: `src/App.jsx`, `src/Finance.jsx`, `src/services/syncService.js`, `src/Artists.jsx`, และ `src/Customers.jsx`
+  - ตรวจสอบผ่าน DevTools: งาน `P-0004`, `P-0005`, `P-0010`, `P-0350` แสดงยอดรายจ่ายจริง `-795`, `-575`, `-2,293`, `-300` และคำนวณเงินสนับสนุนพร้อมกำไรสุทธิขึ้นบนตารางถูกต้องสมบูรณ์
+- **2. ปรับปุ่มตัวกรอง: เอาคำว่า "ตัวกรอง" ออก เหลือไว้เฉพาะไอคอน (Filter Button Clean-up)**:
+  - ปรับปุ่ม Toggle Filter ในหน้าแรก (`src/App.jsx`) และการเงิน (`src/Finance.jsx`) ให้เหลือเฉพาะไอคอน `<SlidersHorizontal />` พร้อม Badge นับจำนวนตัวกรองที่ใช้งาน สะอาดตา ไม่รก
+- **3. ปรับปรุง UX รายการกรอกข้อมูลแบบไดนามิกบนมือถือ (Mobile Dynamic Item Card Header UX)**:
+  - เพิ่มแถบหัวการ์ดแยกรายการบนหน้าจอมือถืออย่างชัดเจน ตาม Reference UX (Screenshot 002917):
+    - หัวการ์ดสี Gradient สวยงามแยกตามหมวดหมู่ พร้อมไอคอน + ข้อความ **`รายการที่ 1`**, **`รายการที่ 2`**...
+    - ปุ่มถังขยะลบรายการ (Trash2) สีขาวโปร่งแสงอยู่มุมขวาบนของหัวการ์ด กดง่ายบนมือถือ
+    - ช่องกรอกข้อมูล (Inputs) และการคำนวณภายในคงเดิม 100% ไม่กระทบ Flow การทำงาน
+    - บนหน้าจอคอมพิวเตอร์ (Desktop) ซ่อนหัวการ์ดมือถือ (`sm:hidden`) และแสดงตารางแนวนอนพร้อมปุ่มลบปกติ
+  - ครอบคลุมฟอร์มแบบไดนามิกทุกจุดทั่วทั้งระบบ:
+    1. **`src/App.jsx`**: รายการเงินสนับสนุนศิลปิน (`customerSupportItems`) - แถบสี Indigo (`from-indigo-600 to-indigo-700`)
+    2. **`src/App.jsx`**: รายการเสนอราคาลูกค้า (`quotationItems`) - แถบสี Emerald (`from-emerald-600 to-emerald-700`)
+    3. **`src/App.jsx`**: รายการจ่ายจริง/ต้นทุนเพิ่ม (`expenses`) - แถบสี Rose (`from-rose-500 to-rose-600`)
+    4. **`src/Quotations.jsx`**: คำนวณ Backdrop & โครงสร้างป้าย (`calculatedBackdrops`) - แถบสี Blue/Indigo (`from-indigo-600 to-blue-600`)
+    5. **`src/Quotations.jsx`**: รายการดอกไม้ กระดาษ และพร็อพ (`calculatedFloral`) - แถบสี Violet/Indigo (`from-violet-600 to-indigo-600`)
+    6. **`src/Finance.jsx`**: รายการในบันทึกรับ-จ่าย (`newTxFormData.items`) - แถบสี Sky/Indigo (`from-sky-600 to-indigo-600`)
+- **4. ปรับปรุงสี UI เงินสนับสนุนศิลปินให้อ่านง่าย คมชัดในทุกสีธีม (Customer Support Theme Contrast Fix)**:
+  - **วิเคราะห์สาเหตุ**: 
+    1. ใน `themeManager.js` มีการ override คลาส `.border-indigo-200` ด้วย `filter: brightness(0.9);` ส่งผลให้เบราว์เซอร์ดิมความสว่างของคอนเทนเนอร์และช่อง input ทั้งหมดลง 10-20% จนพื้นหลังกลายเป็นสีเทามืดมัว (`#cecece`) แทนที่จะเป็นสีขาวบริสุทธิ์
+    2. `themeManager.js` เข้าไป override คลาส `indigo` ทับด้วยสีธีมปัจจุบัน ทำให้เวลาผู้ใช้สลับธีม (เช่น Slate หรือ Rose) เงินสนับสนุนศิลปินจะเปลี่ยนสีและกลืนกับสีอื่น
+    3. เลเบลข้อความบนมือถือใช้ `text-indigo-400` ซึ่งเป็นสีม่วงพาสเทลอ่อนมาก ทำให้อ่านยากบนพื้นหลังสีสว่างหรือเมื่ออยู่ในธีมสีเทา
+  - **แนวทางแก้ไข**:
+    1. **แก้ `themeManager.js`**: ถอดการ override คลาส `indigo` ออกทั้งหมด และกำจัด `filter: brightness(...)` ออกจากทุกคลาส border ป้องกันการดิมพื้นหลังช่องกรอกข้อมูล
+    2. **ปรับปรุง `src/App.jsx`**:
+       - เปลี่ยนเลเบลบนมือถือทุกช่องเป็น `text-slate-700 font-bold` สีเข้ม คมชัด อ่านง่ายสบายตา 100% ในทุกสีธีม
+       - กำหนดพื้นหลังช่องกรอกข้อมูลเป็น `bg-white` สว่าง คมชัด ไม่มืดหม่น
+       - ปรับปุ่ม `+ เพิ่มรายการเงิน` และ Badge สรุปยอดรวม `รวม: ฿...` เป็นกล่องสีขาวขอบมนเงาเบา (`bg-white border-indigo-200 text-indigo-900 font-black`)
+  - **การตรวจสอบผลลัพธ์**:
+    - ตรวจสอบ Computed Style ผ่าน Chrome DevTools พบว่าเลเบลเป็นสี Dark Slate (`oklch(0.372 0.044 257.287)`) และพื้นหลัง Input เป็น `rgb(255, 255, 255)` โดยมี `filter: none` ไร้ปัญหาดิมมัว
+    - `npm run build` ผ่าน 100%
+- **5. ปรับปรุง UX/UI หน้าติดตามสถานะงาน และแก้ปัญหาการ์ดด้านล่างติดกับ Footer (Customer Tracking View UX/UI Overhaul)**:
+  - **วิเคราะห์ปัญหา**: คอนเทนเนอร์หลักใน `CustomerTrackingView.jsx` และ `CustomerQuotationView.jsx` ถูกกำหนดคลาส `mb-3 md:mb-0` ทำให้บนหน้าจอคอมพิวเตอร์การ์ดหมายเหตุล่างสุดชนชิดติดกับขอบบนของ `ShopFooter` โดยไม่มีระยะเว้นวรรคหายใจ และบนมือถือคอลัมน์ข้อมูลทั่วไปกับการจัดส่งถูกบีบอัดเป็น 2 คอลัมน์แคบๆ ในการ์ดเดียวจนตัวหนังสือทับซ้อน
+  - **แนวทางแก้ไข**:
+    1. **แก้ปัญหาระยะเว้นวรรคด้านล่าง (Bottom Spacing Fix)**:
+       - กำหนดระยะห่างระหว่างการ์ดล่างสุดกับ Footer ใหม่เป็น `mb-12 md:mb-20 pb-4 md:pb-8 flex-1` ทั้งใน `CustomerTrackingView.jsx` และ `CustomerQuotationView.jsx`
+       - ให้หน้าจอมีพื้นที่เว้นระยะสบายตา (48px - 80px) ด้านล่าง ไม่มีการ์ดหรือเนื้อหาติดกับ Footer อีกต่อไป
+    2. **ยกระดับ UX/UI หน้าติดตามสถานะงานให้โมเดิร์น สวยงามระดับพรีเมียม**:
+       - **Hero Header**: ออกแบบแถบหัวข้อไล่เฉดสีนุ่มนวล `from-indigo-600 via-indigo-700 to-violet-800` พร้อม Ambient Glow และ Search Pill Badge
+       - **Card 1 (โปรเจกต์ & ไทม์ไลน์)**: การ์ดขอบมนนุ่มนวล `rounded-3xl` ขยายขนาดชื่อโปรเจกต์คมชัด พร้อมป้ายรหัส `P-XXXX` และสถานะงาน โครงสร้างไทม์ไลน์เรียบหรู มีเส้นเชื่อมต่อและไอคอนระบุขั้นตอนการทำงานชัดเจน
+       - **Card 2 (ตารางข้อมูล 2 คอลัมน์อิสระ)**: แยก "ข้อมูลทั่วไป" (วันที่, ศิลปิน, ลูกค้า) และ "การจัดส่ง" (กำหนดส่ง, สถานที่พร้อมปุ่มเปิด Google Map, ผู้รับ) ออกเป็น 2 กล่องการ์ดสวยงามบนเดสก์ท็อป และเรียงซ้อนกันอย่างโปร่งตาบนมือถือ
+       - **Card 3 (หมายเหตุ)**: กล่องหมายเหตุโทนสีอำพันนุ่มนวล `bg-amber-50/50 rounded-3xl border-amber-200/80` อ่านง่าย
+  - **การตรวจสอบผลลัพธ์**:
+    - ตรวจสอบผ่าน Chrome DevTools ทั้ง Desktop (1440x900) และ Mobile Viewport (390x844) ด้วย URL `?tracking=P-0349141125691611` พบว่าหน้าจอสวยงาม โมเดิร์น และมีระยะเว้นวรรคระหว่างการ์ดหมายเหตุกับ Footer อย่างลงตัว ไม่ติดกันอีกต่อไป
+    - `npm run build` ผ่าน 100% ไร้ข้อผิดพลาด
+- **6. คืนค่าการเชื่อมโยงสีธีมระบบให้กับปุ่มและไอคอนทั้งหมด (Theme Color System Integrity Restored)**:
+  - **วิเคราะห์สาเหตุ**: ในการแก้ไขปัญหาก่อนหน้านี้ มีการนำคลาส `indigo` ออกจาก `themeManager.js` ส่งผลให้ปุ่มหลัก (เช่น ปุ่ม "บันทึก" `bg-indigo-600`), ปุ่มย่อย (เช่น "+ เพิ่มรูปภาพ" `bg-indigo-50 text-indigo-600`), ไอคอนหัวการ์ด และปฏิทิน ไม่เปลี่ยนสีตามธีมระบบที่ผู้ใช้ตั้งค่าไว้ (กลับไปเป็นสี Indigo เริ่มต้นของ Tailwind)
+  - **แนวทางแก้ไข**:
+    - คืนค่าคลาส `indigo` เข้าสู่ `src/utils/themeManager.js` ทั้งหมด (`.bg-indigo-600`, `.text-indigo-600`, `.bg-indigo-50`, `.border-indigo-200`, `.accent-indigo-600`, ฯลฯ) เพื่อให้ปุ่ม ไอคอน และองค์ประกอบ UI ในระบบตอบสนองและเปลี่ยนสีตาม Dynamic Theme ของผู้ใช้ 100%
+    - ยังคงตัด `filter: brightness(...)` ออกอย่างถาวร เพื่อให้พื้นหลังของช่อง Input คงความขาวบริสุทธิ์ ไม่มัวหมอง
+  - **การตรวจสอบผลลัพธ์**:
+    - ตรวจสอบผ่าน DevTools: ปุ่ม "บันทึก" กลับมามีสีพื้นหลังเป็นสีม่วงสด `rgb(139, 92, 246)` ตรงกับธีม Violet ที่ผู้ใช้ใช้งาน 100%
+    - ปุ่ม "+ เพิ่มรูปภาพ" และไอคอนกระเป๋าเงินมีสีตามธีมตรงเป๊ะทุกจุด
+    - `npm run build` ผ่านฉลุย 100%
+- **7. การตรวจสอบความสมบูรณ์ (Verification)**:
+  - Build ผ่านฉลุย 100% ด้วย `npm run build` ปราศจาก Error หรือ Warning
+  - ตรวจสอบผ่าน Chrome DevTools ทั้ง Mobile Viewport (390x844) และ Desktop Viewport (1440x900)
+  - อัปเดตผัง Codebase Knowledge Graph ด้วย `python -m graphify update .` สำเร็จ เรียบร้อย 100%
+
+### [2026-11-09 - กะดึก (Global Filter Card Modernization & Complete Typography Overhaul)]
+- **1. ยกเครื่องแถบตัวกรอง (Filter Card Modernization) ทุกหน้าจอ**:
+  - **ลดความหนาและเปลี่ยนปุ่ม Pill เป็น Dropdown**: เปลี่ยนปุ่มฟิลเตอร์สถานะและหมวดหมู่ที่เคยเป็นแถวปุ่มยาวหนาเตอะให้เป็น `<select>` dropdown กะทัดรัด แถวเดียว ทั้งใน `Quotations.jsx`, `Inventory.jsx`, `Staff.jsx`, `Locations.jsx`, `Customers.jsx`, `Finance.jsx`, `Analytics.jsx`
+  - **ลบปุ่ม Action/สร้างรายการออกจาก Filter Bar**: นำปุ่มสร้างรายการออกจาก Filter Bar เพราะแต่ละหน้ามีปุ่มหลักในแถบ Header ประจำหน้าจออยู่แล้ว และปุ่มเฉพาะทางของตารางย้ายเข้าไปอยู่ใน Table Header
+  - **ปุ่มรีเซ็ตตัวกรอง (`RotateCcw`) ทุกหน้าจอ**: เพิ่มปุ่มไอคอนหมุนรีเซ็ตตัวกรองคืนค่าเริ่มต้นอย่างเป็นมาตรฐานเดียวกัน
+- **2. กวาดล้างและปรับปรุงขนาดตัวอักษรให้อ่านง่าย คมชัด ทั่วทั้งระบบ (Complete Legibility Overhaul)**:
+  - กำจัดฟอนต์ตัวจิ๋ว (`text-[8px]`, `text-[9px]`, `text-[10px]`, `text-[11px]`) ออกจากโค้ดทั้งหมด 100% (จาก 240+ จุดเหลือ 0 จุดทั้งโปรเจกต์)
+  - ปรับเป็น `text-xs` (12px) หรือ `text-sm` (14px) พร้อมน้ำหนัก `font-semibold` / `font-bold` และสีคอนทราสต์สูง (`text-slate-700` / `text-slate-800` / `text-slate-900`) ทำให้อ่านสระบน-ล่างและวรรณยุกต์ภาษาไทยได้อย่างคมชัดสบายตา ทั้งบนคอมพิวเตอร์และมือถือ
+  - หน้าจอและคอมโพเนนต์ที่ปรับปรุงครบ 100%:
+    - `Quotations.jsx`, `Finance.jsx`, `Inventory.jsx`, `Staff.jsx`, `Locations.jsx`, `Customers.jsx`, `Analytics.jsx`, `Calendar.jsx`, `Artists.jsx`, `Settings.jsx`, `Plans.jsx`, `App.jsx`
+    - `BatchDeliveryBanner.jsx`, `ModernDateTimePicker.jsx`, `CustomerQuotationView.jsx`, `CustomerTrackingView.jsx`, `BannedUserModal.jsx`, `SharePreviewModal.jsx`, `UserProfileModal.jsx`, `VenueDetailModal.jsx`, `VenueDirectoryModal.jsx`
+- **3. การตรวจสอบความสมบูรณ์ (Verification)**:
+  - รัน `npm run build` ผ่าน 100% ภายใน 9.58s ปราศจาก Error หรือ Warning
+  - ตรวจสอบผ่าน Chrome DevTools ทั้ง Desktop (1440x900) และ Mobile Viewport (390x844) แสดงผลสวยงาม ไม่ล้นจอ
+  - อัปเดตผัง Knowledge Graph ด้วย `python -m graphify update .` เรียบร้อย
+
+
 ### [2026-11-06 - กะค่ำ (Customer Search, Markup High-Contrast UI, Mobile 4-Col Grid & Circular Swatches)]
 - **1. ค้นหาลูกค้าเก่าอัตโนมัติในหน้าเสนอราคา ([`src/QuotationsView.jsx`](file:///D:/WebappDreame/Flower2U/src/QuotationsView.jsx))**:
   - ส่ง `customers={savedCustomers}` เข้าไปใน `QuotationsView`
@@ -949,6 +1028,110 @@
       - มีช่องใส่พิกัด Lat, Lng หรือวางลิงก์ Google Maps พร้อมปุ่ม "📍 ดึงพิกัดจาก GPS ปัจจุบัน"
       - มีช่องใส่ลิงก์ Google Maps ของร้าน พร้อมปุ่มทดสอบเปิดแผนที่
       - ซิงค์พิกัดเข้า `flower2u_hub_settings` ใน localStorage ทันที และส่งต่อ `shopInfo` ไปยัง `<VenuesView shopInfo={shopInfo} />` ทำให้แถบจุดเริ่มต้นขนส่ง (Logistics Origin) อัปเดตแสดงชื่อร้าน ที่อยู่จริง และพิกัดร้านใหม่โดยอัตโนมัติ
+
+28. **ระบบ Universal Sticky Filter & มาตรฐานระยะห่าง 24px (Consistent Header-Filter Spacing)**:
+    - พัฒนา Hook กลาง `src/hooks/useStickyFilter.js` ตรวจจับการเลื่อนจอด้วย Global Capture Event (`{ passive: true, capture: true }`)
+    - ติดตั้งเชื่อมต่อครบทั้ง 8 หน้าหลัก (`App.jsx`, `Finance.jsx`, `Quotations.jsx`, `Inventory.jsx`, `Locations.jsx`, `Artists.jsx`, `Customers.jsx`, `Staff.jsx`)
+    - รักษาระยะห่างมาตรฐาน 24px (`gap-6` / `top-20` / `top-24`) ระหว่างส่วนหัวกับตัวกรองในสถานะปกติ และเปลี่ยนผ่านสู่โหมด Sticky ติดขอบบนแบบ Full-width ไร้รอยต่อเมื่อเลื่อนจอ
+
+29. **สถาปัตยกรรม Zod Validation & React Hook Form (Phase 1 & Phase 2 Complete)**:
+    - **Phase 1: Database & Data Pipeline Validation with Zod (`src/schemas/`)**:
+      - สร้าง Zod Schema ครอบคลุมเอนทิตีหลัก: `staffSchema.js`, `locationSchema.js`, `customerSchema.js`, `artistSchema.js`, `inventorySchema.js`, `quotationSchema.js`, `projectSchema.js` และ `index.js` helper `validatePayload`
+      - ติดตั้ง Validation Guards ดักจับและ Sanitize ข้อมูลก่อนเขียนลง Supabase และ IndexedDB ใน `src/services/syncService.js` (`saveProjectSync`, `saveStaffSync`, `saveLocationSync`, `saveCustomerSync`, `saveArtistSync`, `saveInventoryItemSync`, `saveQuotationSync`)
+      - ป้องกันปัญหา Type Coercion, ข้อมูลว่าง, สต็อกหรือเงินเดือนติดลบ, และ Payload แปลกปลอม
+    - **Phase 2: Form UX & Performance with React Hook Form + Zod (`@hookform/resolvers/zod`)**:
+      - ปรับปรุงฟอร์ม Modal ในหน้า `Staff.jsx`, `Locations.jsx`, `Customers.jsx`, `Artists.jsx` ให้ใช้งาน `useForm({ resolver: zodResolver(...) })`
+      - ขจัดปัญหา Whole-Modal Re-render ทุกครั้งที่พิมพ์ตัวอักษร เพิ่มความลื่นไหลระดับสูง (Uncontrolled Form Performance)
+      - แสดงข้อความเตือน Inline Error สื่อสารภาษาไทยชัดเจนใต้ช่องกรอก เช่น ชื่อผู้ใช้สั้นเกินไป, รูปแบบอีเมลไม่ถูกต้อง, รหัสผ่านไม่ตรงกัน
+      - รองรับ Custom Component `<ModernDateTimePicker />` ผ่าน React Hook Form `<Controller />` ได้อย่างสมบูรณ์แบบ
+      - ตรวจสอบผ่าน `npm run build` ผ่าน 100% และทดสอบ DOM/Validation จริงบนเบราว์เซอร์ผ่าน Chrome DevTools MCP ไร้ Error
+
+30. **หน้าเสนอราคา (`Quotations.jsx`) - ค่าว่างเมื่อเพิ่มรายการใหม่ ยกเว้นจำนวนเริ่มต้นที่ 1**:
+    - ปรับปรุงทั้งตอนเปิดสร้างใบเสนอราคาใหม่ (`handleOpenCreateModal`), ตอนกดปุ่ม "+ เพิ่มรายการป้าย/ฉาก" (`handleAddBackdropRow`), และตอนกดปุ่ม "+ เพิ่มรายการเสริม" (`handleAddFloralRow`):
+      - **รายการป้าย/ฉาก**: วัสดุโครงสร้าง (ยังไม่เลือก), จุดติดตั้ง (`''`), กว้าง (`''`), สูง (`''`), ราคาต่อ ตร.ม. (`''`), ยกเว้น **จำนวนเริ่มต้นที่ 1**
+      - **รายการดอกไม้และพัสดุเสริม**: ชื่อรายการ (`''`), หน่วยนับ (`''` แสดง placeholder "หน่วย"), ราคา/หน่วย (`''` แสดง placeholder "0"), ยกเว้น **จำนวนเริ่มต้นที่ 1**
+    - ปรับปรุง Input JSX และ `calculatedBackdrops` / `calculatedFloral` ให้รองรับค่าว่าง `''` ได้อย่างราบรื่น ไม่บังคับเขียนทับเป็น `0` หรือ `'ชิ้น'` เมื่อผู้ใช้กดลบตัวเลขหรือเว้นว่างไว้
+    - รันอัปเดต Graphify Knowledge Graph (`python -m graphify update .`) Rebuilt 555 nodes, 1275 edges, 28 communities สำเร็จ
+    - ทดสอบจริงบนเบราว์เซอร์ด้วย Chrome DevTools MCP ทั้งการกดเพิ่มแถว การพิมพ์คำนวณเงิน ตรวจสอบความถูกต้องครบถ้วน 100%
+
+31. **ปรับชื่อระบบและหน้าจอให้กระชับสั้นลงเป็น "คำนวณราคา" (Pricing & Cost Estimation)**:
+    - ปรับชื่อโมดูลและเมนูให้กระชับ ได้ใจความ สอดคล้องกับเมนูอื่นๆ ในระบบ:
+      - **Sidebar & Top Header (`src/App.jsx`)**: เปลี่ยนชื่อแท็บและหัวหน้าเป็น `"คำนวณราคา"` (ShortLabel: `"คำนวณราคา"`), ใช้ไอคอน `<Calculator />`
+      - **Header Action Button**: เปลี่ยนเป็น `"+ คำนวณราคา"`
+      - **Mobile Navigation Sheet**: แสดงไอคอน `<Calculator />` พร้อมชื่อ `"คำนวณราคา"`
+      - **KPI Cards & Table Header (`src/Quotations.jsx`)**: `"รายการคำนวณราคาทั้งหมด"`, `"มูลค่ายอดคำนวณราคารวม"`, คอลัมน์ `"เลขที่คำนวณราคา"`, `"ราคาเสนอขาย (Quote)"`
+      - **Modal Form & Actions**: `"คำนวณราคาใหม่"`, `"แก้ไขการคำนวณราคา"`, ปุ่มบันทึก `"บันทึกราคาโปรเจกต์"`, และ Dialog ยืนยันลบ `"ยืนยันการลบรายการคำนวณราคา"`
+      - **System Settings (`src/Settings.jsx`)**: `"คำนวณราคา (Pricing)"`
+    - รันอัปเดต Graphify Knowledge Graph (`python -m graphify update .`) และทดสอบผ่าน `npm run build` 100%
+    - ทดสอบจริงบนเบราว์เซอร์ผ่าน Chrome DevTools MCP ทั้งมุมมอง Desktop (1440px) และ Mobile (390px) ตรวจสอบความสวยงาม กระชับ ไม่ล้นจอ
+
+32. **ยกเครื่องฟอนต์และขนาดตัวอักษรหน้าคำนวณราคา (Typography & Legibility Overhaul)**:
+    - **ปัญหาเดิม**: มีการใช้ตัวอักษรขนาดจิ๋ว `text-[10px]` และ `text-[11px]` ร่วมกับสีจาง `text-slate-400` ทำให้สระภาษาไทย (สระอิ, สระอี, ไม้เอก, ไม้โท) หดลีบจนกลายเป็นจุดเล็กๆ อ่านไม่ออกแม้สายตาปกติ
+    - **การแก้ไขใน `src/Quotations.jsx`**:
+      - กวาดล้างและกำจัด `text-[10px]`, `text-[11px]` และ arbitrary pixel fonts ทั้งหมดในไฟล์ให้เป็น 0
+      - ยกระดับขนาดฟอนต์มาตรฐานเป็น `text-xs` (12px) หรือ `text-sm` (14px) พร้อมน้ำหนัก `font-semibold` หรือ `font-bold`
+      - ปรับเพิ่มคอนทราสต์จาก `text-slate-400` จางๆ เป็น `text-slate-700` / `text-slate-800` ที่คมชัดสูง อ่านสบายตาทั้งบนจอคอมพิวเตอร์และมือถือ
+      - **การ์ดสรุป KPI & ตาราง Desktop & Mobile Cards**: ขยายหัวตาราง, ป้ายสถานะ, เลขที่คำนวณราคา, รายละเอียดสเปก และตัวเลขทางการเงินให้อ่านง่าย
+      - **Modal Form ทั้ง 4 ส่วนหลัก**:
+        - ส่วนที่ 1 (ข้อมูลลูกค้าและชื่องาน): ป้ายกำกับ (Label) คมชัด `text-sm font-bold text-slate-800`
+        - ส่วนที่ 2 (ป้ายโครงสร้างและฉาก Backdrop): หัวคอลัมน์ กว้าง, สูง, จำนวน, ตร.ม., ฿/ตร.ม., รวมเงิน คมชัดชัดเจน
+        - ส่วนที่ 3 (ดอกไม้และพัสดุเสริม): เมนู Dropdown คลังพัสดุ, ป้ายสต็อก, ป้ายราคาทุน, ปุ่มดึงราคาทุน และตารางมือถืออ่านออก 100%
+        - ส่วนที่ 4 (สรุปต้นทุน กำไร และราคาเสนอสุทธิ): คีย์เวิร์ดด่วน, สรุปโครงสร้างต้นทุน, ปุ่มลัด % Markup, ช่องกรอกราคาเสนอสุทธิ และกล่องกำไรประเมินสุทธิ
+        - ส่วนที่ 5 (Modal ราคากลางวัสดุ): ข้อความเตือนและตารางราคากลางต่อ ตร.ม. ชัดเจน
+    - ตรวจสอบผ่าน `npm run build` ผ่าน 100% ไร้ Syntax/Build Error
+    - ตรวจสอบจริงบน Chrome DevTools MCP ทั้ง Desktop (1440x900) และ Mobile (390x844) ฟอนต์ภาษาไทยคมชัด ไม่ตกบรรทัด ไม่กลายเป็นจุดเล็กอีกต่อไป
+
+33. **ปรับปรุงการ์ดตัวกรองทุกหน้า (Filter Cards Compact Dropdown Overhaul)**:
+    - **ปัญหาเดิม**: มีการใช้แถบปุ่มกดหลายแถว (Pill Buttons) เช่น สถานะทั้งหมด / ยังไม่ผูกโปรเจกต์ / ผูกโปรเจกต์ หรือหมวดหมู่พัสดุ 6 หมวดหมู่ ทำให้การ์ดตัวกรองหนาเกินไป (Thick/Bulky) และบางหน้ามีปุ่ม Action/สร้างรายการซ้ำซ้อนในแถบตัวกรอง
+    - **การแก้ไขและยกระดับ UX/UI**:
+      - **แปลงปุ่มกดสถานะ/หมวดหมู่เป็น Dropdown (`<select>`)**:
+        - `Quotations.jsx`: ยุบปุ่มสถานะ 3 ปุ่มเป็น Dropdown "สถานะ: ทั้งหมด / ยังไม่ผูกโปรเจกต์ / ผูกโปรเจกต์แล้ว" รวมเข้าแถวเดียวกับช่องค้นหา
+        - `Inventory.jsx`: ยุบปุ่มหมวดหมู่ 6 ปุ่มในแท็บสต็อกเป็น Dropdown "ทุกหมวดหมู่พัสดุ" และยุบปุ่มสถานะ 4 ปุ่มในแท็บรหัสรายชิ้นเป็น Dropdown "ทุกสถานะ"
+        - `Staff.jsx`: ยุบปุ่มสถานะ 3 ปุ่มเป็น Dropdown "สถานะทั้งหมด / พร้อมงาน / พักงาน"
+        - `Locations.jsx`, `Customers.jsx`: จัดโครงสร้างแถวค้นหา + Dropdown สมดุล
+      - **นำปุ่ม Action ออกจากการ์ด Filter**:
+        - ตัดปุ่มสร้างรายการออกจากแถบตัวกรองใน `Inventory.jsx` (ปุ่มหลักของระบบมีอยู่ที่ Top Header อยู่แล้ว และปุ่มเฉพาะส่วนนำไปวางใน Content Area ของแต่ละแท็บ)
+        - หน้าวิเคราะห์ (`Analytics.jsx`) ไม่มีปุ่ม Action ในการ์ด Filter ตามที่ผู้ใช้ระบุ
+      - **ติดตั้งปุ่มรีเซ็ตตัวกรอง (`<RotateCcw />`) ครบทุกหน้า**:
+        - กดปุ่มเดียวสามารถล้างคำค้นหาและรีเซ็ตค่า Dropdown กลับเป็นค่าเริ่มต้นทันที พร้อม Title สื่อสารชัดเจน
+      - การ์ด Filter ทุกหน้าลดความสูงลงเหลือแถวเดียวแบนราบ บางเบา (Slim & Compact) ไม่บังเนื้อหา
+    - ทดสอบผ่าน `npm run build` ผ่าน 100%
+    - ตรวจสอบหน้าจอจริงผ่าน Chrome DevTools MCP ทั้ง Desktop (1440px) และ Mobile (390px) ทุกหน้า
+
+34. **แก้ไขปัญหาตัวเลขบนตารางไม่ขึ้น / ขึ้นเป็น 0 / รายจ่ายหาย (Missing Financial Numbers Fix)**:
+    - **สาเหตุที่แท้จริง (Root Cause)**:
+      - ในโปรเจกต์ 345 รายการ มี 309 รายการที่มีตัวเลขสรุป `totalExpenses` (เช่น 795฿, 575฿, 2,293฿) และ `customerSupportTotal` (เงินศิลปิน) อยู่ในแถวข้อมูลของ IndexedDB / Supabase แต่ฟิลด์อาร์เรย์รายการย่อย `expenses: []` และ `customerSupport: []` เป็นอาร์เรย์ว่าง
+      - ใน JavaScript อาร์เรย์ว่าง `[]` มีค่าเป็น Truthy ทำให้โค้ดเดิม `item.expenses ? item.expenses.reduce(...) : 0` ทำงานและคืนค่าเป็น `0` เสมอ โดยไม่ยอมไปดึงค่าจาก `item.totalExpenses` หรือ `item.total_expenses`
+      - ส่งผลให้:
+        1. **รายจ่าย (Expenses)** บนตารางแผนงาน (`App.jsx`) แสดงผลเป็น `-0` ตลอดเวลา
+        2. **เงินศิลปิน (Customer Support)** ไม่ขึ้นบนตาราง และยอดเรียกเก็บสุทธิ (`itemReceivable`) ขาดเงินส่วนนี้ไป
+        3. **กำไรสุทธิ (Net Profit)** คำนวณเป็น `wage - 0` ทำให้ตัวเลขกำไรสูงเกินจริงโดยไม่หักค่าใช้จ่าย
+        4. ในหน้าการเงิน (`Finance.jsx`) โหมดบัญชีและโหมดละเอียด แสดงข้อความ `"ไม่มีรายการ"` ทั้งที่ยอดรวมระบุจำนวนเงินไว้
+        5. ในหน้าวิเคราะห์ (`Analytics.jsx`) ชาร์ตสัดส่วนค่าใช้จ่ายแสดงเป็นว่างเปล่าเพราะไม่ได้ดึงค่า `totalExpenses` สำรอง
+    - **การแก้ไขอย่างแม่นยำ (Surgical Fix)**:
+      - **`src/App.jsx`**:
+        - คำนวณ `itemExpenses`, `itemSupport`, `itemRevenue`, `itemProfit`, `itemReceivable` ด้วยระบบ Fallback 2 ชั้น (ถ้าอาร์เรย์ย่อยไม่มีหรือคำนวณได้ 0 จะสลับไปใช้ `totalExpenses` / `customerSupportTotal` ทันที) ทั้งใน Desktop Table, Mobile Cards และ Analytics useMemo
+        - ปรับปรุงการเปิด Modal แก้ไขโปรเจกต์ (`openModal`) ให้ดึง `totalExpenses` และ `customerSupportTotal` มาสร้างเป็นรายการตั้งต้น ป้องกันการเซฟทับกลายเป็น 0
+        - ปรับปรุงการเรียงลำดับ (`filterAndSortActivities`) ให้รองรับการ Sort ตัวเลขคอลัมน์การเงิน (`wage`, `totalExpenses`) แบบตัวเลขแท้จริง ไม่แปลงเลข 0 เป็นสตริงว่าง
+      - **`src/Finance.jsx`**:
+        - อัปเดต Precalculation hook, `getProjectStatementRows`, และ CSV Export ให้มี Fallback ดึง `totalExpenses`, `customerSupportTotal`, และ `wage/totalRevenue`
+        - แก้ไขในมุมมองการ์ดและตารางชีต (ทั้งแบบย่อและแบบละเอียด) หากไม่มีอาร์เรย์ย่อยแต่มี `eTotal > 0` หรือ `sTotal > 0` ให้แสดง `- ยอดค่าใช้จ่ายจริงรวม ฿...` และ `- ยอดเงินส่งต่อศิลปินรวม ฿...` ชัดเจน ไม่ขึ้น `"ไม่มีรายการ"` อีกต่อไป
+      - **`src/services/syncService.js`**:
+        - อัปเดต `transformUiToSupabase` ให้คงค่า `totalExpenses` และ `customerSupportTotal` ไว้ แม้ `expenses` หรือ `customerSupport` จะเป็นอาร์เรย์ว่าง
+      - **`src/Artists.jsx` & `src/Customers.jsx`**:
+        - อัปเดตการรวมยอดเงินสนับสนุนศิลปิน (`totalSupport`) ให้รองรับ Fallback `customerSupportTotal`
+    - **การตรวจสอบผลลัพธ์ (Verification)**:
+      - `npm run build` ผ่าน 100% (built in 8.54s)
+      - ตรวจสอบตารางสดบน Chrome DevTools MCP ทั้งบน `/plans` และ `/finance` พบว่า:
+        - `P-0004`: รายจ่ายขึ้น `-795`, เงินศิลปิน `+3,250`, ค่าจ้าง `4,250`, ยอดเรียกเก็บ `฿7,500`, กำไรสุทธิ `+3,455` ครบถ้วนถูกต้อง 100%
+        - `P-0005`: รายจ่ายขึ้น `-575`, เงินศิลปิน `+7,700`, ยอดเรียกเก็บ `฿11,200`, กำไรสุทธิ `+2,925`
+        - `P-0010`: รายจ่ายขึ้น `-2,293`, เงินศิลปิน `+4,000`, ยอดเรียกเก็บ `฿8,000`, กำไรสุทธิ `+1,707`
+        - `P-0350`: รายจ่ายขึ้น `-300`, เงินศิลปิน `+4,000`, กำไรสุทธิ `+4,000` ถูกต้องแม่นยำทุกคอลัมน์
+
+35. **ปรับปุ่ม Filter ให้เหลือเฉพาะไอคอน (Icon Only Filter Button)**:
+    - นำข้อความ `"ตัวกรอง"` ออกจากปุ่มเปิด/ซ่อนตัวกรองเพิ่มเติมในแถบตัวกรองของหน้าแผนงาน (`src/App.jsx`) และหน้าการเงิน (`src/Finance.jsx`)
+    - ปรับเป็นปุ่มไอคอน `<SlidersHorizontal />` กะทัดรัด พร้อม Badge แจ้งเตือนจำนวนฟิลเตอร์ที่เปิดใช้งานอยู่ และลูกศร Indicator
+    - ตรวจสอบผ่าน `npm run build` และตรวจสอบหน้าจอจริงผ่าน Chrome DevTools (1440px) ไม่พบคำว่า "ตัวกรอง" บนปุ่มอีกต่อไป แถบตัวกรองดูมินิมอลและสะอาดตามากยิ่งขึ้น
 
 ---
 

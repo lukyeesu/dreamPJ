@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Users,
   Search,
@@ -21,22 +21,72 @@ import {
   Info,
   CheckCircle2,
   Cake,
-  Palette
+  Palette,
+  Camera,
+  UploadCloud,
+  Loader2,
+  User,
+  Image as ImageIcon,
+  RotateCcw,
+  ChevronDown
 } from 'lucide-react';
 import { saveArtistSync, deleteArtistSync } from './services/syncService';
 import ModernDateTimePicker from './components/common/ModernDateTimePicker';
 import Toast from './components/common/Toast';
 import ConfirmDialog from './components/common/ConfirmDialog';
+import { useStickyFilter } from './hooks/useStickyFilter';
+import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { artistFormSchema } from './schemas/artistSchema';
 
-function ArtistsView({
+const GOOGLE_DRIVE_UPLOAD_URL = import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL || 
+  "https://script.google.com/macros/s/AKfycbw2WJ4tt7l__0U6XYtgHbyl0W1iGjm6oHXa9-2twBKfa1xP2-SBj2hMwaHUYp7ew_Ih/exec";
+
+const fileToBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.readAsDataURL(file);
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = (err) => reject(err);
+});
+
+const compressImage = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.readAsDataURL(file);
+  reader.onload = (event) => {
+    const img = new Image();
+    img.src = event.target.result;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const MAX_WIDTH = 800;
+      const scaleSize = MAX_WIDTH / img.width;
+      if (scaleSize < 1) {
+        canvas.width = MAX_WIDTH;
+        canvas.height = img.height * scaleSize;
+      } else {
+        canvas.width = img.width;
+        canvas.height = img.height;
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = (err) => reject(err);
+  };
+  reader.onerror = (err) => reject(err);
+});
+
+function Artists({
   artists = [],
+  artistStats = {},
   activities = [],
+  assetsDriveFolderId = '',
   isCreateOpen = false,
   onCloseCreate,
   onOpenProjectModal,
   onFilterByArtist,
   onRefresh
 }) {
+  const { isFilterStuck, filterSentinelRef } = useStickyFilter();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAgency, setSelectedAgency] = useState('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -46,25 +96,105 @@ function ArtistsView({
   const [isSaving, setIsSaving] = useState(false);
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, artistId: null, artistName: '' });
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // Form State (React Hook Form + Zod)
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setValue,
+    watch,
+    control,
+    formState: { errors }
+  } = useForm({
+    resolver: zodResolver(artistFormSchema),
+    defaultValues: {
+      name: '',
+      agency: '',
+      fandom_name: '',
+      fandom_color: '#ec4899',
+      birth_date: '',
+      debut_date: '',
+      bio: '',
+      social_links: { twitter: '', instagram: '', tiktok: '', weibo: '' },
+      favorite_flowers: '',
+      avatar_url: '',
+      notes: ''
+    }
+  });
+
+  const watchedAvatarUrl = watch('avatar_url') || '';
+  const watchedFandomColor = watch('fandom_color') || '#ec4899';
+  const watchedName = watch('name') || '';
+
+  // Upload Avatar File to Google Drive
+  const handleUploadAvatarFile = async (file) => {
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      showToast('กรุณาเลือกไฟล์รูปภาพเท่านั้น (JPG, PNG, WebP)', 'error');
+      return;
+    }
+
+    setIsUploadingAvatar(true);
+    try {
+      let base64Data = '';
+      if (file.size > 1 * 1024 * 1024) {
+        base64Data = await compressImage(file);
+      } else {
+        base64Data = await fileToBase64(file);
+      }
+
+      // Show temporary preview immediately
+      setValue('avatar_url', base64Data);
+
+      // Target Google Drive Folder ID
+      const targetFolderId = assetsDriveFolderId && assetsDriveFolderId.trim() !== ''
+        ? assetsDriveFolderId.trim()
+        : '1SRD4Qr9X5XgD4niCwlmDyZR78pWUx-XX';
+
+      const cleanArtistName = (watchedName || 'artist').replace(/[^a-zA-Z0-9_\u0E00-\u0E7F]/g, '_');
+      const fileName = `artist_${cleanArtistName}_${Date.now()}.png`;
+      const mimeType = base64Data.split(',')[0].match(/:(.*?);/)?.[1] || 'image/png';
+
+      const response = await fetch(GOOGLE_DRIVE_UPLOAD_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'uploadAsset',
+          data: {
+            folderId: targetFolderId,
+            fileData: base64Data,
+            fileName: fileName,
+            mimeType: mimeType
+          }
+        })
+      });
+
+      const result = await response.json();
+      if (result.status === 'success' && (result.url || result.fileId)) {
+        const directUrl = result.fileId
+          ? `https://lh3.googleusercontent.com/d/${result.fileId}`
+          : (result.url || base64Data);
+        setValue('avatar_url', directUrl);
+        showToast('อัปโหลดรูปภาพไปยัง Google Drive สำเร็จ', 'success');
+      } else {
+        throw new Error(result.message || 'ไม่สามารถอัปโหลดไปยัง Google Drive ได้');
+      }
+    } catch (err) {
+      console.error('Error uploading artist avatar:', err);
+      showToast('เกิดข้อผิดพลาดในการอัปโหลด: ' + err.message, 'error');
+    } finally {
+      setIsUploadingAvatar(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type });
   };
-
-  // Form State
-  const [formData, setFormData] = useState({
-    name: '',
-    agency: '',
-    fandom_name: '',
-    fandom_color: '#ec4899',
-    birth_date: '',
-    debut_date: '',
-    bio: '',
-    social_links: { twitter: '', instagram: '', tiktok: '', weibo: '' },
-    favorite_flowers: '',
-    avatar_url: '',
-    notes: ''
-  });
 
   // Listen to single header button
   useEffect(() => {
@@ -86,14 +216,16 @@ function ArtistsView({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isModalOpen, isDetailModalOpen]);
 
-  // Aggregate artists from both explicit artists table and project activities
+  // Aggregate artists from explicit artists table, server summary stats, and loaded project activities
   const artistDirectory = useMemo(() => {
     const map = new Map();
+    const hasServerStats = artistStats && typeof artistStats === 'object' && Object.keys(artistStats).length > 0;
 
     // 1. Seed from explicit artists table
     artists.forEach(a => {
       const key = (a.name || '').trim().toLowerCase();
-      if (!key) return;
+      if (!key || key === '-' || key === 'unknown') return;
+      const serverStat = (hasServerStats && artistStats[key]) ? artistStats[key] : null;
       map.set(key, {
         id: a.id,
         name: a.name,
@@ -107,16 +239,43 @@ function ArtistsView({
         favorite_flowers: a.favorite_flowers || '',
         avatar_url: a.avatar_url || '',
         notes: a.notes || '',
-        projectCount: 0,
-        totalRevenue: 0,
-        totalSupport: 0,
+        projectCount: serverStat ? serverStat.projectCount : 0,
+        totalRevenue: serverStat ? serverStat.totalRevenue : 0,
+        totalSupport: serverStat ? serverStat.totalSupport : 0,
         categories: new Set(),
-        lastActiveDate: '',
+        lastActiveDate: serverStat ? serverStat.lastActiveDate : '',
         sampleProjects: []
       });
     });
 
-    // 2. Aggregate from activities (calculate stats & add artists not yet in master table)
+    // 2. Also seed any artists discovered from server summary stats that aren't in artists table yet
+    if (hasServerStats) {
+      Object.entries(artistStats).forEach(([key, stat]) => {
+        if (!key || key === '-' || key === 'unknown' || map.has(key)) return;
+        map.set(key, {
+          id: null,
+          name: stat.name || key,
+          agency: '',
+          fandom_name: '',
+          fandom_color: '#ec4899',
+          birth_date: '',
+          debut_date: '',
+          bio: '',
+          social_links: {},
+          favorite_flowers: '',
+          avatar_url: '',
+          notes: '',
+          projectCount: stat.projectCount || 0,
+          totalRevenue: stat.totalRevenue || 0,
+          totalSupport: stat.totalSupport || 0,
+          categories: new Set(),
+          lastActiveDate: stat.lastActiveDate || '',
+          sampleProjects: []
+        });
+      });
+    }
+
+    // 3. Aggregate from activities (calculate samples & fallback stats if serverStats not loaded)
     activities.forEach(item => {
       const name = (item.artist || '').trim();
       if (!name || name === '-' || name === 'Unknown') return;
@@ -146,15 +305,23 @@ function ArtistsView({
       }
 
       const entry = map.get(key);
-      entry.projectCount += 1;
-      entry.totalRevenue += (item.wage || 0);
+      if (!hasServerStats) {
+        entry.projectCount += 1;
+        const qSum = item.quotationItems && item.quotationItems.length > 0
+          ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || 0), 0)
+          : 0;
+        entry.totalRevenue += qSum > 0 ? qSum : (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0);
 
-      const support = (item.customerSupport || []).reduce((sum, cs) => sum + (parseFloat(cs.price) || 0), 0);
-      entry.totalSupport += support;
+        const calcSupport = (item.customerSupport && item.customerSupport.length > 0)
+          ? item.customerSupport.reduce((sum, cs) => sum + (parseFloat(cs.price) || 0), 0)
+          : 0;
+        const support = calcSupport > 0 ? calcSupport : (parseFloat(item.customerSupportTotal || item.customer_support_total) || 0);
+        entry.totalSupport += support;
 
-      const dateStr = item.deliveryDate || item.date || '';
-      if (dateStr && (!entry.lastActiveDate || dateStr > entry.lastActiveDate)) {
-        entry.lastActiveDate = dateStr;
+        const dateStr = item.deliveryDate || item.date || '';
+        if (dateStr && (!entry.lastActiveDate || dateStr > entry.lastActiveDate)) {
+          entry.lastActiveDate = dateStr;
+        }
       }
 
       if (item.category) entry.categories.add(item.category);
@@ -167,7 +334,7 @@ function ArtistsView({
       if (b.totalSupport !== a.totalSupport) return b.totalSupport - a.totalSupport;
       return b.projectCount - a.projectCount;
     });
-  }, [artists, activities]);
+  }, [artists, artistStats, activities]);
 
   // Unique Agencies
   const agencies = useMemo(() => {
@@ -202,7 +369,7 @@ function ArtistsView({
   const handleOpenCreateModal = (artist = null) => {
     if (artist) {
       setEditingArtist(artist);
-      setFormData({
+      reset({
         name: artist.name || '',
         agency: artist.agency || '',
         fandom_name: artist.fandom_name || '',
@@ -222,7 +389,7 @@ function ArtistsView({
       });
     } else {
       setEditingArtist(null);
-      setFormData({
+      reset({
         name: '',
         agency: '',
         fandom_name: '',
@@ -245,14 +412,8 @@ function ArtistsView({
     setIsDetailModalOpen(true);
   };
 
-  // Submit Save Artist
-  const handleSaveArtist = async (e) => {
-    e.preventDefault();
-    if (!formData.name.trim()) {
-      showToast('กรุณากรอกชื่อศิลปิน', 'error');
-      return;
-    }
-
+  // Submit Save Artist (React Hook Form onSubmit)
+  const onSubmitArtist = async (formData) => {
     setIsSaving(true);
     try {
       const payload = {
@@ -306,14 +467,14 @@ function ArtistsView({
   };
 
   return (
-    <div className="space-y-6 sm:space-y-8 flex flex-col min-h-full pb-24 md:pb-6 px-4 sm:px-8 lg:px-10 pt-4">
+    <div className="flex flex-col gap-6 min-h-full pb-24 md:pb-6 px-4 sm:px-8 lg:px-10 pt-4">
       {/* 3 Summary Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex items-center justify-between">
           <div>
             <span className="text-xs font-bold text-slate-500">ศิลปินในระบบทั้งหมด</span>
             <p className="text-2xl sm:text-3xl font-black text-slate-900 mt-1">{totalArtists} ท่าน</p>
-            <div className="text-[11px] text-slate-400 mt-0.5">ครอบคลุมทุกค่ายและแฟนด้อม</div>
+            <div className="text-xs text-slate-400 mt-0.5">ครอบคลุมทุกค่ายและแฟนด้อม</div>
           </div>
           <div className="p-3 rounded-2xl bg-indigo-50 text-indigo-600">
             <Users className="w-6 h-6" />
@@ -324,7 +485,7 @@ function ArtistsView({
           <div>
             <span className="text-xs font-bold text-purple-700">ยอดเงินซัพพอร์ตศิลปินสะสม</span>
             <p className="text-2xl sm:text-3xl font-black text-purple-700 mt-1">฿{totalSupportAll.toLocaleString()}</p>
-            <div className="text-[11px] text-purple-600 mt-0.5">ส่งต่อศิลปิน 100% เต็ม</div>
+            <div className="text-xs text-purple-600 mt-0.5">ส่งต่อศิลปิน 100% เต็ม</div>
           </div>
           <div className="p-3 rounded-2xl bg-purple-50 text-purple-600">
             <Gift className="w-6 h-6" />
@@ -335,7 +496,7 @@ function ArtistsView({
           <div>
             <span className="text-xs font-bold text-emerald-700">จำนวนงาน</span>
             <p className="text-2xl sm:text-3xl font-black text-emerald-700 mt-1">{totalJobsAll} งาน</p>
-            <div className="text-[11px] text-emerald-600 mt-0.5">Backdrop, ช่อถือ, ช่อขาตั้ง</div>
+            <div className="text-xs text-emerald-600 mt-0.5">Backdrop, ช่อถือ, ช่อขาตั้ง</div>
           </div>
           <div className="p-3 rounded-2xl bg-emerald-50 text-emerald-600">
             <TrendingUp className="w-6 h-6" />
@@ -344,30 +505,66 @@ function ArtistsView({
       </div>
 
       {/* Search & Agency Filter Toolbar */}
-      <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="sm:col-span-2 relative">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+      <div 
+        ref={filterSentinelRef} 
+        className="w-full h-0 -my-3 pointer-events-none opacity-0"
+      />
+      <div className={`bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out z-20 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 ${
+        isFilterStuck
+          ? '-mx-4 sm:-mx-8 lg:-mx-10 py-2 sm:py-2.5 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
+          : 'p-3 sm:p-3.5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
+      }`}>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+          {/* Search Box */}
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
               type="text"
               placeholder="ค้นหาชื่อศิลปิน, ค่ายสังกัด, ชื่อแฟนด้อม, หรือข้อมูลประวัติ..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 font-medium"
+              className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 font-medium"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition cursor-pointer"
+                title="ล้างข้อความค้นหา"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
-          <div>
-            <select
-              value={selectedAgency}
-              onChange={(e) => setSelectedAgency(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Agency Dropdown */}
+            <div className="relative w-44 sm:w-56 shrink-0">
+              <select
+                value={selectedAgency}
+                onChange={(e) => setSelectedAgency(e.target.value)}
+                className="w-full pl-3.5 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
+              >
+                <option value="all">ทุกสังกัด / ค่าย ({artistDirectory.length})</option>
+                {agencies.map(ag => (
+                  <option key={ag} value={ag}>{ag}</option>
+                ))}
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+
+            {/* Reset Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                setSelectedAgency('all');
+              }}
+              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer shadow-2xs"
+              title="ล้างค่าตัวกรองทั้งหมด"
             >
-              <option value="all">ทุกสังกัด / ค่าย ({artistDirectory.length})</option>
-              {agencies.map(ag => (
-                <option key={ag} value={ag}>{ag}</option>
-              ))}
-            </select>
+              <RotateCcw className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
@@ -377,7 +574,7 @@ function ArtistsView({
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-100 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+              <tr className="bg-slate-50/80 border-b border-slate-100 text-xs font-bold text-slate-600 uppercase tracking-wider">
                 <th className="py-3.5 px-5">อันดับ / ศิลปิน</th>
                 <th className="py-3.5 px-4">สังกัด / ค่าย</th>
                 <th className="py-3.5 px-4">แฟนด้อม & สีประจำตัว</th>
@@ -606,11 +803,11 @@ function ArtistsView({
               {/* Financial & Job count */}
               <div className="bg-slate-50 p-2.5 rounded-xl flex items-center justify-between text-xs">
                 <div>
-                  <span className="text-slate-400 text-[10px] block">เงินซัพพอร์ตสะสม</span>
+                  <span className="text-slate-600 text-xs font-bold block">เงินซัพพอร์ตสะสม</span>
                   <span className="font-black text-purple-700">฿{artist.totalSupport.toLocaleString()}</span>
                 </div>
                 <div className="text-right">
-                  <span className="text-slate-400 text-[10px] block">จำนวนงาน</span>
+                  <span className="text-slate-600 text-xs font-bold block">จำนวนงาน</span>
                   <span className="font-black text-slate-900">{artist.projectCount} งาน</span>
                 </div>
               </div>
@@ -644,7 +841,7 @@ function ArtistsView({
                       {editingArtist ? 'แก้ไขข้อมูลศิลปิน' : 'เพิ่มข้อมูลศิลปินใหม่'}
                     </h3>
                     {editingArtist?.name && (
-                      <span className="bg-purple-50 text-purple-600 text-[10px] sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-purple-100 w-fit">
+                      <span className="bg-purple-50 text-purple-600 text-xs sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-purple-100 w-fit">
                         {editingArtist.name}
                       </span>
                     )}
@@ -664,27 +861,29 @@ function ArtistsView({
             </div>
 
             {/* Modal Form */}
-            <form onSubmit={handleSaveArtist} className="flex flex-col flex-1 overflow-hidden">
+            <form onSubmit={handleSubmit(onSubmitArtist)} className="flex flex-col flex-1 overflow-hidden">
               <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-6 overscroll-contain">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">ชื่อศิลปิน *</label>
                     <input
                       type="text"
-                      required
                       placeholder="เช่น Nunew Chawarin, Zee Pruk"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition"
+                      {...register('name')}
+                      className={`w-full px-3.5 py-2.5 bg-slate-50 border rounded-xl text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 transition ${
+                        errors.name ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-purple-500/20 focus:border-purple-500'
+                      }`}
                     />
+                    {errors.name && (
+                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.name.message}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">สังกัด / ค่ายเพลง (Agency)</label>
                     <input
                       type="text"
                       placeholder="เช่น Domundi, GMMTV, BEC"
-                      value={formData.agency}
-                      onChange={(e) => setFormData({ ...formData, agency: e.target.value })}
+                      {...register('agency')}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition"
                     />
                   </div>
@@ -696,8 +895,7 @@ function ArtistsView({
                     <input
                       type="text"
                       placeholder="เช่น นานุ, ซอนมุล"
-                      value={formData.fandom_name}
-                      onChange={(e) => setFormData({ ...formData, fandom_name: e.target.value })}
+                      {...register('fandom_name')}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition"
                     />
                   </div>
@@ -706,15 +904,14 @@ function ArtistsView({
                     <div className="flex items-center gap-2">
                       <input
                         type="color"
-                        value={formData.fandom_color}
-                        onChange={(e) => setFormData({ ...formData, fandom_color: e.target.value })}
+                        value={watchedFandomColor}
+                        onChange={(e) => setValue('fandom_color', e.target.value)}
                         className="w-10 h-10 p-0.5 rounded-xl border border-slate-200 cursor-pointer"
                       />
                       <input
                         type="text"
                         placeholder="#EC4899"
-                        value={formData.fandom_color}
-                        onChange={(e) => setFormData({ ...formData, fandom_color: e.target.value })}
+                        {...register('fandom_color')}
                         className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition"
                       />
                     </div>
@@ -724,23 +921,112 @@ function ArtistsView({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">วันเกิด (Birthday)</label>
-                    <ModernDateTimePicker
-                      value={formData.birth_date}
-                      onChange={(e) => setFormData({ ...formData, birth_date: e.target.value })}
-                      hasTime={false}
-                      placeholder="เลือกวันเกิด..."
-                      className="w-full bg-slate-50 border-slate-200"
+                    <Controller
+                      control={control}
+                      name="birth_date"
+                      render={({ field }) => (
+                        <ModernDateTimePicker
+                          value={field.value}
+                          onChange={field.onChange}
+                          hasTime={false}
+                          placeholder="เลือกวันเกิด..."
+                          className="w-full bg-slate-50 border-slate-200"
+                        />
+                      )}
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">รูปโปรไฟล์ (URL)</label>
-                    <input
-                      type="url"
-                      placeholder="https://..."
-                      value={formData.avatar_url}
-                      onChange={(e) => setFormData({ ...formData, avatar_url: e.target.value })}
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition"
-                    />
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-purple-600" />
+                        รูปโปรไฟล์ศิลปิน
+                      </span>
+                      {isUploadingAvatar && (
+                        <span className="text-xs font-medium text-purple-600 flex items-center gap-1 animate-pulse">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          กำลังอัปโหลด Google Drive...
+                        </span>
+                      )}
+                    </label>
+
+                    <div className="flex items-center gap-3 p-2 bg-slate-50/90 rounded-2xl border border-slate-200/90 shadow-2xs">
+                      {/* Avatar Preview Box (Clickable & Droppable) */}
+                      <div
+                        onClick={() => !isUploadingAvatar && fileInputRef.current?.click()}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          if (e.dataTransfer.files?.[0]) handleUploadAvatarFile(e.dataTransfer.files[0]);
+                        }}
+                        className="relative w-14 h-14 rounded-2xl shrink-0 cursor-pointer overflow-hidden border-2 border-purple-200 hover:border-purple-400 group transition-all shadow-xs flex items-center justify-center bg-white"
+                        style={{ backgroundColor: watchedAvatarUrl ? 'transparent' : (watchedFandomColor || '#ec4899') }}
+                        title="คลิกเพื่อเลือกรูปภาพจากเครื่อง หรือลากไฟล์มาวาง"
+                      >
+                        {watchedAvatarUrl ? (
+                          <img
+                            src={watchedAvatarUrl}
+                            alt="Avatar"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
+                        ) : (
+                          <span className="font-black text-white text-base">
+                            {watchedName ? watchedName.slice(0, 2).toUpperCase() : <User className="w-5 h-5 text-white" />}
+                          </span>
+                        )}
+                        <div className="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white text-xs font-bold gap-0.5">
+                          <UploadCloud className="w-3.5 h-3.5" />
+                          <span>เปลี่ยน</span>
+                        </div>
+                        {isUploadingAvatar && (
+                          <div className="absolute inset-0 bg-purple-900/60 backdrop-blur-xs flex items-center justify-center text-white">
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Info & Action Buttons */}
+                      <div className="flex-1 min-w-0">
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            if (e.target.files?.[0]) handleUploadAvatarFile(e.target.files[0]);
+                          }}
+                          disabled={isUploadingAvatar}
+                        />
+
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isUploadingAvatar}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 active:scale-95 text-white text-xs font-bold rounded-xl transition shadow-xs cursor-pointer disabled:opacity-50"
+                          >
+                            <UploadCloud className="w-3.5 h-3.5" />
+                            {watchedAvatarUrl ? 'เปลี่ยนรูป' : 'อัปโหลดรูป'}
+                          </button>
+
+                          {watchedAvatarUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setValue('avatar_url', '')}
+                              disabled={isUploadingAvatar}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer"
+                              title="ลบรูปโปรไฟล์"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              ลบ
+                            </button>
+                          )}
+                        </div>
+
+                        <p className="text-xs text-slate-500 mt-1 truncate">
+                          เก็บบน Google Drive (Assets) • JPG, PNG
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -749,8 +1035,7 @@ function ArtistsView({
                   <textarea
                     rows="3"
                     placeholder="เขียนประวัติ ผลงานเด่น วันสำคัญ หรือข้อควรระวังในการจัดดอกไม้..."
-                    value={formData.bio}
-                    onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                    {...register('bio')}
                     className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition"
                   ></textarea>
                 </div>
@@ -761,8 +1046,7 @@ function ArtistsView({
                     <input
                       type="text"
                       placeholder="เช่น ดอกทิวลิปขาว, กุหลาบพาสเทล"
-                      value={formData.favorite_flowers}
-                      onChange={(e) => setFormData({ ...formData, favorite_flowers: e.target.value })}
+                      {...register('favorite_flowers')}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition"
                     />
                   </div>
@@ -771,11 +1055,7 @@ function ArtistsView({
                     <input
                       type="text"
                       placeholder="@artist_account"
-                      value={formData.social_links?.twitter || ''}
-                      onChange={(e) => setFormData({
-                        ...formData,
-                        social_links: { ...formData.social_links, twitter: e.target.value }
-                      })}
+                      {...register('social_links.twitter')}
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition"
                     />
                   </div>
@@ -850,7 +1130,7 @@ function ArtistsView({
                       {selectedArtistForDetail.name}
                     </h3>
                     {selectedArtistForDetail.fandom_name && (
-                      <span className="bg-purple-50 text-purple-600 text-[10px] sm:text-xs px-2.5 py-0.5 rounded-lg font-bold border border-purple-100 w-fit">
+                      <span className="bg-purple-50 text-purple-600 text-xs sm:text-xs px-2.5 py-0.5 rounded-lg font-bold border border-purple-100 w-fit">
                         แฟนด้อม: {selectedArtistForDetail.fandom_name}
                       </span>
                     )}
@@ -881,19 +1161,19 @@ function ArtistsView({
               {/* Financial & Job Highlights */}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div className="bg-slate-50 p-3.5 sm:p-4 rounded-2xl border border-slate-100">
-                  <span className="text-slate-400 text-[11px] block font-bold">ยอดเงินซัพพอร์ตสะสม</span>
+                  <span className="text-slate-600 text-xs font-bold block font-bold">ยอดเงินซัพพอร์ตสะสม</span>
                   <p className="text-lg sm:text-xl font-black text-purple-700 mt-1">
                     ฿{selectedArtistForDetail.totalSupport.toLocaleString()}
                   </p>
                 </div>
                 <div className="bg-slate-50 p-3.5 sm:p-4 rounded-2xl border border-slate-100">
-                  <span className="text-slate-400 text-[11px] block font-bold">จำนวนงานที่จัดดอกไม้</span>
+                  <span className="text-slate-600 text-xs font-bold block font-bold">จำนวนงานที่จัดดอกไม้</span>
                   <p className="text-lg sm:text-xl font-black text-emerald-700 mt-1">
                     {selectedArtistForDetail.projectCount} งาน
                   </p>
                 </div>
                 <div className="bg-slate-50 p-3.5 sm:p-4 rounded-2xl border border-slate-100 col-span-2 sm:col-span-1">
-                  <span className="text-slate-400 text-[11px] block font-bold">วันเกิด / อายุ</span>
+                  <span className="text-slate-600 text-xs font-bold block font-bold">วันเกิด / อายุ</span>
                   <p className="text-sm font-bold text-slate-800 mt-1">
                     {selectedArtistForDetail.birth_date || 'ไม่ระบุ'}
                     {getAge(selectedArtistForDetail.birth_date) !== null && ` (${getAge(selectedArtistForDetail.birth_date)} ปี)`}
@@ -943,7 +1223,7 @@ function ArtistsView({
                         className="p-3.5 rounded-2xl bg-slate-50 hover:bg-purple-50/60 border border-slate-100 hover:border-purple-200 transition-colors flex items-center justify-between text-xs cursor-pointer group"
                       >
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-[11px] font-black text-purple-700 bg-purple-100/80 px-2 py-0.5 rounded-lg">
+                          <span className="font-mono text-xs font-black text-purple-700 bg-purple-100/80 px-2 py-0.5 rounded-lg">
                             {p.id}
                           </span>
                           <span className="font-bold text-slate-800 group-hover:text-purple-700 transition-colors">
@@ -1016,4 +1296,4 @@ function ArtistsView({
   );
 }
 
-export default React.memo(ArtistsView);
+export default React.memo(Artists);

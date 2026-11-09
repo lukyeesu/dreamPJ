@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   Home,
   BarChart2,
-  Settings,
+  Settings as SettingsIcon,
   Search,
   Menu,
   X,
@@ -25,7 +25,7 @@ import {
   ArrowUpRight,
   Folder,
   Plus,
-  Calendar,
+  Calendar as CalendarIcon,
   MapPin,
   Trash2,
   DollarSign,
@@ -96,19 +96,20 @@ import {
   LayoutGrid,
   Sparkles,
   Package,
-  UserCheck
+  UserCheck,
+  Calculator
 } from 'lucide-react';
-import FinanceView from './FinanceView';
-import CalendarView from './CalendarView';
-import AnalyticsView from './AnalyticsView';
-import PlansView from './PlansView';
-import SettingsView from './SettingsView';
-import VenuesView from './VenuesView';
-import ArtistsView from './ArtistsView';
-import CustomersView from './CustomersView';
-import InventoryView from './InventoryView';
-import QuotationsView from './QuotationsView';
-import StaffView from './StaffView';
+import Finance from './Finance';
+import Calendar from './Calendar';
+import Analytics from './Analytics';
+import Plans from './Plans';
+import Settings from './Settings';
+import Locations from './Locations';
+import Artists from './Artists';
+import Customers from './Customers';
+import Inventory from './Inventory';
+import Quotations from './Quotations';
+import Staff from './Staff';
 
 // --- CONFIGURATION ---
 // Google Apps Script API URL สำหรับอัปโหลดรูปภาพและสลิปเข้า Google Drive เท่านั้น (ไม่ใช้เก็บข้อมูลแล้ว)
@@ -118,7 +119,8 @@ const GOOGLE_SCRIPT_URL = GOOGLE_DRIVE_UPLOAD_URL; // สำหรับฟั�
 
 // Supabase & IndexedDB Zero-Egress Sync Engine (ข้อมูลทั้งหมด 100% จัดเก็บและซิงก์ผ่าน Supabase)
 import { 
-  loadProjectsLocalFirst, 
+  loadProjectsLocalFirst,
+  loadProjectsScoped,
   saveProjectSync, 
   deleteProjectSync, 
   subscribeToRealtimeProjects,
@@ -129,13 +131,19 @@ import {
   saveLocationSync,
   loadCustomersLocalFirst,
   loadArtistsLocalFirst,
+  loadArtistsAndCustomersSummaryStats,
   loadInventoryLocalFirst,
   loadAssetLoansLocalFirst,
   fetchProjectDetailOnDemand,
   fetchServerAnalytics,
+  fetchServerProjectStats,
   loadProjectsPaginated,
-  loadProjectsByMonth
+  loadProjectsByMonth,
+  subscribeToStaffRealtime,
+  syncDeletedRecords
 } from './services/syncService';
+import { db, clearAllLocalDatabase } from './services/db';
+
 
 // Constants & Utilities
 import { themeColors, colorPresets, systemStatusTypes } from './constants/appConstants';
@@ -170,20 +178,20 @@ import VenueDetailModal from './components/modals/VenueDetailModal';
 import VenueDirectoryModal from './components/modals/VenueDirectoryModal';
 import BatchDeliveryBanner from './components/common/BatchDeliveryBanner';
 import UserProfileModal from './components/modals/UserProfileModal';
-import { supabase } from './services/supabaseClient';
+import { supabase, getActiveClient } from './services/supabaseClient';
 
 const navItems = [
-  { name: 'Calendar', icon: Calendar, label: 'ปฏิทินงาน', shortLabel: 'ปฏิทิน' },
+  { name: 'Calendar', icon: CalendarIcon, label: 'ปฏิทินงาน', shortLabel: 'ปฏิทิน' },
   { name: 'Plans', icon: List, label: 'แผนงาน', shortLabel: 'แผนงาน' },
   { name: 'Finance', icon: Wallet, label: 'การเงิน', shortLabel: 'การเงิน' },
-  { name: 'Quotations', icon: FileText, label: 'ใบเสนอราคา', shortLabel: 'เสนอราคา' },
+  { name: 'Quotations', icon: Calculator, label: 'คำนวณราคา', shortLabel: 'คำนวณราคา' },
   { name: 'Inventory', icon: Package, label: 'คลังพัสดุ', shortLabel: 'คลังพัสดุ' },
-  { name: 'Venues', icon: MapPin, label: 'สถานที่จัดส่ง', shortLabel: 'สถานที่' },
+  { name: 'Locations', icon: MapPin, label: 'สถานที่จัดส่ง', shortLabel: 'สถานที่' },
   { name: 'Artists', icon: Sparkles, label: 'ข้อมูลศิลปิน', shortLabel: 'ศิลปิน' },
   { name: 'Customers', icon: Users, label: 'รายชื่อลูกค้า', shortLabel: 'ลูกค้า' },
   { name: 'Staff', icon: UserCheck, label: 'ข้อมูลพนักงาน', shortLabel: 'พนักงาน' },
   { name: 'Analytics', icon: BarChart2, label: 'วิเคราะห์ธุรกิจ', shortLabel: 'วิเคราะห์' },
-  { name: 'Settings', icon: Settings, label: 'ตั้งค่าระบบ', shortLabel: 'ตั้งค่า' },
+  { name: 'Settings', icon: SettingsIcon, label: 'ตั้งค่าระบบ', shortLabel: 'ตั้งค่า' },
 ];
 
 // --- URL Routing Helpers for Direct Page Links (e.g. /plans, /finance, /calendar) ---
@@ -193,7 +201,7 @@ const TAB_ROUTES = {
   Finance: 'finance',
   Quotations: 'quotations',
   Inventory: 'inventory',
-  Venues: 'venues',
+  Locations: 'location',
   Artists: 'artists',
   Customers: 'customers',
   Staff: 'staff',
@@ -211,11 +219,18 @@ const ROUTE_TO_TAB = {
   quotationsview: 'Quotations',
   quotations: 'Quotations',
   quote: 'Quotations',
+  pricing: 'Quotations',
+  'project-pricing': 'Quotations',
+  'calc-price': 'Quotations',
   inventoryview: 'Inventory',
   inventory: 'Inventory',
-  venuesview: 'Venues',
-  venues: 'Venues',
-  locations: 'Venues',
+  locationsview: 'Locations',
+  locationview: 'Locations',
+  location: 'Locations',
+  locations: 'Locations',
+  venuesview: 'Locations',
+  venues: 'Locations',
+  venue: 'Locations',
   artistsview: 'Artists',
   artists: 'Artists',
   customersview: 'Customers',
@@ -287,9 +302,23 @@ const App = () => {
   
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    if (typeof window !== 'undefined' && window.innerWidth >= 768 && window.innerWidth < 1024) {
+      return true;
+    }
     const saved = localStorage.getItem('nexus_sidebar_collapsed');
     return saved === 'true';
   });
+
+  // Auto-collapse sidebar on tablet viewports (768px - 1023px) to maximize content breathing room
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 768 && window.innerWidth < 1024) {
+        setIsSidebarCollapsed(true);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   
   // Profile Menu & Modal States
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -419,10 +448,12 @@ const App = () => {
   const [isSaving, setIsSaving] = useState(false); 
   const [visibleCount, setVisibleCount] = useState(20);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isScopeLoading, setIsScopeLoading] = useState(false);
+  const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false);
 
   const [isLoggedIn, setIsLoggedIn] = useState(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('nexus_auth') === 'true';
+      return localStorage.getItem('nexus_auth') === 'true' || sessionStorage.getItem('nexus_auth') === 'true';
     }
     return false;
   });
@@ -542,18 +573,102 @@ const App = () => {
 
   const [previewImage, setPreviewImage] = useState(null);
 
-  // Filters & Sort
-  const [sortConfig, setSortConfig] = useState({ key: 'id', direction: 'desc' });
-  const [searchTerm, setSearchTerm] = useState('');
-  const [dateFilterMode, setDateFilterMode] = useState('month'); 
-  const [filterDate, setFilterDate] = useState(() => {
+  // Filters & Sort (Decoupled per Tab for Plans, Finance, and Analytics)
+  const getNowYearMonth = () => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  }); 
-  const [filterDateRange, setFilterDateRange] = useState({ start: '', end: '' });
-  const [filterCategory, setFilterCategory] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [filterTransport, setFilterTransport] = useState('all');
+  };
+
+  const [plansFilter, setPlansFilter] = useState(() => ({
+    search: '',
+    dateMode: 'month',
+    date: getNowYearMonth(),
+    dateRange: { start: '', end: '' },
+    category: 'all',
+    status: 'all',
+    transport: 'all',
+    sortConfig: { key: 'id', direction: 'desc' }
+  }));
+
+  const [financeFilter, setFinanceFilter] = useState(() => ({
+    search: '',
+    dateMode: 'month',
+    date: getNowYearMonth(),
+    dateRange: { start: '', end: '' },
+    category: 'all',
+    status: 'all',
+    transport: 'all',
+    sortConfig: { key: 'id', direction: 'desc' }
+  }));
+
+  const [analyticsFilter, setAnalyticsFilter] = useState(() => ({
+    search: '',
+    dateMode: 'month',
+    date: getNowYearMonth(),
+    dateRange: { start: '', end: '' },
+    category: 'all',
+    status: 'all',
+    transport: 'all',
+    sortConfig: { key: 'id', direction: 'desc' }
+  }));
+
+  const getTabFilter = (tabKey) => {
+    if (tabKey === 'Analytics') return analyticsFilter;
+    if (tabKey === 'Finance') return financeFilter;
+    return plansFilter;
+  };
+
+  const updateTabFilter = (tabKey, updates) => {
+    const updater = (prev) => ({ ...prev, ...(typeof updates === 'function' ? updates(prev) : updates) });
+    if (tabKey === 'Analytics') {
+      setAnalyticsFilter(updater);
+    } else if (tabKey === 'Finance') {
+      setFinanceFilter(updater);
+    } else {
+      setPlansFilter(updater);
+    }
+  };
+
+  const resetTabFilter = (tabKey) => {
+    const defaultState = {
+      search: '',
+      dateMode: 'month',
+      date: getNowYearMonth(),
+      dateRange: { start: '', end: '' },
+      category: 'all',
+      status: 'all',
+      transport: 'all',
+      sortConfig: { key: 'id', direction: 'desc' }
+    };
+    if (tabKey === 'Analytics') {
+      setAnalyticsFilter(defaultState);
+    } else if (tabKey === 'Finance') {
+      setFinanceFilter(defaultState);
+    } else {
+      setPlansFilter(defaultState);
+    }
+  };
+
+  // Dynamic getters & setters dynamically mapped to the active tab
+  const activeTabFilter = getTabFilter(activeTab);
+  const searchTerm = activeTabFilter.search;
+  const dateFilterMode = activeTabFilter.dateMode;
+  const filterDate = activeTabFilter.date;
+  const filterDateRange = activeTabFilter.dateRange;
+  const filterCategory = activeTabFilter.category;
+  const filterStatus = activeTabFilter.status;
+  const filterTransport = activeTabFilter.transport;
+  const sortConfig = activeTabFilter.sortConfig;
+
+  const setSearchTerm = (s) => updateTabFilter(activeTab, { search: s });
+  const setDateFilterMode = (m) => updateTabFilter(activeTab, { dateMode: m });
+  const setFilterDate = (d) => updateTabFilter(activeTab, { date: d });
+  const setFilterDateRange = (r) => updateTabFilter(activeTab, { dateRange: r });
+  const setFilterCategory = (c) => updateTabFilter(activeTab, { category: c });
+  const setFilterStatus = (s) => updateTabFilter(activeTab, { status: s });
+  const setFilterTransport = (t) => updateTabFilter(activeTab, { transport: t });
+  const setSortConfig = (sc) => updateTabFilter(activeTab, { sortConfig: sc });
+  const resetFilters = () => resetTabFilter(activeTab);
 
   // Autocomplete Data
   const [savedArtists, setSavedArtists] = useState([]);
@@ -599,6 +714,8 @@ const App = () => {
   const [assetLoans, setAssetLoans] = useState([]);
   const [customerList, setCustomerList] = useState([]);
   const [artistList, setArtistList] = useState([]);
+  const [customerSummaryStats, setCustomerSummaryStats] = useState({});
+  const [artistSummaryStats, setArtistSummaryStats] = useState({});
   // Contextual Create Modal Controllers (Single Unified Header Button)
   const [isCreateCustomerOpen, setIsCreateCustomerOpen] = useState(false);
   const [isCreateArtistOpen, setIsCreateArtistOpen] = useState(false);
@@ -958,11 +1075,29 @@ const App = () => {
   }, [activeTab, searchTerm, dateFilterMode, filterDate, filterDateRange, filterCategory, filterStatus, filterTransport, sortConfig]);
 
   useEffect(() => {
-    const auth = localStorage.getItem('nexus_auth');
-    const savedProfile = localStorage.getItem('nexus_profile');
+    const auth = (typeof window !== 'undefined') && (
+      localStorage.getItem('nexus_auth') === 'true' || sessionStorage.getItem('nexus_auth') === 'true'
+    );
+    const savedProfile = (typeof window !== 'undefined') && (
+      localStorage.getItem('nexus_profile') || sessionStorage.getItem('nexus_profile')
+    );
     if (auth && savedProfile) {
         setIsLoggedIn(true);
-        setUserProfile(JSON.parse(savedProfile));
+        try {
+          const profile = JSON.parse(savedProfile);
+          setUserProfile(profile);
+
+          // 🛡️ ประสานงานเซสชัน Supabase Auth สำหรับ RLS สิทธิ์ authenticated
+          supabase.auth.getSession().then(({ data: { session } }) => {
+            if (!session && profile.username) {
+              const authEmail = (profile.email && profile.email.includes('@'))
+                ? profile.email.trim()
+                : `${(profile.username || '').toLowerCase()}@flower2u.internal`;
+              const authPass = sessionStorage.getItem('nexus_auth_pass') || '100000';
+              supabase.auth.signInWithPassword({ email: authEmail, password: authPass }).catch(() => {});
+            }
+          });
+        } catch (e) {}
     }
   }, []);
 
@@ -1094,14 +1229,23 @@ const App = () => {
     }
   }, [activeTab]);
 
-  // ฟังก์ชันกระจายข้อมูลโปรเจกต์ไปยัง State ที่เกี่ยวข้อง (รวมข้อมูลอย่างฉลาด ป้องกันทับข้อมูลเดือนอื่น)
-  const applyProjectsData = (projects) => {
-    if (!Array.isArray(projects) || projects.length === 0) return;
+  // ฟังก์ชันกระจายข้อมูลโปรเจกต์ไปยัง State ที่เกี่ยวข้อง (รวมข้อมูลอย่างฉลาด และกวาดล้างไอดีที่ถูกลบ)
+  const applyProjectsData = (projects, deletedIds = []) => {
+    if (!Array.isArray(projects)) return;
+
+    const deletedSet = new Set(Array.isArray(deletedIds) ? deletedIds : []);
 
     setAllActivities(prev => {
-      const map = new Map(prev.map(p => [p.id, p]));
+      const map = new Map();
+      prev.forEach(p => {
+        if (p && p.id && !deletedSet.has(p.id)) {
+          map.set(p.id, p);
+        }
+      });
       projects.forEach(p => {
-        if (p && p.id) map.set(p.id, p);
+        if (p && p.id && !deletedSet.has(p.id)) {
+          map.set(p.id, p);
+        }
       });
       const uniqueItems = Array.from(map.values());
 
@@ -1146,13 +1290,13 @@ const App = () => {
     if (!isSilent) setIsLoading(true);
     
     try {
-      // 1. ดึงข้อมูลจาก Local-First Engine (IndexedDB + Supabase)
-      const data = await loadProjectsLocalFirst((projects) => {
-        applyProjectsData(projects);
-      });
-      if (Array.isArray(data) && data.length > 0) {
-        applyProjectsData(data);
-      }
+      // 1. ดึงสถิติภาพรวมจาก Server Pushdown (Zero-Egress)
+      fetchServerProjectStats().then(s => { if (s) setServerStats(s); }).catch(() => {});
+
+      // ซิงก์กวาดล้างรายการที่ถูกลบจากเครื่องอื่น (Tombstone Sync) ทันที
+      syncDeletedRecords((deletedIds) => {
+        applyProjectsData([], deletedIds);
+      }).catch(() => {});
 
       // 2. ดึงข้อมูลสถานที่จัดส่งแบบ Local-First (IndexedDB + Supabase)
       loadLocationsLocalFirst((locations) => {
@@ -1167,6 +1311,10 @@ const App = () => {
       });
       loadArtistsLocalFirst((arts) => {
         if (Array.isArray(arts) && arts.length > 0) setArtistList(arts);
+      });
+      loadArtistsAndCustomersSummaryStats(({ artistStats, customerStats }) => {
+        if (artistStats) setArtistSummaryStats(artistStats);
+        if (customerStats) setCustomerSummaryStats(customerStats);
       });
       loadInventoryLocalFirst((inv) => {
         if (Array.isArray(inv) && inv.length > 0) setInventoryItems(inv);
@@ -1226,6 +1374,47 @@ const App = () => {
           }
         } catch (bcErr) {}
 
+        // 🛡️ SECURITY DIRECTIVE: ตรวจจับสัญญาณเตะพนักงานที่ถูกระงับ/แบนทันทีแบบ Real-Time (Cross-Tab)
+        let kickBc = null;
+        try {
+          if (typeof BroadcastChannel !== 'undefined') {
+            kickBc = new BroadcastChannel('flower2u_staff_kick');
+            kickBc.onmessage = async (event) => {
+              if (event.data?.type === 'FORCE_KICK_BANNED') {
+                const targetStaffId = event.data?.staffId;
+                const targetUsername = (event.data?.username || '').toLowerCase();
+                const curStaffCode = userProfile?.staffCode || userProfile?.id;
+                const curUsername = (userProfile?.username || '').toLowerCase();
+                if ((targetStaffId && String(targetStaffId) === String(curStaffCode)) ||
+                    (targetUsername && targetUsername === curUsername)) {
+                  console.warn('🚨 Account suspended by Admin. Purging all storage and kicking immediately.');
+                  await handleLogout(event.data?.reason || 'บัญชีของคุณถูกระงับการใช้งานโดยผู้ดูแลระบบ');
+                }
+              }
+            };
+          }
+        } catch (bcErr) {}
+
+        // 🛡️ SECURITY DIRECTIVE: ตรวจจับสัญญาณแบนพนักงานข้ามเครือข่าย/ข้ามเครื่องผ่าน Supabase Realtime
+        const unsubStaff = subscribeToStaffRealtime(async (updatedStaff) => {
+          if (!updatedStaff) return;
+          const curStaffCode = userProfile?.staffCode || userProfile?.id;
+          const curUsername = (userProfile?.username || '').toLowerCase();
+          const targetStaffCode = updatedStaff.staff_code || updatedStaff.id;
+          const targetUsername = (updatedStaff.username || '').toLowerCase();
+          
+          if ((targetStaffCode && String(targetStaffCode) === String(curStaffCode)) ||
+              (targetUsername && targetUsername === curUsername)) {
+            const isSuspended = updatedStaff.is_banned_permanent || 
+                                updatedStaff.is_active === false || 
+                                (updatedStaff.banned_until && new Date(updatedStaff.banned_until) > new Date());
+            if (isSuspended) {
+              console.warn('🚨 Realtime ban detected from server. Purging all storage and kicking immediately.');
+              await handleLogout('บัญชีของคุณถูกระงับการใช้งานโดยผู้ดูแลระบบ');
+            }
+          }
+        });
+
         const onStorage = (e) => {
           if (e.key === 'nexus_shop_info' && e.newValue) {
             try {
@@ -1245,6 +1434,9 @@ const App = () => {
         const onFocus = () => {
             fetchProjects(true); // Silent fetch เช็คส่วนต่างเบื้องหลัง
             fetchSettings(false); // เช็คการตั้งค่าเบื้องหลัง
+            syncDeletedRecords((deletedIds) => {
+              applyProjectsData([], deletedIds);
+            }).catch(() => {});
         };
 
         window.addEventListener('focus', onFocus);
@@ -1253,21 +1445,121 @@ const App = () => {
           window.removeEventListener('focus', onFocus);
           window.removeEventListener('storage', onStorage);
           if (bc) bc.close();
+          if (kickBc) kickBc.close();
+          if (typeof unsubStaff === 'function') unsubStaff();
           if (typeof unsubscribe === 'function') unsubscribe();
           if (typeof unsubSettings === 'function') unsubSettings();
         };
     }
   }, [isLoggedIn, trackingId, quotationId]);
 
-  // เมื่อเปลี่ยนเดือนหรือโหมดฟิลเตอร์วันที่ ให้ดึงข้อมูลเฉพาะเดือนนั้นทันทีแบบ Zero-Egress
+  // 🛡️ SECURITY DIRECTIVE: เมื่อไม่อยู่ในสถานะ Login ให้ล้าง IndexedDB ในเครื่องทันที
   useEffect(() => {
-    if (dateFilterMode === 'month' && filterDate && /^\d{4}-\d{2}$/.test(filterDate)) {
-      loadProjectsByMonth(filterDate, (projects) => {
+    if (!isLoggedIn && !trackingId && !quotationId) {
+      clearAllLocalDatabase().catch(() => {});
+    }
+  }, [isLoggedIn, trackingId, quotationId]);
+
+  // 🛡️ SECURITY SHIELD: ป้องกันการกดเปิด DevTools และคลิกขวาตรวจสอบโค้ดในหน้า Login
+  useEffect(() => {
+    if (isLoggedIn) return;
+    
+    const handleKeyDown = (e) => {
+      // ดัก F12
+      if (e.key === 'F12') {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+      // ดัก Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+Shift+C
+      if (e.ctrlKey && e.shiftKey && ['I', 'J', 'C', 'i', 'j', 'c'].includes(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+      // ดัก Ctrl+U (View Source)
+      if (e.ctrlKey && (e.key === 'u' || e.key === 'U')) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+    };
+
+    const handleContextMenu = (e) => {
+      e.preventDefault(); // ป้องกันการกด Inspect ผ่านคลิกขวา
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('contextmenu', handleContextMenu, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('contextmenu', handleContextMenu, true);
+    };
+  }, [isLoggedIn]);
+
+  // 🎯 ZERO-EGRESS SCOPED LOADERS แยกอิสระตามแต่ละแท็บ (Plans, Finance, Analytics)
+  // 1. แท็บแผนงาน (Plans): ดึงเฉพาะข้อมูลของเดือน/วันที่หน้า Plans เลือก (เฉพาะเมื่อ Login แล้ว)
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    setIsScopeLoading(true);
+    loadProjectsScoped({
+      mode: plansFilter.dateMode,
+      date: plansFilter.date,
+      range: plansFilter.dateRange
+    }, (projects, deletedIds) => {
+      applyProjectsData(projects, deletedIds);
+      setIsScopeLoading(false);
+    }).finally(() => {
+      setIsScopeLoading(false);
+    });
+  }, [isLoggedIn, plansFilter.dateMode, plansFilter.date, plansFilter.dateRange?.start, plansFilter.dateRange?.end]);
+
+  // 2. แท็บการเงิน (Finance): ดึงเฉพาะข้อมูลของเดือน/วันที่หน้า Finance เลือกพร้อมรายละเอียดตารางลูก
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    if (activeTab === 'Finance' || visitedTabs.has('Finance')) {
+      loadProjectsScoped({
+        mode: financeFilter.dateMode,
+        date: financeFilter.date,
+        range: financeFilter.dateRange,
+        includeDetails: true
+      }, (projects) => {
         applyProjectsData(projects);
       });
     }
-  }, [dateFilterMode, filterDate]);
+  }, [isLoggedIn, activeTab, visitedTabs, financeFilter.dateMode, financeFilter.date, financeFilter.dateRange?.start, financeFilter.dateRange?.end]);
 
+  // 3. แท็บวิเคราะห์ (Analytics): ดึงเฉพาะข้อมูลเดือนที่หน้า Analytics เลือก + ยิง Server Pushdown RPC
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    if (activeTab === 'Analytics' || visitedTabs.has('Analytics')) {
+      setIsAnalyticsLoading(true);
+      setServerAnalytics(null);
+
+      const scopedPromise = loadProjectsScoped({
+        mode: analyticsFilter.dateMode,
+        date: analyticsFilter.date,
+        range: analyticsFilter.dateRange,
+        includeDetails: true
+      }, (projects) => {
+        applyProjectsData(projects);
+      });
+
+      const serverPromise = fetchServerAnalytics({
+        mode: analyticsFilter.dateMode,
+        date: analyticsFilter.date,
+        range: analyticsFilter.dateRange,
+        category: analyticsFilter.category !== 'all' ? analyticsFilter.category : null,
+        dealStatus: analyticsFilter.status !== 'all' ? analyticsFilter.status : null
+      }).then(res => {
+        if (res) setServerAnalytics(res);
+      }).catch(err => console.warn('Server analytics RPC notice:', err));
+
+      Promise.allSettled([scopedPromise, serverPromise]).finally(() => {
+        setIsAnalyticsLoading(false);
+      });
+    }
+  }, [isLoggedIn, activeTab, visitedTabs, analyticsFilter.dateMode, analyticsFilter.date, analyticsFilter.dateRange?.start, analyticsFilter.dateRange?.end, analyticsFilter.category, analyticsFilter.status]);
   useEffect(() => {
       if ((trackingId || quotationId) && allActivities.length > 0) {
           const targetToken = trackingId || quotationId;
@@ -1437,31 +1729,79 @@ const App = () => {
       setIsLoading(true);
       setLoginError('');
       
-      const matchUser = (u) => {
-          const inputLower = (user || '').trim().toLowerCase();
-          const matchUName = u.username && u.username.toLowerCase() === inputLower;
-          const matchCode = u.staffCode && String(u.staffCode).toLowerCase() === inputLower;
-          return (matchUName || matchCode) && u.password === pass;
-      };
+      const inputTrimmed = (user || '').trim();
+      const inputLower = inputTrimmed.toLowerCase();
 
-      let foundUser = authorizedUsers.find(matchUser);
+      // 1. ตรวจสอบสิทธิ์ผ่าน Server-Side RPC บน Supabase ก่อนเป็นอันดับแรก (ปลอดภัย 100%)
+      let foundUser = null;
+      try {
+        const client = getActiveClient();
+        const { data: rpcRes, error: rpcErr } = await client.rpc('verify_staff_login', {
+          p_identifier: inputTrimmed,
+          p_password: String(pass || '')
+        });
+        if (!rpcErr && rpcRes && rpcRes.success && rpcRes.user) {
+          foundUser = {
+            name: rpcRes.user.name,
+            role: rpcRes.user.role || 'admin',
+            roleKey: rpcRes.user.role || 'admin',
+            roleCode: rpcRes.user.roleCode || '11',
+            roleLabel: rpcRes.user.roleLabel || 'ผู้ดูแลระบบ',
+            allowedPages: rpcRes.user.allowedPages || [],
+            email: rpcRes.user.email || '',
+            phone: rpcRes.user.phone || '',
+            username: rpcRes.user.username,
+            staffCode: rpcRes.user.staffCode,
+            image: rpcRes.user.image || ''
+          };
+        }
+      } catch (rpcEx) {
+        console.warn('RPC verify_staff_login notice:', rpcEx);
+      }
 
+      // 2. หาก RPC ไม่พบ ให้ตรวจสอบกับ authorizedUsers / credentials เดิม
       if (!foundUser) {
-          try {
-              const supaSettings = await loadSettingsFromSupabase();
-              if (supaSettings && supaSettings.appCredentials && supaSettings.appCredentials.length > 0) {
-                  const latestUsers = supaSettings.appCredentials;
-                  setAuthorizedUsers(latestUsers);
-                  localStorage.setItem('nexus_authorized_users', JSON.stringify(latestUsers));
-                  
-                  foundUser = latestUsers.find(matchUser);
-              }
-          } catch (e) {
-              console.error("Login verification error via Supabase:", e);
-          }
+        const matchUser = (u) => {
+            const matchUName = u.username && u.username.toLowerCase() === inputLower;
+            const matchId = (u.staffCode || u.id) && String(u.staffCode || u.id).toLowerCase() === inputLower;
+            return (matchUName || matchId) && String(u.password) === String(pass);
+        };
+
+        foundUser = authorizedUsers.find(matchUser);
+
+        if (!foundUser) {
+            try {
+                const supaSettings = await loadSettingsFromSupabase();
+                if (supaSettings && supaSettings.appCredentials && supaSettings.appCredentials.length > 0) {
+                    const latestUsers = supaSettings.appCredentials;
+                    setAuthorizedUsers(latestUsers);
+                    localStorage.setItem('nexus_authorized_users', JSON.stringify(latestUsers));
+                    foundUser = latestUsers.find(matchUser);
+                }
+            } catch (e) {
+                console.error("Login verification error via Supabase:", e);
+            }
+        }
       }
 
       if (foundUser) {
+          // 🛡️ SECURITY DIRECTIVE: ล้างแคชเก่าใน IndexedDB ก่อนเริ่มเซสชันใหม่
+          await clearAllLocalDatabase();
+          await db.open().catch(() => {});
+
+          // เข้าสู่ระบบ Supabase Auth เพื่อรับ Token สิทธิ์ authenticated สำหรับ RLS
+          try {
+            const authEmail = (foundUser.email && foundUser.email.includes('@'))
+              ? foundUser.email.trim()
+              : `${(foundUser.username || '').toLowerCase()}@flower2u.internal`;
+            const rawPass = String(pass || '123456');
+            const authPass = rawPass.length >= 6 ? rawPass : rawPass.padEnd(6, '0');
+            sessionStorage.setItem('nexus_auth_pass', authPass);
+            await supabase.auth.signInWithPassword({ email: authEmail, password: authPass });
+          } catch (e) {
+            console.warn('Supabase Auth sign-in notice:', e?.message);
+          }
+
           setIsLoggedIn(true);
           setUserProfile({
               name: foundUser.name,
@@ -1469,33 +1809,32 @@ const App = () => {
               email: foundUser.email,
               phone: foundUser.phone,
               username: foundUser.username,
-              image: foundUser.image 
+              image: foundUser.image,
+              staffCode: foundUser.staffCode,
+              allowedPages: foundUser.allowedPages
           });
 
           const targetTab = getTabFromUrl() || activeTab || 'Calendar';
           setActiveTab(targetTab); 
 
+          const profileJson = JSON.stringify({
+              name: foundUser.name,
+              role: foundUser.role,
+              email: foundUser.email,
+              phone: foundUser.phone,
+              username: foundUser.username,
+              image: foundUser.image,
+              staffCode: foundUser.staffCode,
+              allowedPages: foundUser.allowedPages
+          });
+
           if (remember) {
               localStorage.setItem('nexus_auth', 'true');
-              localStorage.setItem('nexus_profile', JSON.stringify({
-                  name: foundUser.name,
-                  role: foundUser.role,
-                  email: foundUser.email,
-                  phone: foundUser.phone,
-                  username: foundUser.username,
-                  image: foundUser.image
-              }));
+              localStorage.setItem('nexus_profile', profileJson);
+          } else {
+              sessionStorage.setItem('nexus_auth', 'true');
+              sessionStorage.setItem('nexus_profile', profileJson);
           }
-
-          // Attempt Supabase Auth session sign-in in background
-          try {
-            const authEmail = (foundUser.email && foundUser.email.includes('@'))
-              ? foundUser.email.trim()
-              : `${(foundUser.username || '').toLowerCase()}@flower2u.internal`;
-            const rawPass = String(pass || '123456');
-            const authPass = rawPass.length >= 6 ? rawPass : rawPass.padEnd(6, '0');
-            supabase.auth.signInWithPassword({ email: authEmail, password: authPass }).catch(() => {});
-          } catch (e) {}
 
           showToast(`ยินดีต้อนรับคุณ ${foundUser.name}`, "success");
       } else {
@@ -1505,19 +1844,41 @@ const App = () => {
       setIsLoading(false);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async (kickReason = "ออกจากระบบแล้ว") => {
       try {
-        supabase.auth.signOut().catch(() => {});
+        await supabase.auth.signOut();
       } catch (e) {}
       setIsLoggedIn(false);
       setUserProfile(null);
       handleSelectTab('Calendar');
-      if (typeof window !== 'undefined') {
-        window.history.pushState(null, '', getBasePath() || '/');
-      }
+
       localStorage.removeItem('nexus_auth');
       localStorage.removeItem('nexus_profile');
-      showToast("ออกจากระบบแล้ว");
+      sessionStorage.removeItem('nexus_auth');
+      sessionStorage.removeItem('nexus_profile');
+
+      // 🛡️ SECURITY DIRECTIVE: ล้างข้อมูลแคช IndexedDB ทั้งหมด และทำลายฐานข้อมูลทิ้งทันทีเมื่อออกจากระบบ
+      try {
+        await clearAllLocalDatabase();
+      } catch (e) {}
+
+      // ล้างข้อมูลในหน่วยความจำ Memory State ทั้งหมดทันที
+      setAllActivities([]);
+      setCustomerList([]);
+      setArtistList([]);
+      setCustomerSummaryStats({});
+      setArtistSummaryStats({});
+      setInventoryItems([]);
+      setAssetLoans([]);
+      setDeliveryLocations([]);
+      setServerAnalytics(null);
+      setServerStats(null);
+      showToast(kickReason);
+
+      // 🛡️ HARD RELOAD (Full Document Navigation): บังคับรีโหลดเพื่อเคลียร์แคช DevTools ในหน่วยความจำ 100%
+      setTimeout(() => {
+        window.location.replace(getBasePath() || '/');
+      }, 150);
   };
 
   const showToast = (message, type = 'success') => {
@@ -2108,10 +2469,12 @@ const App = () => {
     }));
   };
 
-  const filteredAndSortedActivities = useMemo(() => {
-    let items = allActivities.filter(item => {
-      const searchLower = searchTerm.toLowerCase();
-      const matchesSearch =
+  // Pure filtering and sorting function that can run against any tab filter state
+  const filterAndSortActivities = (activities, filter) => {
+    if (!Array.isArray(activities)) return [];
+    let items = activities.filter(item => {
+      const searchLower = (filter.search || '').toLowerCase();
+      const matchesSearch = !searchLower ||
         (item.name || '').toLowerCase().includes(searchLower) ||
         (item.id || '').toLowerCase().includes(searchLower) ||
         (item.artist || '').toLowerCase().includes(searchLower) ||
@@ -2119,7 +2482,7 @@ const App = () => {
         (item.note && item.note.toLowerCase().includes(searchLower));
 
       let matchesDate = true;
-      if (dateFilterMode !== 'all') {
+      if (filter.dateMode !== 'all') {
         const candidates = [
           item.rawDeliveryStart,
           item.rawDateTime,
@@ -2159,17 +2522,17 @@ const App = () => {
 
         if (!itemDateStr) {
           matchesDate = false;
-        } else if (dateFilterMode === 'date' && filterDate) {
-          matchesDate = itemDateStr === filterDate;
-        } else if (dateFilterMode === 'month' && filterDate) {
-          matchesDate = itemDateStr.startsWith(filterDate);
-        } else if (dateFilterMode === 'year' && filterDate) {
-          matchesDate = itemDateStr.startsWith(filterDate);
-        } else if (dateFilterMode === 'range' && filterDateRange.start && filterDateRange.end) {
-          matchesDate = itemDateStr >= filterDateRange.start && itemDateStr <= filterDateRange.end;
-        } else if (dateFilterMode === 'week' && filterDate) {
+        } else if (filter.dateMode === 'date' && filter.date) {
+          matchesDate = itemDateStr === filter.date;
+        } else if (filter.dateMode === 'month' && filter.date) {
+          matchesDate = itemDateStr.startsWith(filter.date);
+        } else if (filter.dateMode === 'year' && filter.date) {
+          matchesDate = itemDateStr.startsWith(filter.date);
+        } else if (filter.dateMode === 'range' && filter.dateRange?.start && filter.dateRange?.end) {
+          matchesDate = itemDateStr >= filter.dateRange.start && itemDateStr <= filter.dateRange.end;
+        } else if (filter.dateMode === 'week' && filter.date) {
           const itemDate = new Date(itemDateStr);
-          const weekStart = new Date(filterDate);
+          const weekStart = new Date(filter.date);
           const weekEnd = new Date(weekStart);
           weekEnd.setDate(weekStart.getDate() + 6);
           weekStart.setHours(0, 0, 0, 0);
@@ -2178,30 +2541,38 @@ const App = () => {
           matchesDate = itemDate >= weekStart && itemDate <= weekEnd;
         }
       }
-      const matchesCategory = filterCategory === 'all' || item.category === filterCategory;
-      const matchesStatus = filterStatus === 'all' || item.dealStatus === filterStatus;
+
+      const matchesCategory = filter.category === 'all' || item.category === filter.category;
+      const matchesStatus = filter.status === 'all' || item.dealStatus === filter.status;
       
       let matchesTransport = true;
-      if (filterTransport === 'active_only') {
+      if (filter.transport === 'active_only') {
           matchesTransport = 
             item.transportStatus !== 'delivered' && 
             item.transportStatus !== 'completed' && 
             item.transportStatus !== 'issue' && 
             item.transportStatus !== 'cancelled';
       } else {
-          matchesTransport = filterTransport === 'all' || item.transportStatus === filterTransport;
+          matchesTransport = filter.transport === 'all' || item.transportStatus === filter.transport;
       }
 
       return matchesSearch && matchesDate && matchesCategory && matchesStatus && matchesTransport;
     });
 
+    const sortConfig = filter.sortConfig || { key: 'id', direction: 'desc' };
     if (sortConfig.key !== null) {
       items.sort((a, b) => {
         let aValue = a[sortConfig.key];
         let bValue = b[sortConfig.key];
         
-        if (!aValue) aValue = '';
-        if (!bValue) bValue = '';
+        if (sortConfig.key === 'wage' || sortConfig.key === 'totalExpenses' || sortConfig.key === 'totalRevenue') {
+          const numA = Number(aValue) || 0;
+          const numB = Number(bValue) || 0;
+          return sortConfig.direction === 'asc' ? numA - numB : numB - numA;
+        }
+
+        if (aValue === null || aValue === undefined) aValue = '';
+        if (bValue === null || bValue === undefined) bValue = '';
 
         if (typeof aValue === 'string' && typeof bValue === 'string') {
               return sortConfig.direction === 'asc'
@@ -2219,68 +2590,79 @@ const App = () => {
       });
     }
     return items;
-  }, [allActivities, sortConfig, searchTerm, filterDate, filterDateRange, dateFilterMode, filterCategory, filterStatus, filterTransport]);
+  };
+
+  // Dedicated activity streams per tab
+  const plansActivities = useMemo(() => filterAndSortActivities(allActivities, plansFilter), [allActivities, plansFilter]);
+  const financeActivities = useMemo(() => filterAndSortActivities(allActivities, financeFilter), [allActivities, financeFilter]);
+  const analyticsActivities = useMemo(() => filterAndSortActivities(allActivities, analyticsFilter), [allActivities, analyticsFilter]);
+  const filteredAndSortedActivities = plansActivities;
 
   const [serverAnalytics, setServerAnalytics] = useState(null);
-
-  useEffect(() => {
-    if (activeTab === 'Analytics') {
-      fetchServerAnalytics({
-        startDate: filterDateRange?.start || null,
-        endDate: filterDateRange?.end || null,
-        category: filterCategory !== 'all' ? filterCategory : null,
-        dealStatus: filterStatus !== 'all' ? filterStatus : null
-      }).then(res => {
-        if (res) setServerAnalytics(res);
-      }).catch(err => console.warn('Server analytics RPC notice:', err));
-    }
-  }, [activeTab, filterDateRange, filterCategory, filterStatus]);
+  const [serverStats, setServerStats] = useState(null);
 
   const analyticsData = useMemo(() => {
-    // [MODIFIED] Calculate financials ONLY for projects with dealStatus === 'completed'
-    // This now checks both the direct value 'completed' AND custom statuses with type 'completed'
-    const financialItems = filteredAndSortedActivities.filter(item => {
-        // 1. Check if it matches the system default 'completed' value
+    // คำนวณเฉพาะโปรเจกต์ที่ปิดการขายสำเร็จ (completed) จาก analyticsActivities ที่ถูกกรองตามเดือนของหน้าวิเคราะห์
+    const financialItems = analyticsActivities.filter(item => {
         if (item.dealStatus === 'completed') return true;
-        
-        // 2. Check if it matches a custom status that has the type 'completed'
         const statusDef = dealStatuses.find(s => s.value === item.dealStatus);
         if (statusDef && statusDef.type === 'completed') return true;
-        
         return false;
     });
 
-    const currentRevenue = financialItems.reduce((sum, item) => sum + (item.wage || 0), 0);
+    const currentRevenue = financialItems.reduce((sum, item) => {
+        const qSum = item.quotationItems && item.quotationItems.length > 0
+          ? item.quotationItems.reduce((s, q) => s + (parseFloat(q.price) || ((parseFloat(q.unitPrice) || 0) * (parseFloat(q.quantity) || 1)) || 0), 0)
+          : 0;
+        return sum + (qSum > 0 ? qSum : (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0));
+    }, 0);
     
     const currentSupport = financialItems.reduce((sum, item) => {
-        const itemSupport = item.customerSupport ? item.customerSupport.reduce((s, e) => s + (parseFloat(e.price) || 0), 0) : 0;
+        const calcSupport = item.customerSupport && item.customerSupport.length > 0
+          ? item.customerSupport.reduce((s, e) => s + (parseFloat(e.price) || ((parseFloat(e.denomination || e.unitPrice) || 0) * (parseFloat(e.quantity) || 1)) || 0), 0)
+          : 0;
+        const itemSupport = calcSupport > 0 ? calcSupport : (parseFloat(item.customerSupportTotal || item.customer_support_total) || 0);
         return sum + itemSupport;
     }, 0);
 
     const currentCost = financialItems.reduce((sum, item) => {
-        const itemCost = item.expenses ? item.expenses.reduce((s, e) => s + (parseFloat(e.price) || 0), 0) : 0;
+        const calcCost = item.expenses && item.expenses.length > 0
+          ? item.expenses.reduce((s, e) => s + (parseFloat(e.price) || ((parseFloat(e.unitPrice) || 0) * (parseFloat(e.quantity) || 1)) || 0), 0)
+          : 0;
+        const itemCost = calcCost > 0 ? calcCost : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
         return sum + itemCost;
     }, 0);
     
     const currentProfit = currentRevenue - currentCost; 
 
-    // Counts remain based on ALL filtered items (as requested)
-    const totalProjects = filteredAndSortedActivities.length;
-    const completedProjects = filteredAndSortedActivities.filter(a => a.dealStatus === 'confirmed' && a.transportStatus === 'delivered').length;
-    const activeProjects = filteredAndSortedActivities.filter(a => a.dealStatus === 'confirmed' && a.transportStatus !== 'delivered' && a.transportStatus !== 'issue').length;
-    const pendingProjects = filteredAndSortedActivities.filter(a => a.dealStatus === 'pending').length;
-    const issueProjects = filteredAndSortedActivities.filter(a => a.dealStatus === 'cancelled' || a.transportStatus === 'issue').length;
-    const declinedProjects = filteredAndSortedActivities.filter(a => a.dealStatus === 'declined').length;
+    // Counts remain based on ALL filtered items in analyticsActivities
+    const totalProjects = analyticsActivities.length;
+    const completedProjects = analyticsActivities.filter(a => a.dealStatus === 'confirmed' && a.transportStatus === 'delivered').length;
+    const activeProjects = analyticsActivities.filter(a => a.dealStatus === 'confirmed' && a.transportStatus !== 'delivered' && a.transportStatus !== 'issue').length;
+    const pendingProjects = analyticsActivities.filter(a => a.dealStatus === 'pending').length;
+    const issueProjects = analyticsActivities.filter(a => a.dealStatus === 'cancelled' || a.transportStatus === 'issue').length;
+    const declinedProjects = analyticsActivities.filter(a => a.dealStatus === 'declined').length;
     
     // Expense Breakdown (Financial -> Use financialItems)
     const expenseBreakdown = {};
     financialItems.forEach(item => {
-        if (item.expenses) {
-        item.expenses.forEach(ex => {
-            if (ex.category) {
-            expenseBreakdown[ex.category] = (expenseBreakdown[ex.category] || 0) + parseFloat(ex.price);
+        let hasItemized = false;
+        if (item.expenses && item.expenses.length > 0) {
+          item.expenses.forEach(ex => {
+            const val = parseFloat(ex.price) || ((parseFloat(ex.unitPrice) || 0) * (parseFloat(ex.quantity) || 1)) || 0;
+            if (val > 0) {
+              const cat = ex.category || 'ค่าใช้จ่ายทั่วไป';
+              expenseBreakdown[cat] = (expenseBreakdown[cat] || 0) + val;
+              hasItemized = true;
             }
-        });
+          });
+        }
+        if (!hasItemized) {
+          const fallbackCost = parseFloat(item.totalExpenses || item.total_expenses) || 0;
+          if (fallbackCost > 0) {
+            const cat = item.category ? `ต้นทุน (${item.category})` : 'ต้นทุน/ค่าใช้จ่ายงาน';
+            expenseBreakdown[cat] = (expenseBreakdown[cat] || 0) + fallbackCost;
+          }
         }
     });
     const allExpensesList = Object.entries(expenseBreakdown)
@@ -2310,9 +2692,9 @@ const App = () => {
         .sort((a, b) => b.amount - a.amount);
     const maxCustomerRevenue = Math.max(...topCustomers.map(p => p.amount), 1);
     
-    // Customer Project Counts (Count -> Use filteredAndSortedActivities)
+    // Customer Project Counts (Count -> Use analyticsActivities)
     const customerProjectCounts = {};
-    filteredAndSortedActivities.forEach(item => {
+    analyticsActivities.forEach(item => {
         if (item.dealStatus !== 'cancelled' && item.transportStatus !== 'issue') {
             const name = item.customer || 'Unknown';
             customerProjectCounts[name] = (customerProjectCounts[name] || 0) + 1;
@@ -2323,10 +2705,12 @@ const App = () => {
         .sort((a, b) => b.count - a.count);
     const maxCustomerProjectCount = Math.max(...topCustomerByProjects.map(p => p.count), 1);
 
-    // Category Stats (Count -> Use filteredAndSortedActivities)
+    // Category Stats (Count -> Use analyticsActivities)
     const categoryStats = {};
-    filteredAndSortedActivities.forEach(item => {
-        categoryStats[item.category] = (categoryStats[item.category] || 0) + 1;
+    analyticsActivities.forEach(item => {
+        if (item.category) {
+          categoryStats[item.category] = (categoryStats[item.category] || 0) + 1;
+        }
     });
     const categoryData = Object.entries(categoryStats).map(([name, count]) => ({ name, count }));
 
@@ -2343,7 +2727,7 @@ const App = () => {
       50: { count: 0, amount: 0 },
       20: { count: 0, amount: 0 }
     };
-    filteredAndSortedActivities.forEach(item => {
+    analyticsActivities.forEach(item => {
       if (item.customerSupport && Array.isArray(item.customerSupport)) {
         item.customerSupport.forEach(cs => {
           const denom = Number(cs.denomination);
@@ -2359,7 +2743,7 @@ const App = () => {
 
     // Top Venues Analysis
     const venueStats = {};
-    filteredAndSortedActivities.forEach(item => {
+    analyticsActivities.forEach(item => {
       const loc = (item.location || '').trim();
       if (loc && loc !== '-' && loc.length > 1) {
         if (!venueStats[loc]) {
@@ -2377,13 +2761,17 @@ const App = () => {
     // Low Margin Projects (Margin < 40%)
     const lowMarginProjects = financialItems.filter(item => {
       const rev = item.wage || 0;
-      const cost = item.expenses ? item.expenses.reduce((s, e) => s + (parseFloat(e.price) || 0), 0) : 0;
+      const cost = item.expenses && item.expenses.length > 0
+        ? item.expenses.reduce((s, e) => s + (parseFloat(e.price) || 0), 0)
+        : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
       if (rev <= 0) return false;
       const margin = ((rev - cost) / rev) * 100;
       return margin < 40;
     }).map(item => {
       const rev = item.wage || 0;
-      const cost = item.expenses ? item.expenses.reduce((s, e) => s + (parseFloat(e.price) || 0), 0) : 0;
+      const cost = item.expenses && item.expenses.length > 0
+        ? item.expenses.reduce((s, e) => s + (parseFloat(e.price) || 0), 0)
+        : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
       return {
         ...item,
         revenue: rev,
@@ -2394,32 +2782,44 @@ const App = () => {
     }).sort((a, b) => a.marginPct - b.marginPct).slice(0, 8);
 
     if (serverAnalytics?.totals) {
+      const effExpenses = serverAnalytics.expenses && serverAnalytics.expenses.length > 0 ? serverAnalytics.expenses : allExpensesList;
+      const effMaxExpense = Math.max(...effExpenses.map(e => e.amount || 0), 1);
+
+      const effPerformers = serverAnalytics.top_artists && serverAnalytics.top_artists.length > 0 ? serverAnalytics.top_artists : topPerformers;
+      const effMaxPerformerRevenue = Math.max(...effPerformers.map(p => p.amount || 0), 1);
+
+      const effCustomers = serverAnalytics.top_customers && serverAnalytics.top_customers.length > 0 ? serverAnalytics.top_customers : topCustomers;
+      const effMaxCustomerRevenue = Math.max(...effCustomers.map(p => p.amount || 0), 1);
+
+      const effVenues = serverAnalytics.top_venues && serverAnalytics.top_venues.length > 0 ? serverAnalytics.top_venues : topVenues;
+      const effMaxVenueCount = Math.max(...effVenues.map(v => v.count || 0), 1);
+
       return {
-        currentRevenue: serverAnalytics.totals.total_revenue || currentRevenue,
-        currentSupport: serverAnalytics.totals.total_customer_support || currentSupport,
-        currentCost: serverAnalytics.totals.total_expenses || currentCost,
-        currentProfit: serverAnalytics.totals.total_net_profit || currentProfit,
-        avgOrderValue: serverAnalytics.totals.avg_order_value || avgOrderValue,
-        avgSupportValue: serverAnalytics.totals.avg_support_value || avgSupportValue,
-        netMarginPercent: serverAnalytics.totals.net_margin_percent || netMarginPercent,
+        currentRevenue: serverAnalytics.totals.total_revenue ?? currentRevenue,
+        currentSupport: serverAnalytics.totals.total_customer_support ?? currentSupport,
+        currentCost: serverAnalytics.totals.total_expenses ?? currentCost,
+        currentProfit: serverAnalytics.totals.total_net_profit ?? currentProfit,
+        avgOrderValue: serverAnalytics.totals.avg_order_value ?? avgOrderValue,
+        avgSupportValue: serverAnalytics.totals.avg_support_value ?? avgSupportValue,
+        netMarginPercent: serverAnalytics.totals.net_margin_percent ?? netMarginPercent,
         totalProjects: serverAnalytics.status_counts?.total ?? totalProjects,
         completedProjects: serverAnalytics.status_counts?.completed ?? completedProjects,
         activeProjects: serverAnalytics.status_counts?.active ?? activeProjects,
         pendingProjects: serverAnalytics.status_counts?.pending ?? pendingProjects,
         issueProjects: serverAnalytics.status_counts?.issue ?? issueProjects,
         declinedProjects: serverAnalytics.status_counts?.declined ?? declinedProjects,
-        allExpensesList: serverAnalytics.expenses && serverAnalytics.expenses.length > 0 ? serverAnalytics.expenses : allExpensesList,
-        maxExpense,
-        topPerformers: serverAnalytics.top_artists && serverAnalytics.top_artists.length > 0 ? serverAnalytics.top_artists : topPerformers,
-        maxPerformerRevenue,
-        topCustomers: serverAnalytics.top_customers && serverAnalytics.top_customers.length > 0 ? serverAnalytics.top_customers : topCustomers,
-        maxCustomerRevenue,
+        allExpensesList: effExpenses,
+        maxExpense: effMaxExpense,
+        topPerformers: effPerformers,
+        maxPerformerRevenue: effMaxPerformerRevenue,
+        topCustomers: effCustomers,
+        maxCustomerRevenue: effMaxCustomerRevenue,
         topCustomerByProjects,
         maxCustomerProjectCount,
         categoryData: serverAnalytics.categories && serverAnalytics.categories.length > 0 ? serverAnalytics.categories : categoryData,
         banknoteBreakdown: serverAnalytics.banknotes && Object.keys(serverAnalytics.banknotes).length > 0 ? serverAnalytics.banknotes : banknoteBreakdown,
-        topVenues: serverAnalytics.top_venues && serverAnalytics.top_venues.length > 0 ? serverAnalytics.top_venues : topVenues,
-        maxVenueCount,
+        topVenues: effVenues,
+        maxVenueCount: effMaxVenueCount,
         lowMarginProjects: serverAnalytics.low_margin && serverAnalytics.low_margin.length > 0 ? serverAnalytics.low_margin : lowMarginProjects
       };
     }
@@ -2437,9 +2837,9 @@ const App = () => {
         topVenues, maxVenueCount,
         lowMarginProjects
     };
-  }, [filteredAndSortedActivities, dealStatuses, serverAnalytics]); // [FIXED] Added dealStatuses to dependency array
+  }, [analyticsActivities, dealStatuses, serverAnalytics]);
 
-    // Sync scroll on mobile window scroll
+  // Sync scroll on mobile window scroll
   useEffect(() => {
     const handleWindowScroll = () => {
       const scrollTop = window.scrollY || document.documentElement.scrollTop;
@@ -2461,70 +2861,68 @@ const App = () => {
         const scrollHeight = document.documentElement.scrollHeight;
         const clientHeight = window.innerHeight;
         if (scrollTop + clientHeight >= scrollHeight - 250) {
-          if (visibleCount < filteredAndSortedActivities.length) {
-            setVisibleCount(prev => Math.min(prev + 20, filteredAndSortedActivities.length));
+          if (visibleCount < plansActivities.length) {
+            setVisibleCount(prev => Math.min(prev + 20, plansActivities.length));
           }
         }
       }
     };
 
-    window.addEventListener('scroll', handleWindowScroll, { passive: true });
+    window.addEventListener('scroll', handleWindowScroll, { passive: true, capture: true });
     window.addEventListener('resize', handleWindowScroll, { passive: true });
     return () => {
-      window.removeEventListener('scroll', handleWindowScroll);
+      window.removeEventListener('scroll', handleWindowScroll, { capture: true });
       window.removeEventListener('resize', handleWindowScroll);
     };
-  }, [activeTab, visibleCount, filteredAndSortedActivities.length, isLoadingMore]);
+  }, [activeTab, visibleCount, plansActivities.length, isLoadingMore]);
 
   const getDealType = (val) => dealStatuses.find(s => s.value === val)?.type || 'pending';
   const getTransportType = (val) => transportStatuses.find(s => s.value === val)?.type || 'pending';
 
-
-
-  const resetFilters = () => {
-    setSearchTerm('');
-    setDateFilterMode('month');
-    const now = new Date();
-    setFilterDate(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
-    setFilterDateRange({ start: '', end: '' });
-    setFilterCategory('all');
-    setFilterStatus('all');
-    setFilterTransport('all');
-  };
-
   const stats = useMemo(() => {
-    const total = allActivities.length;
+    // เมื่อมีการกรองตามวันที่/เดือน/สัปดาห์/ช่วงเวลา ให้ใช้จำนวนแถวของ Scope นั้นโดยตรง
+    const isDateFiltered = plansFilter.dateMode !== 'all';
+    const total = isDateFiltered 
+      ? plansActivities.length 
+      : (serverStats?.total !== undefined ? serverStats.total : plansActivities.length);
     
-    const completed = allActivities.filter(a => {
+    const completed = plansActivities.filter(a => {
         const dType = getDealType(a.dealStatus);
         const tType = getTransportType(a.transportStatus);
         return tType === 'completed' && (dType === 'active' || dType === 'completed');
     }).length;
 
-    const active = allActivities.filter(a => {
+    const active = plansActivities.filter(a => {
         const dType = getDealType(a.dealStatus);
         const tType = getTransportType(a.transportStatus);
         return dType === 'active' && tType !== 'completed' && tType !== 'cancelled';
     }).length;
 
-    const pending = allActivities.filter(a => {
+    const pending = plansActivities.filter(a => {
         const dType = getDealType(a.dealStatus);
         return dType === 'pending';
     }).length;
 
-    const issues = allActivities.filter(a => {
+    const issues = plansActivities.filter(a => {
         const dType = getDealType(a.dealStatus);
         const tType = getTransportType(a.transportStatus);
         return dType === 'cancelled' || tType === 'cancelled';
     }).length;
 
+    const renderVal = (v) => {
+      if (isScopeLoading && plansActivities.length === 0) {
+        return <span className="inline-block w-8 h-6 bg-slate-200 animate-pulse rounded-md" />;
+      }
+      return v;
+    };
+
     return [
-      { title: 'งานทั้งหมด', value: total, change: 'รวมทั้งหมด', isPositive: true, icon: Folder, color: 'text-indigo-600', bg: 'bg-indigo-50', onClick: resetFilters },
-      { title: 'งานเสร็จสิ้น', value: completed, change: 'ปิดจ๊อบแล้ว', isPositive: true, icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50', onClick: () => { setFilterStatus('confirmed'); setFilterTransport('delivered'); } },
-      { title: 'กำลังดำเนินการ', value: active, change: 'Active Now', isPositive: true, icon: Clock, color: 'text-blue-600', bg: 'bg-blue-50', onClick: () => { setFilterStatus('confirmed'); setFilterTransport('active_only'); } },
-      { title: 'ยกเลิก/มีปัญหา', value: issues, change: 'ต้องตรวจสอบ', isPositive: false, icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50', onClick: () => { setFilterStatus('cancelled'); setFilterTransport('all'); } },
+      { title: 'งานทั้งหมด', value: renderVal(total), change: 'รวมทั้งหมด', isPositive: true, icon: Folder, color: 'text-indigo-600', bg: 'bg-indigo-50', onClick: () => resetTabFilter('Plans') },
+      { title: 'งานเสร็จสิ้น', value: renderVal(completed), change: 'ปิดจ๊อบแล้ว', isPositive: true, icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50', onClick: () => updateTabFilter('Plans', { status: 'confirmed', transport: 'delivered' }) },
+      { title: 'กำลังดำเนินการ', value: renderVal(active), change: 'Active Now', isPositive: true, icon: Clock, color: 'text-blue-600', bg: 'bg-blue-50', onClick: () => updateTabFilter('Plans', { status: 'confirmed', transport: 'active_only' }) },
+      { title: 'ยกเลิก/มีปัญหา', value: renderVal(issues), change: 'ต้องตรวจสอบ', isPositive: false, icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50', onClick: () => updateTabFilter('Plans', { status: 'cancelled', transport: 'all' }) },
     ];
-  }, [allActivities, dealStatuses, transportStatuses]);
+  }, [plansActivities, plansFilter.dateMode, serverStats, dealStatuses, transportStatuses, isScopeLoading]);
 
   const closeModal = () => {
     refDragCounterRef.current = 0;
@@ -2641,6 +3039,16 @@ const App = () => {
           if (detail) {
             if (detail.images && detail.images.length > 0) setUploadedImages(detail.images);
             if (detail.slips && detail.slips.length > 0) setUploadedSlips(detail.slips);
+            if (detail.quotationItems && detail.quotationItems.length > 0) {
+              setQuotationItems(detail.quotationItems);
+              setWage(detail.quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0));
+            }
+            if (detail.customerSupport && detail.customerSupport.length > 0) {
+              setCustomerSupportItems(detail.customerSupport);
+            }
+            if (detail.expenses && detail.expenses.length > 0) {
+              setExpenses(detail.expenses);
+            }
           }
         }).catch(() => {});
       } 
@@ -2676,6 +3084,10 @@ const App = () => {
               return { denomination: 1, quantity: item.price, price: item.price, date: item.date || fallbackDate }; 
           });
           setCustomerSupportItems(mappedSupport);
+      } else if ((parseFloat(activity.customerSupportTotal || activity.customer_support_total) || 0) > 0) {
+          const fallbackDate = activity.paymentDate || activity.rawDateTime || getNowDateString();
+          const supTotal = parseFloat(activity.customerSupportTotal || activity.customer_support_total) || 0;
+          setCustomerSupportItems([{ denomination: 1000, quantity: Math.floor(supTotal / 1000) || 1, price: supTotal, date: fallbackDate }]);
       } else {
           setCustomerSupportItems([{ denomination: 20, quantity: 0, price: 0, date: getNowDateString() }]);
       }
@@ -2690,6 +3102,10 @@ const App = () => {
               date: item.date || fallbackDate
           }));
           setExpenses(loadedExpenses);
+      } else if ((parseFloat(activity.totalExpenses || activity.total_expenses) || 0) > 0) {
+          const fallbackDate = activity.paymentDate || activity.rawDateTime || getNowDateString();
+          const expTotal = parseFloat(activity.totalExpenses || activity.total_expenses) || 0;
+          setExpenses([{ category: 'ต้นทุน/ค่าใช้จ่ายเดิม', detail: 'ค่าใช้จ่ายจริงรวม', quantity: 1, unitPrice: expTotal, price: expTotal, date: fallbackDate }]);
       } else {
           setExpenses([{ category: '', detail: '', quantity: 1, unitPrice: 0, price: 0, date: getNowDateString() }]);
       }
@@ -3143,11 +3559,66 @@ const App = () => {
       <div className="w-full">
         {/* Mobile View (Card Layout) - Restored */}
         <div className="md:hidden flex flex-col gap-4 p-2">
-          {items.map((item, i) => {
-            const itemExpenses = item.expenses ? item.expenses.reduce((sum, ex) => sum + (parseFloat(ex.price) || 0), 0) : 0;
-            const itemProfit = (item.wage || 0) - itemExpenses;
-            const itemSupport = item.customerSupport ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0) : 0;
-            const itemReceivable = (item.wage || 0) + itemSupport;
+          {items.length === 0 && isScopeLoading ? (
+            <div className="flex flex-col gap-3 animate-pulse">
+              <div className="p-3 bg-indigo-50/70 border border-indigo-100/60 rounded-xl flex items-center justify-between text-xs text-indigo-700">
+                <span className="flex items-center gap-2 font-bold">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                  กำลังดึง 50 แถวล่าสุด...
+                </span>
+                <span className="text-xs text-indigo-600 font-bold">Zero-Egress</span>
+              </div>
+              {[1, 2, 3].map(idx => (
+                <div key={idx} className="bg-white rounded-2xl border border-slate-100 p-4 flex flex-col gap-3 shadow-xs">
+                  <div className="flex justify-between items-center">
+                    <div className="h-6 w-20 bg-slate-100 rounded-lg" />
+                    <div className="h-5 w-24 bg-slate-100 rounded-md" />
+                  </div>
+                  <div className="h-5 w-3/4 bg-slate-100 rounded-md" />
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <div className="h-4 w-28 bg-slate-100 rounded" />
+                    <div className="h-4 w-28 bg-slate-100 rounded" />
+                  </div>
+                  <div className="h-16 bg-slate-50 rounded-xl" />
+                </div>
+              ))}
+            </div>
+          ) : items.length === 0 ? (
+            <div className="py-12 px-4 text-center flex flex-col items-center justify-center gap-3 bg-slate-50/60 rounded-2xl border border-dashed border-slate-200">
+              <div className="w-12 h-12 rounded-2xl bg-white shadow-xs border border-slate-100 flex items-center justify-center text-slate-400">
+                <Folder className="w-6 h-6" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <h4 className="text-sm font-bold text-slate-700">ไม่พบรายการแผนงานในช่วงเวลานี้</h4>
+                <p className="text-xs text-slate-400">ยังไม่มีข้อมูลสำหรับช่วงเวลานี้</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => openModal()}
+                className="mt-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition shadow-xs inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" /> เพิ่มแผนงานใหม่
+              </button>
+            </div>
+          ) : (
+            items.map((item, i) => {
+            const expRevenue = item.quotationItems && item.quotationItems.length > 0
+              ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || ((parseFloat(q.unitPrice) || 0) * (parseFloat(q.quantity) || 1)) || 0), 0)
+              : 0;
+            const itemRevenue = expRevenue > 0 ? expRevenue : (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0);
+
+            const expSupport = item.customerSupport && item.customerSupport.length > 0
+              ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || ((parseFloat(s.denomination || s.unitPrice) || 0) * (parseFloat(s.quantity) || 1)) || 0), 0)
+              : 0;
+            const itemSupport = expSupport > 0 ? expSupport : (parseFloat(item.customerSupportTotal || item.customer_support_total) || 0);
+
+            const expExpenses = item.expenses && item.expenses.length > 0
+              ? item.expenses.reduce((sum, ex) => sum + (parseFloat(ex.price) || ((parseFloat(ex.unitPrice) || 0) * (parseFloat(ex.quantity) || 1)) || 0), 0)
+              : 0;
+            const itemExpenses = expExpenses > 0 ? expExpenses : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
+
+            const itemProfit = itemRevenue - itemExpenses;
+            const itemReceivable = itemRevenue + itemSupport;
 
             const dealStatusInfo = getDealStatusInfo(item.dealStatus);
             const transportStatusInfo = getTransportStatusInfo(item.transportStatus);
@@ -3167,18 +3638,18 @@ const App = () => {
                         <Clock className="w-3.5 h-3.5" /> {item.date}
                       </div>
                       {item.paymentDate && (
-                        <div className="flex items-center gap-1.5 text-emerald-600 text-[10px] font-bold whitespace-nowrap mt-0.5 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
-                          <Wallet className="w-3 h-3" /> จ่าย: {formatDate(item.paymentDate).split(' ')[0]}
+                        <div className="flex items-center gap-1.5 text-emerald-700 text-xs font-bold whitespace-nowrap mt-0.5 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
+                          <Wallet className="w-3.5 h-3.5" /> จ่าย: {formatDate(item.paymentDate).split(' ')[0]}
                         </div>
                       )}
                    </div>
                    <div className="flex flex-col gap-1.5 items-end">
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold border ${dealStatusInfo.color}`}>
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold border ${dealStatusInfo.color}`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${getStatusDotColor(dealStatusInfo)}`}></span>
                           {dealStatusInfo.label}
                         </span>
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold border ${transportStatusInfo.color}`}>
-                          <Truck className="w-3 h-3" />
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold border ${transportStatusInfo.color}`}>
+                          <Truck className="w-3.5 h-3.5" />
                           {transportStatusInfo.label}
                         </span>
                    </div>
@@ -3263,7 +3734,7 @@ const App = () => {
                    )}
                    <div className="flex justify-between items-center mb-1">
                       <span className="text-xs text-slate-500">รายได้ (ค่าจ้าง)</span>
-                      <span className="text-xs text-emerald-600 font-bold flex items-center gap-1"><ArrowUpRight className="w-3 h-3" /> {item.wage.toLocaleString()}</span>
+                      <span className="text-xs text-emerald-600 font-bold flex items-center gap-1"><ArrowUpRight className="w-3 h-3" /> {itemRevenue.toLocaleString()}</span>
                    </div>
                    <div className="flex justify-between items-center mb-2 border-b border-slate-200 pb-2">
                       <span className="text-xs text-slate-500">ค่าใช้จ่าย</span>
@@ -3306,7 +3777,7 @@ const App = () => {
                 </div>
               </div>
             );
-          })}
+          }))}
           {limit === 0 && isLoadingMore && (
              <div className="flex flex-col items-center justify-center py-8 gap-3 opacity-100 transition-opacity duration-300">
                  <div className="p-3 bg-white rounded-full shadow-md border border-slate-100 animate-bounce">
@@ -3318,6 +3789,15 @@ const App = () => {
         </div>
 
         <div className="hidden md:block">
+            {isScopeLoading && items.length === 0 && (
+              <div className="px-5 py-2.5 bg-indigo-50/70 border-b border-indigo-100/60 text-xs font-semibold text-indigo-700 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                  <span>กำลังดึง 50 แถวล่าสุดของเดือนนี้...</span>
+                </div>
+                <span className="text-xs text-indigo-600 font-bold">Progressive Loading (Zero-Egress)</span>
+              </div>
+            )}
             {/* Desktop Table Container with responsive constraints */}
             <div className="overflow-x-auto overflow-y-hidden pb-4 custom-scrollbar">
               {/* [MODIFIED] Removed max-w constraint to let table grow with screen */}
@@ -3339,11 +3819,85 @@ const App = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item, i) => {
-                      const itemExpenses = item.expenses ? item.expenses.reduce((sum, ex) => sum + (parseFloat(ex.price) || 0), 0) : 0;
-                      const itemProfit = (item.wage || 0) - itemExpenses;
-                      const itemSupport = item.customerSupport ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0) : 0;
-                      const itemReceivable = (item.wage || 0) + itemSupport;
+                    {items.length === 0 && isScopeLoading ? (
+                      [1, 2, 3, 4, 5, 6].map(idx => (
+                        <tr key={idx} className="border-b border-slate-100/60 animate-pulse">
+                          <td className="px-4 py-4 align-top">
+                            <div className="h-5 w-20 bg-slate-100 rounded-lg mb-2" />
+                            <div className="h-3.5 w-16 bg-slate-100 rounded" />
+                          </td>
+                          <td className="px-4 py-4 align-top">
+                            <div className="h-4 w-36 bg-slate-100 rounded mb-2" />
+                            <div className="h-3 w-20 bg-slate-100 rounded" />
+                          </td>
+                          <td className="px-4 py-4 align-top">
+                            <div className="h-4 w-28 bg-slate-100 rounded mb-1.5" />
+                            <div className="h-3 w-20 bg-slate-100 rounded" />
+                          </td>
+                          <td className="px-4 py-4 align-top">
+                            <div className="h-4 w-24 bg-slate-100 rounded mb-1.5" />
+                            <div className="h-3 w-16 bg-slate-100 rounded" />
+                          </td>
+                          <td className="px-4 py-4 align-top">
+                            <div className="h-4 w-28 bg-slate-100 rounded mb-1.5" />
+                            <div className="h-3 w-32 bg-slate-100 rounded" />
+                          </td>
+                          <td className="px-4 py-4 align-top">
+                            <div className="h-5 w-24 bg-slate-100 rounded-md mb-1.5" />
+                            <div className="h-5 w-24 bg-slate-100 rounded-md" />
+                          </td>
+                          <td className="px-4 py-4 align-top text-right">
+                            <div className="h-4 w-20 bg-slate-100 rounded ml-auto mb-1.5" />
+                            <div className="h-3 w-16 bg-slate-100 rounded ml-auto" />
+                          </td>
+                          <td className="px-4 py-4 align-top">
+                            <div className="h-4 w-20 bg-slate-100 rounded" />
+                          </td>
+                          <td className="px-2 py-4 align-top text-right">
+                            <div className="h-7 w-20 bg-slate-100 rounded-lg ml-auto" />
+                          </td>
+                        </tr>
+                      ))
+                    ) : items.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="px-4 py-16 text-center">
+                          <div className="flex flex-col items-center justify-center gap-3">
+                            <div className="w-14 h-14 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400">
+                              <Folder className="w-7 h-7" />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <h4 className="text-base font-bold text-slate-700">ไม่พบรายการแผนงานในช่วงเวลานี้</h4>
+                              <p className="text-xs text-slate-400">ยังไม่มีข้อมูลสำหรับช่วงเวลานี้ หรือคุณสามารถเพิ่มแผนงานใหม่ได้</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => openModal()}
+                              className="mt-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition shadow-sm inline-flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Plus className="w-4 h-4" /> เพิ่มแผนงานใหม่
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      items.map((item, i) => {
+                      const expRevenue = item.quotationItems && item.quotationItems.length > 0
+                        ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || ((parseFloat(q.unitPrice) || 0) * (parseFloat(q.quantity) || 1)) || 0), 0)
+                        : 0;
+                      const itemRevenue = expRevenue > 0 ? expRevenue : (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0);
+
+                      const expSupport = item.customerSupport && item.customerSupport.length > 0
+                        ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || ((parseFloat(s.denomination || s.unitPrice) || 0) * (parseFloat(s.quantity) || 1)) || 0), 0)
+                        : 0;
+                      const itemSupport = expSupport > 0 ? expSupport : (parseFloat(item.customerSupportTotal || item.customer_support_total) || 0);
+
+                      const expExpenses = item.expenses && item.expenses.length > 0
+                        ? item.expenses.reduce((sum, ex) => sum + (parseFloat(ex.price) || ((parseFloat(ex.unitPrice) || 0) * (parseFloat(ex.quantity) || 1)) || 0), 0)
+                        : 0;
+                      const itemExpenses = expExpenses > 0 ? expExpenses : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
+
+                      const itemProfit = itemRevenue - itemExpenses;
+                      const itemReceivable = itemRevenue + itemSupport;
 
                       const dealStatusInfo = getDealStatusInfo(item.dealStatus);
                       const transportStatusInfo = getTransportStatusInfo(item.transportStatus);
@@ -3363,8 +3917,8 @@ const App = () => {
                                 {item.date}
                               </div>
                               {item.paymentDate && (
-                                <div className="flex items-center gap-1.5 text-emerald-600 text-[10px] mt-1 whitespace-nowrap font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 w-fit">
-                                  <Wallet className="w-3 h-3 shrink-0" />
+                                <div className="flex items-center gap-1.5 text-emerald-700 text-xs mt-1 whitespace-nowrap font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 w-fit">
+                                  <Wallet className="w-3.5 h-3.5 shrink-0" />
                                   จ่าย: {formatDate(item.paymentDate).split(' ')[0]}
                                 </div>
                               )}
@@ -3436,12 +3990,12 @@ const App = () => {
                           </td>
                           <td className="px-4 py-4 align-top">
                             <div className="flex flex-col gap-2 items-start w-full">
-                              <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border w-full max-w-[140px] truncate ${dealStatusInfo.color}`}>
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold uppercase tracking-wide border w-full max-w-[140px] truncate ${dealStatusInfo.color}`}>
                                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusDotColor(dealStatusInfo)}`}></span>
                                 <span className="truncate">{dealStatusInfo.label}</span>
                               </span>
-                              <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border w-full max-w-[140px] truncate ${transportStatusInfo.color}`}>
-                                <Truck className="w-3 h-3 shrink-0" />
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold uppercase tracking-wide border w-full max-w-[140px] truncate ${transportStatusInfo.color}`}>
+                                <Truck className="w-3.5 h-3.5 shrink-0" />
                                 <span className="truncate">{transportStatusInfo.label}</span>
                               </span>
                             </div>
@@ -3452,8 +4006,8 @@ const App = () => {
                                   ฿{itemReceivable.toLocaleString()}
                                 </span>
                                 <div className="text-xs text-slate-400 flex gap-1 items-center justify-end w-full whitespace-nowrap">
-                                    {itemSupport > 0 && <span className="text-blue-500" title="เงินศิลปิน (สนับสนุน)">+{itemSupport.toLocaleString()}</span>}
-                                    <span className="text-emerald-600" title="รายได้ (ค่าจ้าง)">{item.wage.toLocaleString()}</span>
+                                    {itemSupport > 0 && <span className="text-blue-500 font-bold" title="เงินศิลปิน (สนับสนุน)">+{itemSupport.toLocaleString()}</span>}
+                                    <span className="text-emerald-600 font-bold" title="รายได้ (ค่าจ้าง)">{itemRevenue.toLocaleString()}</span>
                                 </div>
                                 <span className="text-xs text-rose-500 font-medium flex items-center justify-end gap-1 w-full whitespace-nowrap" title="ค่าใช้จ่าย">
                                   <TrendingDown className="w-3 h-3 shrink-0" /> -{itemExpenses.toLocaleString()}
@@ -3495,7 +4049,7 @@ const App = () => {
                           </td>
                         </tr>
                       );
-                    })}
+                    }))}
                   </tbody>
                 </table>
               </div>
@@ -3529,25 +4083,41 @@ const App = () => {
     );
   };
   
-  const renderFilterCard = (tabKey = activeTab) => (
+  const renderFilterCard = (tabKey = activeTab) => {
+    const curFilter = getTabFilter(tabKey);
+    const curSearch = curFilter.search;
+    const curDateMode = curFilter.dateMode;
+    const curDate = curFilter.date;
+    const curDateRange = curFilter.dateRange;
+    const curCategory = curFilter.category;
+    const curStatus = curFilter.status;
+    const curTransport = curFilter.transport;
+
+    const setCurSearch = (val) => updateTabFilter(tabKey, { search: val });
+    const setCurDateMode = (val) => updateTabFilter(tabKey, { dateMode: val });
+    const setCurDate = (val) => updateTabFilter(tabKey, { date: val });
+    const setCurDateRange = (val) => updateTabFilter(tabKey, { dateRange: val });
+    const setCurCategory = (val) => updateTabFilter(tabKey, { category: val });
+    const setCurStatus = (val) => updateTabFilter(tabKey, { status: val });
+    const setCurTransport = (val) => updateTabFilter(tabKey, { transport: val });
+    const resetCurFilters = () => resetTabFilter(tabKey);
+
+    return (
     <>
       <div
         ref={(el) => {
           if (el) filterSentinelsRef.current[tabKey] = el;
         }}
-        className="h-px w-full pointer-events-none opacity-0 -mb-px"
+        className="w-full h-0 -my-3 pointer-events-none opacity-0"
       />
       <div
-        className={`sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 z-40 bg-white transition-all duration-200 ease-in-out
+        className={`sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 z-40 bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out
           ${isScrolled
-            ? 'mx-0 mt-0 py-2.5 sm:py-3 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none mb-4'
-            : 'mx-4 sm:mx-8 lg:mx-10 mt-2 sm:mt-3 p-3.5 sm:p-5 rounded-[2rem] sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)] mb-4'
+            ? 'mx-0 py-2.5 sm:py-3 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
+            : 'mx-4 sm:mx-8 lg:mx-10 p-3.5 sm:p-4 rounded-[2rem] sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
           }
         `}
       >
-      <div className={`flex items-center gap-2 mb-4 text-indigo-600 font-bold transition-all ${isScrolled ? 'scale-90 origin-left opacity-80 translate-y-1' : ''} hidden md:flex`}>
-      </div>
-      
       <div className="flex flex-col gap-2.5 md:hidden">
          {/* Row 1: Search + Filter Toggle + Reset */}
          <div className="flex items-center gap-2">
@@ -3559,12 +4129,12 @@ const App = () => {
                     type="text"
                     placeholder="ค้นหา..."
                     className="w-full h-full pl-9 pr-8 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-medium placeholder:text-slate-400 rounded-xl"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+                    value={curSearch}
+                    onChange={(e) => setCurSearch(e.target.value)}
                 />
-                {searchTerm && (
+                {curSearch && (
                   <button
-                    onClick={() => setSearchTerm('')}
+                    onClick={() => setCurSearch('')}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-md"
                     title="ล้างข้อความค้นหา"
                   >
@@ -3590,7 +4160,7 @@ const App = () => {
 
             {/* ปุ่มรีเซ็ตฟิลเตอร์ */}
             <button
-              onClick={resetFilters}
+              onClick={resetCurFilters}
               className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95"
               title="ล้างค่าตัวกรองทั้งหมด"
             >
@@ -3604,9 +4174,9 @@ const App = () => {
                 {/* 1. Date Filter Control (Full Width) */}
                 <div className="w-full h-10">
                     <DateFilterControl 
-                        mode={dateFilterMode} setMode={setDateFilterMode}
-                        date={filterDate} setDate={setFilterDate}
-                        range={filterDateRange} setRange={setFilterDateRange}
+                        mode={curDateMode} setMode={setCurDateMode}
+                        date={curDate} setDate={setCurDate}
+                        range={curDateRange} setRange={setCurDateRange}
                     />
                 </div>
 
@@ -3619,8 +4189,8 @@ const App = () => {
                       </div>
                       <select
                           className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer"
-                          value={filterCategory}
-                          onChange={(e) => setFilterCategory(e.target.value)}
+                          value={curCategory}
+                          onChange={(e) => setCurCategory(e.target.value)}
                       >
                           <option value="all">ทุกหมวดหมู่</option>
                           {projectCategories.map((cat, i) => (
@@ -3637,8 +4207,8 @@ const App = () => {
                       </div>
                       <select
                           className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer"
-                          value={filterStatus}
-                          onChange={(e) => setFilterStatus(e.target.value)}
+                          value={curStatus}
+                          onChange={(e) => setCurStatus(e.target.value)}
                       >
                           <option value="all">ทุกสถานะ (ดีล)</option>
                           {dealStatuses.map((status, i) => (
@@ -3655,8 +4225,8 @@ const App = () => {
                       </div>
                       <select
                           className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer"
-                          value={filterTransport}
-                          onChange={(e) => setFilterTransport(e.target.value)}
+                          value={curTransport}
+                          onChange={(e) => setCurTransport(e.target.value)}
                       >
                           <option value="all">ขนส่ง: ทั้งหมด</option>
                           <option value="active_only">กำลังดำเนินการ (Active)</option>
@@ -3673,8 +4243,9 @@ const App = () => {
       
       <div className="hidden md:flex flex-col gap-2.5">
           {/* แถวที่ 1: ค้นหา + ตัวเลือกวันที่ + ปุ่มเปิด/ปิดตัวกรองเพิ่มเติม + ปุ่มรีเซ็ต */}
-          <div className="flex gap-3 h-[48px]">
-              <div className="relative flex-[2] bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs">
+          <div className="flex items-center gap-3 h-[48px]">
+              {/* ช่องค้นหา */}
+              <div className="relative flex-[1.2] min-w-[260px] h-full bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all shadow-xs">
                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
                         <Search className="w-5 h-5" />
                    </div>
@@ -3682,12 +4253,12 @@ const App = () => {
                         type="text"
                         placeholder="ค้นหาชื่องาน, ศิลปิน, รหัส..."
                         className="w-full h-full pl-12 pr-10 bg-transparent outline-none text-slate-700 text-sm font-medium placeholder:text-slate-400 rounded-2xl"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
+                        value={curSearch}
+                        onChange={(e) => setCurSearch(e.target.value)}
                    />
-                   {searchTerm && (
+                   {curSearch && (
                      <button
-                       onClick={() => setSearchTerm('')}
+                       onClick={() => setCurSearch('')}
                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-md cursor-pointer"
                        title="ล้างข้อความค้นหา"
                      >
@@ -3696,22 +4267,23 @@ const App = () => {
                    )}
               </div>
 
-              <div className="flex-1 min-w-[280px]">
+              {/* ตัวกรองวันที่ */}
+              <div className="flex-1 min-w-[320px] max-w-[440px] h-full">
                    <DateFilterControl 
-                        mode={dateFilterMode} setMode={setDateFilterMode}
-                        date={filterDate} setDate={setFilterDate}
-                        range={filterDateRange} setRange={setFilterDateRange}
+                        mode={curDateMode} setMode={setCurDateMode}
+                        date={curDate} setDate={setCurDate}
+                        range={curDateRange} setRange={setCurDateRange}
                    />
               </div>
 
-              {/* ปุ่มเปิด/ซ่อนตัวกรองเพิ่มเติม Desktop */}
+              {/* ปุ่มเปิด/ซ่อนตัวกรองเพิ่มเติม Desktop (Icon Only) */}
               <button
                 type="button"
                 onClick={() => setIsDesktopFilterExpanded(!isDesktopFilterExpanded)}
-                className={`h-[48px] px-3.5 rounded-2xl font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 active:scale-95 border cursor-pointer ${
+                className={`h-full px-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 active:scale-95 border cursor-pointer shadow-xs ${
                   isDesktopFilterExpanded 
                     ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-200' 
-                    : (filterCategory !== 'all' || filterStatus !== 'all' || filterTransport !== 'all')
+                    : (curCategory !== 'all' || curStatus !== 'all' || curTransport !== 'all')
                     ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
                     : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:bg-slate-50'
                 }`}
@@ -3719,11 +4291,11 @@ const App = () => {
                 aria-label="ตัวกรอง"
               >
                 <SlidersHorizontal className="w-4 h-4" />
-                {(filterCategory !== 'all' || filterStatus !== 'all' || filterTransport !== 'all') && (
-                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                {(curCategory !== 'all' || curStatus !== 'all' || curTransport !== 'all') && (
+                  <span className={`px-1.5 py-0.5 rounded-full text-xs font-black ${
                     isDesktopFilterExpanded ? 'bg-white text-indigo-600' : 'bg-indigo-200 text-indigo-800'
                   }`}>
-                    {[filterCategory !== 'all', filterStatus !== 'all', filterTransport !== 'all'].filter(Boolean).length}
+                    {[curCategory !== 'all', curStatus !== 'all', curTransport !== 'all'].filter(Boolean).length}
                   </span>
                 )}
                 <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isDesktopFilterExpanded ? 'rotate-180' : ''}`} />
@@ -3731,8 +4303,8 @@ const App = () => {
 
               {/* ปุ่มรีเซ็ตตัวกรอง */}
               <button
-                  onClick={resetFilters}
-                  className="h-[48px] px-4 bg-slate-100 text-slate-500 rounded-2xl font-bold hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 border border-transparent transition-colors flex items-center justify-center shadow-xs shrink-0 cursor-pointer active:scale-95"
+                  onClick={resetCurFilters}
+                  className="h-full w-[48px] bg-white border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-2xl font-bold transition-colors flex items-center justify-center shadow-xs shrink-0 cursor-pointer active:scale-95"
                   title="ล้างค่าตัวกรองทั้งหมด"
               >
                   <RotateCcw className="w-4 h-4" />
@@ -3746,8 +4318,8 @@ const App = () => {
                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Tag className="w-4 h-4" /></div>
                      <select
                           className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
-                          value={filterCategory}
-                          onChange={(e) => setFilterCategory(e.target.value)}
+                          value={curCategory}
+                          onChange={(e) => setCurCategory(e.target.value)}
                      >
                           <option value="all">ทุกหมวดหมู่</option>
                           {projectCategories.map((cat, i) => <option key={i} value={cat}>{cat}</option>)}
@@ -3759,8 +4331,8 @@ const App = () => {
                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Briefcase className="w-4 h-4" /></div>
                      <select
                           className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
-                          value={filterStatus}
-                          onChange={(e) => setFilterStatus(e.target.value)}
+                          value={curStatus}
+                          onChange={(e) => setCurStatus(e.target.value)}
                      >
                           <option value="all">ทุกสถานะ (ดีล)</option>
                           {dealStatuses.map((s, i) => <option key={i} value={s.value}>{s.label}</option>)}
@@ -3772,8 +4344,8 @@ const App = () => {
                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Truck className="w-4 h-4" /></div>
                      <select
                           className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
-                          value={filterTransport}
-                          onChange={(e) => setFilterTransport(e.target.value)}
+                          value={curTransport}
+                          onChange={(e) => setCurTransport(e.target.value)}
                      >
                           <option value="all">ขนส่ง (ทั้งหมด)</option>
                           <option value="active_only">กำลังดำเนินการ (Active)</option>
@@ -3787,6 +4359,7 @@ const App = () => {
     </div>
     </>
   );
+  };
 
   const renderContent = () => {
     // 1. ถ้ามี Tracking ID ให้แสดงหน้า Tracking View โดยไม่ต้อง Login
@@ -3906,11 +4479,18 @@ const App = () => {
         {/* --- Tab: Calendar --- */}
         {visitedTabs.has('Calendar') && (
           <div className={activeTab === 'Calendar' ? 'block h-full' : 'hidden'}>
-            <CalendarView 
+            <Calendar 
               activities={allActivities} 
               onEventClick={(item) => openModal(item, true)} 
               dealStatuses={dealStatuses}
               transportStatuses={transportStatuses}
+              onMonthChange={(ym) => {
+                if (isLoggedIn) {
+                  loadProjectsScoped({ mode: 'month', date: ym }, (projects, deletedIds) => {
+                    applyProjectsData(projects, deletedIds);
+                  });
+                }
+              }}
             />
           </div>
         )}
@@ -3918,16 +4498,17 @@ const App = () => {
         {/* --- Tab 3: Analytics --- */}
         {visitedTabs.has('Analytics') && (
           <div className={activeTab === 'Analytics' ? 'block' : 'hidden'}>
-            <AnalyticsView
+            <Analytics
               renderFilterCard={() => renderFilterCard('Analytics')}
               analyticsData={analyticsData}
-              dateFilterMode={dateFilterMode}
-              resetFilters={resetFilters}
-              setFilterStatus={setFilterStatus}
-              setFilterTransport={setFilterTransport}
+              isLoading={isAnalyticsLoading}
+              dateFilterMode={analyticsFilter.dateMode}
+              resetFilters={() => resetTabFilter('Analytics')}
+              setFilterStatus={(s) => updateTabFilter('Analytics', { status: s })}
+              setFilterTransport={(t) => updateTabFilter('Analytics', { transport: t })}
               openModal={openModal}
               renderTable={renderTable}
-              filteredAndSortedActivities={filteredAndSortedActivities}
+              filteredAndSortedActivities={analyticsActivities}
               isActive={activeTab === 'Analytics'}
               onOpenVenueModal={(venueOrName) => {
                 const match = typeof venueOrName === 'string'
@@ -3943,15 +4524,15 @@ const App = () => {
         {/* --- Tab 4: Plans --- */}
         {visitedTabs.has('Plans') && (
           <div className={activeTab === 'Plans' ? 'block' : 'hidden'}>
-            <PlansView
+            <Plans
               stats={stats}
               renderFilterCard={() => renderFilterCard('Plans')}
               renderTable={renderTable}
-              filteredAndSortedActivities={filteredAndSortedActivities}
+              filteredAndSortedActivities={plansActivities}
               onOpenModal={() => openModal()}
               renderBatchBanner={() => (
                 <BatchDeliveryBanner
-                  activities={filteredAndSortedActivities}
+                  activities={plansActivities}
                   dealStatuses={dealStatuses}
                   transportStatuses={transportStatuses}
                   onSelectProject={(p) => openModal(p, false)}
@@ -3970,19 +4551,19 @@ const App = () => {
         {/* --- Tab 5: Finance --- */}
         {visitedTabs.has('Finance') && (
           <div className={activeTab === 'Finance' ? 'block min-h-full pb-24 md:pb-6' : 'hidden'}>
-              <FinanceView
+              <Finance
                   activities={allActivities}
                   dealStatuses={dealStatuses}
                   transportStatuses={transportStatuses}
                   shopInfo={shopInfo}
                   onOpenProjectModal={openModal}
                   themeColor={shopInfo?.themeColor || 'indigo'}
-                  dateFilterMode={dateFilterMode}
-                  setDateFilterMode={setDateFilterMode}
-                  filterDate={filterDate}
-                  setFilterDate={setFilterDate}
-                  filterDateRange={filterDateRange}
-                  setFilterDateRange={setFilterDateRange}
+                  dateFilterMode={financeFilter.dateMode}
+                  setDateFilterMode={(m) => updateTabFilter('Finance', { dateMode: m })}
+                  filterDate={financeFilter.date}
+                  setFilterDate={(d) => updateTabFilter('Finance', { date: d })}
+                  filterDateRange={financeFilter.dateRange}
+                  setFilterDateRange={(r) => updateTabFilter('Finance', { dateRange: r })}
                   isActive={activeTab === 'Finance'}
                   onSaveActivity={(updatedActivity) => {
                     setAllActivities(prev => {
@@ -4001,7 +4582,7 @@ const App = () => {
         {/* --- Tab: Quotations --- */}
         {visitedTabs.has('Quotations') && (
           <div className={activeTab === 'Quotations' ? 'block' : 'hidden'}>
-            <QuotationsView
+            <Quotations
               activities={allActivities}
               allProjects={allActivities}
               customers={savedCustomers}
@@ -4019,7 +4600,7 @@ const App = () => {
         {/* --- Tab: Inventory --- */}
         {visitedTabs.has('Inventory') && (
           <div className={activeTab === 'Inventory' ? 'block' : 'hidden'}>
-            <InventoryView
+            <Inventory
               inventoryItems={inventoryItems}
               assetLoans={assetLoans}
               activities={allActivities}
@@ -4035,9 +4616,9 @@ const App = () => {
         )}
 
         {/* --- Tab: Venues --- */}
-        {visitedTabs.has('Venues') && (
-          <div className={activeTab === 'Venues' ? 'block' : 'hidden'}>
-            <VenuesView
+        {visitedTabs.has('Locations') && (
+          <div className={activeTab === 'Locations' ? 'block' : 'hidden'}>
+            <Locations
               venues={deliveryLocations}
               isCreateOpen={isCreateVenueOpen}
               onCloseCreate={() => setIsCreateVenueOpen(false)}
@@ -4055,8 +4636,10 @@ const App = () => {
         {/* --- Tab: Artists --- */}
         {visitedTabs.has('Artists') && (
           <div className={activeTab === 'Artists' ? 'block' : 'hidden'}>
-            <ArtistsView
+            <Artists
               artists={artistList}
+              artistStats={artistSummaryStats}
+              assetsDriveFolderId={assetsDriveFolderId}
               activities={allActivities}
               isCreateOpen={isCreateArtistOpen}
               onCloseCreate={() => setIsCreateArtistOpen(false)}
@@ -4067,6 +4650,10 @@ const App = () => {
               }}
               onRefresh={() => {
                 loadArtistsLocalFirst(setArtistList);
+                loadArtistsAndCustomersSummaryStats(({ artistStats, customerStats }) => {
+                  if (artistStats) setArtistSummaryStats(artistStats);
+                  if (customerStats) setCustomerSummaryStats(customerStats);
+                });
               }}
             />
           </div>
@@ -4075,8 +4662,9 @@ const App = () => {
         {/* --- Tab: Customers --- */}
         {visitedTabs.has('Customers') && (
           <div className={activeTab === 'Customers' ? 'block' : 'hidden'}>
-            <CustomersView
+            <Customers
               customers={customerList}
+              customerStats={customerSummaryStats}
               activities={allActivities}
               isCreateOpen={isCreateCustomerOpen}
               onCloseCreate={() => setIsCreateCustomerOpen(false)}
@@ -4087,6 +4675,10 @@ const App = () => {
               }}
               onRefresh={() => {
                 loadCustomersLocalFirst(setCustomerList);
+                loadArtistsAndCustomersSummaryStats(({ artistStats, customerStats }) => {
+                  if (artistStats) setArtistSummaryStats(artistStats);
+                  if (customerStats) setCustomerSummaryStats(customerStats);
+                });
               }}
             />
           </div>
@@ -4095,7 +4687,7 @@ const App = () => {
         {/* --- Tab: Staff --- */}
         {visitedTabs.has('Staff') && (
           <div className={activeTab === 'Staff' ? 'block' : 'hidden'}>
-            <StaffView
+            <Staff
               activities={allActivities}
               isCreateOpen={isCreateStaffOpen}
               onCloseCreate={() => setIsCreateStaffOpen(false)}
@@ -4107,7 +4699,7 @@ const App = () => {
         {/* --- Tab 6: Settings --- */}
         {visitedTabs.has('Settings') && (
           <div className={activeTab === 'Settings' ? 'block' : 'hidden'}>
-            <SettingsView
+            <Settings
               isSyncingSettings={isSyncingSettings}
               isUploadingProfile={isUploadingProfile}
               handleProfileImageUpload={handleProfileImageUpload}
@@ -4364,15 +4956,15 @@ const App = () => {
                                     {userProfile?.name || 'Guest User'}
                                   </h4>
                                   <div className="flex items-center gap-1.5 mt-0.5">
-                                    <span className="font-mono text-[10px] font-bold text-indigo-700 bg-white px-1.5 py-0.2 rounded border border-indigo-100">
+                                    <span className="font-mono text-xs font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-100">
                                       {userProfile?.id || userProfile?.staff_code || '2611001'}
                                     </span>
-                                    <span className="text-[10px] text-slate-400 font-medium truncate">
+                                    <span className="text-xs text-slate-500 font-medium truncate">
                                       @{userProfile?.username || 'user'}
                                     </span>
                                   </div>
                                   <div className="mt-1">
-                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-indigo-600 text-white inline-block">
+                                    <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-indigo-600 text-white inline-block">
                                       {userProfile?.role_label || (userProfile?.role === 'admin' ? 'ผู้ดูแลระบบ' : userProfile?.role || 'พนักงาน')}
                                     </span>
                                   </div>
@@ -4394,7 +4986,7 @@ const App = () => {
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   <div className="text-slate-900 font-bold">โปรไฟล์ของฉัน (My Profile)</div>
-                                  <div className="text-[10px] text-slate-400 font-normal">แก้ไขชื่อ, เลขบัตร ปชช., เบอร์โทร, รหัสผ่าน</div>
+                                  <div className="text-xs text-slate-500 font-normal">แก้ไขชื่อ, เลขบัตร ปชช., เบอร์โทร, รหัสผ่าน</div>
                                 </div>
                               </button>
 
@@ -4414,7 +5006,7 @@ const App = () => {
                                 <LogOut className="w-4 h-4" />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <div className="font-bold">ออกจากระบบ (Logout)</div>
+                                <div className="font-bold">ออกจากระบบ</div>
                               </div>
                             </button>
                         </div>
@@ -4467,7 +5059,7 @@ const App = () => {
                     className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
                     title="ตั้งค่าราคากลางวัสดุ"
                   >
-                    <Settings className="w-4 h-4 text-slate-500" />
+                    <SettingsIcon className="w-4 h-4 text-slate-500" />
                     <span className="hidden sm:inline">ราคากลางวัสดุ</span>
                   </button>
                   <button
@@ -4478,7 +5070,7 @@ const App = () => {
                     className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
                   >
                     <Plus className="w-4 h-4" />
-                    <span>คำนวณเสนอราคา</span>
+                    <span>คำนวณราคา</span>
                   </button>
                 </div>
               )}
@@ -4494,7 +5086,7 @@ const App = () => {
                   <span>เพิ่มพัสดุใหม่</span>
                 </button>
               )}
-              {activeTab === 'Venues' && (
+              {activeTab === 'Locations' && (
                 <button
                   onClick={() => {
                     setIsCreateVenueOpen(true);
@@ -4626,13 +5218,13 @@ const App = () => {
                     <div className={`transition-all duration-200 flex flex-col items-center justify-center ${
                         activeTab === 'Calendar' ? 'text-violet-600' : 'text-slate-400 hover:text-slate-600'
                     }`}>
-                        <Calendar 
+                        <CalendarIcon 
                           className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
                           strokeWidth={activeTab === 'Calendar' ? 2.5 : 2} 
                         />
-                        <span className={`text-[10px] leading-none transition-all duration-200 ${
+                        <span className={`text-xs leading-none transition-all duration-200 ${
                           isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Calendar' ? 'font-bold text-violet-600' : 'font-medium text-slate-500'}`}>
+                        } ${activeTab === 'Calendar' ? 'font-bold text-violet-600' : 'font-semibold text-slate-600'}`}>
                           ปฏิทิน
                         </span>
                         {activeTab === 'Calendar' && (
@@ -4657,9 +5249,9 @@ const App = () => {
                           className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
                           strokeWidth={activeTab === 'Plans' ? 2.5 : 2} 
                         />
-                        <span className={`text-[10px] leading-none transition-all duration-200 ${
+                        <span className={`text-xs leading-none transition-all duration-200 ${
                           isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Plans' ? 'font-bold text-violet-600' : 'font-medium text-slate-500'}`}>
+                        } ${activeTab === 'Plans' ? 'font-bold text-violet-600' : 'font-semibold text-slate-600'}`}>
                           แผนงาน
                         </span>
                         {activeTab === 'Plans' && (
@@ -4695,9 +5287,9 @@ const App = () => {
                           className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
                           strokeWidth={activeTab === 'Finance' ? 2.5 : 2} 
                         />
-                        <span className={`text-[10px] leading-none transition-all duration-200 ${
+                        <span className={`text-xs leading-none transition-all duration-200 ${
                           isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Finance' ? 'font-bold text-violet-600' : 'font-medium text-slate-500'}`}>
+                        } ${activeTab === 'Finance' ? 'font-bold text-violet-600' : 'font-semibold text-slate-600'}`}>
                           การเงิน
                         </span>
                         {activeTab === 'Finance' && (
@@ -4722,9 +5314,9 @@ const App = () => {
                           className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
                           strokeWidth={activeTab === 'Analytics' ? 2.5 : 2} 
                         />
-                        <span className={`text-[10px] leading-none transition-all duration-200 ${
+                        <span className={`text-xs leading-none transition-all duration-200 ${
                           isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Analytics' ? 'font-bold text-violet-600' : 'font-medium text-slate-500'}`}>
+                        } ${activeTab === 'Analytics' ? 'font-bold text-violet-600' : 'font-semibold text-slate-600'}`}>
                           วิเคราะห์
                         </span>
                         {activeTab === 'Analytics' && (
@@ -4745,18 +5337,18 @@ const App = () => {
               }}
             >
               <div className="pt-2 pb-3 grid grid-cols-4 px-2 items-center gap-y-3.5 gap-x-2">
-                {/* 1. Quotations (ใบเสนอราคา) */}
+                {/* 1. Quotations (คำนวณราคา) */}
                 <button
                   onClick={() => {
                     handleSelectTab('Quotations');
                     setIsMobileNavExpanded(false);
                   }}
                   className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
-                  title="ใบเสนอราคา"
+                  title="คำนวณราคา"
                 >
-                  <FileText className={`w-6 h-6 transition-colors ${activeTab === 'Quotations' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Quotations' ? 2.5 : 2} />
-                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Quotations' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
-                    เสนอราคา
+                  <Calculator className={`w-6 h-6 transition-colors ${activeTab === 'Quotations' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Quotations' ? 2.5 : 2} />
+                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Quotations' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
+                    คำนวณราคา
                   </span>
                   {activeTab === 'Quotations' && (
                     <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
@@ -4773,7 +5365,7 @@ const App = () => {
                   title="คลังพัสดุ"
                 >
                   <Package className={`w-6 h-6 transition-colors ${activeTab === 'Inventory' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Inventory' ? 2.5 : 2} />
-                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Inventory' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Inventory' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
                     คลังพัสดุ
                   </span>
                   {activeTab === 'Inventory' && (
@@ -4784,17 +5376,17 @@ const App = () => {
                 {/* 3. Venues (สถานที่จัดส่ง) */}
                 <button
                   onClick={() => {
-                    handleSelectTab('Venues');
+                    handleSelectTab('Locations');
                     setIsMobileNavExpanded(false);
                   }}
                   className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
                   title="สถานที่จัดส่ง"
                 >
-                  <MapPin className={`w-6 h-6 transition-colors ${activeTab === 'Venues' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Venues' ? 2.5 : 2} />
-                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Venues' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                  <MapPin className={`w-6 h-6 transition-colors ${activeTab === 'Locations' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Locations' ? 2.5 : 2} />
+                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Locations' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
                     สถานที่
                   </span>
-                  {activeTab === 'Venues' && (
+                  {activeTab === 'Locations' && (
                     <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
                   )}
                 </button>
@@ -4809,7 +5401,7 @@ const App = () => {
                   title="ศิลปิน"
                 >
                   <Sparkles className={`w-6 h-6 transition-colors ${activeTab === 'Artists' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Artists' ? 2.5 : 2} />
-                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Artists' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Artists' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
                     ศิลปิน
                   </span>
                   {activeTab === 'Artists' && (
@@ -4827,7 +5419,7 @@ const App = () => {
                   title="ลูกค้า"
                 >
                   <Users className={`w-6 h-6 transition-colors ${activeTab === 'Customers' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Customers' ? 2.5 : 2} />
-                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Customers' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Customers' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
                     ลูกค้า
                   </span>
                   {activeTab === 'Customers' && (
@@ -4845,7 +5437,7 @@ const App = () => {
                   title="พนักงาน"
                 >
                   <UserCheck className={`w-6 h-6 transition-colors ${activeTab === 'Staff' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Staff' ? 2.5 : 2} />
-                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Staff' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Staff' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
                     พนักงาน
                   </span>
                   {activeTab === 'Staff' && (
@@ -4862,8 +5454,8 @@ const App = () => {
                   className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
                   title="ตั้งค่า"
                 >
-                  <Settings className={`w-6 h-6 transition-colors ${activeTab === 'Settings' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Settings' ? 2.5 : 2} />
-                  <span className={`text-[10px] mt-1 leading-none ${activeTab === 'Settings' ? 'text-violet-600 font-bold' : 'text-slate-500 font-medium'}`}>
+                  <SettingsIcon className={`w-6 h-6 transition-colors ${activeTab === 'Settings' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Settings' ? 2.5 : 2} />
+                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Settings' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
                     ตั้งค่า
                   </span>
                   {activeTab === 'Settings' && (
@@ -5019,7 +5611,7 @@ const App = () => {
                         <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
                           {editingId ? (viewOnlyMode ? 'รายละเอียด' : 'แก้ไขรายการ') : 'เพิ่มรายการ'}
                         </h3>
-                        {currentId && <span className="bg-indigo-50 text-indigo-600 text-[10px] sm:text-xs px-2 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 w-fit">{currentId}</span>}
+                        {currentId && <span className="bg-indigo-50 text-indigo-700 text-xs px-2.5 py-1 rounded-lg font-bold border border-indigo-100 w-fit">{currentId}</span>}
                       </div>
                       <p className="text-xs sm:text-sm text-slate-500 font-medium hidden sm:block">
                         {viewOnlyMode ? 'ดูข้อมูลและจัดการต้นทุน' : 'กรอกข้อมูลรายละเอียดงาน'}
@@ -5116,7 +5708,7 @@ const App = () => {
                            <div className="space-y-2">
                              <div className="flex justify-between items-center ml-1">
                                <label className="text-sm font-bold text-emerald-700">วันที่รับชำระเงิน</label>
-                               <span className="text-[10px] font-bold text-emerald-500">ใช้คำนวณรายได้ใน Dashboard</span>
+                               <span className="text-xs font-bold text-emerald-600">ใช้คำนวณรายได้ใน Dashboard</span>
                              </div>
                              <ModernDateTimePicker 
                                 value={paymentDate} 
@@ -5414,7 +6006,7 @@ const App = () => {
                                            {matchedVenue.zone ? `[โซน ${matchedVenue.zone}] ` : ''}{matchedVenue.name}
                                          </span>
                                          {matchedVenue.parking_height_limit && (
-                                           <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md font-bold text-[10px]">
+                                           <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md font-bold text-xs">
                                              จำกัดสูง {matchedVenue.parking_height_limit}
                                            </span>
                                          )}
@@ -5425,7 +6017,7 @@ const App = () => {
                                          </p>
                                        )}
                                        {matchedVenue.delivery_tips && (
-                                         <p className="text-slate-500 line-clamp-1 italic text-[11px]">
+                                         <p className="text-slate-500 line-clamp-1 italic text-xs">
                                            💡 {matchedVenue.delivery_tips}
                                          </p>
                                        )}
@@ -5440,7 +6032,7 @@ const App = () => {
                                        <button
                                          type="button"
                                          onClick={() => setMapLink(matchedVenue.loading_dock_map_link)}
-                                         className="text-[11px] font-bold text-amber-600 hover:text-amber-700 hover:underline flex items-center gap-1 cursor-pointer"
+                                         className="text-xs font-bold text-amber-600 hover:text-amber-700 hover:underline flex items-center gap-1 cursor-pointer"
                                        >
                                          <span>ใช้พิกัด Loading Dock</span>
                                        </button>
@@ -5615,7 +6207,7 @@ const App = () => {
                                             <Trash2 className="w-3.5 h-3.5" />
                                           </button>
                                         )}
-                                        <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-md rounded-md text-[10px] text-white font-medium flex items-center gap-1 shadow-sm">
+                                        <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-md rounded-md text-xs text-white font-medium flex items-center gap-1 shadow-sm">
                                           <span>รูปที่ {idx + 1}</span>
                                         </div>
                                       </div>
@@ -5626,7 +6218,7 @@ const App = () => {
                                       <div className="border-2 border-dashed border-indigo-500 bg-indigo-100/70 text-indigo-700 ring-2 ring-indigo-400/20 rounded-xl flex flex-col items-center justify-center aspect-[3/4] transition-all animate-pulse shadow-sm p-2 text-center pointer-events-none">
                                         <UploadCloud className="w-6 h-6 mb-1 text-indigo-600 animate-bounce" />
                                         <span className="text-xs font-bold text-indigo-800">วางไฟล์ที่นี่</span>
-                                        <span className="text-[10px] text-indigo-600 mt-0.5">เพิ่มต่อท้าย</span>
+                                        <span className="text-xs text-indigo-600 mt-0.5">เพิ่มต่อท้าย</span>
                                       </div>
                                     ) : (
                                       <button
@@ -5638,7 +6230,7 @@ const App = () => {
                                           <Plus className="w-5 h-5 group-hover:scale-110 transition-transform" />
                                         </div>
                                         <span className="text-xs font-bold">เพิ่มอีก</span>
-                                        <span className="text-[10px] text-slate-400 group-hover:text-indigo-500">หรือลากไฟล์มา</span>
+                                        <span className="text-xs text-slate-400 group-hover:text-indigo-500">หรือลากไฟล์มา</span>
                                       </button>
                                     )
                                   )}
@@ -5793,7 +6385,7 @@ const App = () => {
                                             <Trash2 className="w-3.5 h-3.5" />
                                           </button>
                                         )}
-                                        <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-md rounded-md text-[10px] text-white font-medium flex items-center gap-1 shadow-sm">
+                                        <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-md rounded-md text-xs text-white font-medium flex items-center gap-1 shadow-sm">
                                           <span>ใบที่ {idx + 1}</span>
                                         </div>
                                       </div>
@@ -5804,7 +6396,7 @@ const App = () => {
                                       <div className="border-2 border-dashed border-amber-500 bg-amber-100/70 text-amber-700 ring-2 ring-amber-400/20 rounded-xl flex flex-col items-center justify-center aspect-[3/4] transition-all animate-pulse shadow-sm p-2 text-center pointer-events-none">
                                         <UploadCloud className="w-6 h-6 mb-1 text-amber-600 animate-bounce" />
                                         <span className="text-xs font-bold text-amber-800">วางไฟล์ที่นี่</span>
-                                        <span className="text-[10px] text-amber-600 mt-0.5">เพิ่มต่อท้าย</span>
+                                        <span className="text-xs text-amber-600 mt-0.5">เพิ่มต่อท้าย</span>
                                       </div>
                                     ) : (
                                       <button
@@ -5816,7 +6408,7 @@ const App = () => {
                                           <Plus className="w-5 h-5 group-hover:scale-110 transition-transform" />
                                         </div>
                                         <span className="text-xs font-bold">เพิ่มอีก</span>
-                                        <span className="text-[10px] text-slate-400 group-hover:text-amber-500">หรือลากไฟล์มา</span>
+                                        <span className="text-xs text-slate-400 group-hover:text-amber-500">หรือลากไฟล์มา</span>
                                       </button>
                                     )
                                   )}
@@ -5881,14 +6473,15 @@ const App = () => {
 
                      {/* 3.1: Customer Support (Bank Calculator) */}
                      <div className="space-y-3">
-                         <h5 className="font-bold text-indigo-700 text-sm flex items-center gap-2">
-                            <span className="bg-indigo-100 text-indigo-700 w-5 h-5 rounded-full flex items-center justify-center text-xs">1</span>
+                         <h5 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                            <span className="bg-indigo-600 text-white w-5 h-5 rounded-full flex items-center justify-center text-xs font-black shadow-xs">1</span>
                             เงินสนับสนุนศิลปิน (Money Order)
                          </h5>
-                         <div className="bg-indigo-50/50 rounded-2xl border border-indigo-100 p-4">
+                         <p className="text-xs text-slate-500 -mt-1 ml-7 font-medium">ยอดเงินสนับสนุนส่งต่อศิลปินโดยตรง (ไม่นำมาคิดเป็นกำไรของร้าน)</p>
+                         <div className="bg-slate-50/80 rounded-2xl border border-indigo-200/80 p-4 shadow-2xs">
                               <div className="space-y-3">
-                                  {/* Header Row */}
-                                  <div className="hidden sm:grid grid-cols-12 gap-2 px-2 text-xs font-bold text-indigo-800/60 uppercase tracking-wide">
+                                  {/* Header Row on Desktop */}
+                                  <div className="hidden sm:grid grid-cols-12 gap-2 px-2 text-xs font-bold text-slate-600 uppercase tracking-wide">
                                       <div className="col-span-3 text-center sm:text-left">วันที่รับเงิน</div>
                                       <div className="col-span-2">ประเภทแบงค์</div>
                                       <div className="col-span-2 text-center">จำนวน</div>
@@ -5899,10 +6492,33 @@ const App = () => {
 
                                   {/* Dynamic Rows */}
                                   {customerSupportItems.map((item, idx) => (
-                                      <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center animate-in fade-in slide-in-from-left-2 duration-300 bg-white p-3 sm:p-0 rounded-xl sm:bg-transparent border sm:border-none border-indigo-100 shadow-sm sm:shadow-none">
+                                      <div 
+                                          key={idx} 
+                                          className="rounded-2xl sm:rounded-none border border-indigo-200 sm:border-none overflow-hidden bg-white sm:bg-transparent shadow-xs sm:shadow-none animate-in fade-in slide-in-from-left-2 duration-300"
+                                      >
+                                          {/* Mobile Card Header */}
+                                          <div className="sm:hidden bg-gradient-to-r from-indigo-600 to-indigo-700 px-3.5 py-2 flex items-center justify-between text-white shadow-2xs">
+                                              <span className="font-black text-xs flex items-center gap-1.5 tracking-wide text-white">
+                                                  <Wallet className="w-3.5 h-3.5 text-white/90" />
+                                                  รายการที่ {idx + 1}
+                                              </span>
+                                              {!viewOnlyMode && (
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => handleRemoveSupportItem(idx)}
+                                                      className="w-7 h-7 rounded-lg bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-90"
+                                                      title={`ลบรายการที่ ${idx + 1}`}
+                                                  >
+                                                      <Trash2 className="w-3.5 h-3.5" />
+                                                  </button>
+                                              )}
+                                          </div>
+
+                                          {/* Card Content / Desktop Row */}
+                                          <div className="p-3.5 sm:p-0 grid grid-cols-1 sm:grid-cols-12 gap-2.5 sm:gap-2 items-center bg-white sm:bg-transparent">
                                           {/* 1. วันที่รับเงิน */}
                                           <div className="sm:col-span-3">
-                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">วันที่รับเงิน</span>
+                                              <span className="sm:hidden text-xs font-bold text-slate-700 mb-1.5 block text-left">วันที่รับเงิน</span>
                                               <ModernDateTimePicker
                                                   value={item.date ? item.date.slice(0, 10) : ''}
                                                   disabled={viewOnlyMode}
@@ -5910,18 +6526,18 @@ const App = () => {
                                                   compact={true}
                                                   placeholder="เลือกวันที่..."
                                                   onChange={(e) => handleSupportItemChange(idx, 'date', e.target.value)}
-                                                  className={`border-indigo-200 h-[34px] ${viewOnlyMode ? 'opacity-80 cursor-not-allowed' : ''}`}
+                                                  className={`border-indigo-200 h-[34px] bg-white text-slate-800 font-medium ${viewOnlyMode ? 'opacity-80 cursor-not-allowed' : ''}`}
                                               />
                                           </div>
 
                                           {/* 2. ประเภทแบงค์ */}
                                           <div className="sm:col-span-2 relative">
-                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">ประเภทแบงค์</span>
+                                              <span className="sm:hidden text-xs font-bold text-slate-700 mb-1.5 block text-left">ประเภทแบงค์</span>
                                               <select
                                                   value={item.denomination}
                                                   disabled={viewOnlyMode}
                                                   onChange={(e) => handleSupportItemChange(idx, 'denomination', e.target.value)}
-                                                  className={`w-full px-2 py-2 bg-white border border-indigo-200 rounded-lg text-xs font-bold text-slate-700 text-center sm:text-left ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
+                                                  className={`w-full px-2 py-2 bg-white border border-indigo-200 rounded-lg text-xs font-bold text-slate-800 text-center sm:text-left focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
                                               >
                                                   {[1000, 500, 100, 50, 20, 10, 5, 2, 1].map(val => (
                                                       <option key={val} value={val}>{val >= 20 ? `แบงค์ ${val}` : `เหรียญ ${val}`}</option>
@@ -5931,67 +6547,72 @@ const App = () => {
                                           
                                           {/* 3. จำนวน */}
                                           <div className="sm:col-span-2">
-                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">จำนวน</span>
+                                              <span className="sm:hidden text-xs font-bold text-slate-700 mb-1.5 block text-left">จำนวน</span>
                                               <input
                                                   type="number"
                                                   placeholder="จำนวน"
                                                   value={item.quantity === 0 ? '' : item.quantity} 
                                                   disabled={viewOnlyMode}
                                                   onChange={(e) => handleSupportItemChange(idx, 'quantity', e.target.value)}
-                                                  className={`w-full px-2 py-2 bg-white border border-indigo-200 rounded-lg text-xs text-center font-bold text-slate-700 ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
+                                                  className={`w-full px-2 py-2 bg-white border border-indigo-200 rounded-lg text-xs text-center font-bold text-slate-800 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
                                               />
                                           </div>
 
                                           {/* 4. รวมเป็นเงิน */}
                                           <div className="sm:col-span-2">
-                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">รวมเป็นเงิน (บาท)</span>
+                                              <span className="sm:hidden text-xs font-bold text-slate-700 mb-1.5 block text-left">รวมเป็นเงิน (บาท)</span>
                                               <input
                                                   type="number"
                                                   placeholder="0.00"
                                                   value={item.price === 0 ? '' : item.price} 
                                                   disabled={viewOnlyMode}
                                                   onChange={(e) => handleSupportItemChange(idx, 'price', e.target.value)}
-                                                  className={`w-full px-2 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-xs font-black text-indigo-700 text-center sm:text-right ${viewOnlyMode ? 'opacity-80 cursor-not-allowed' : ''}`}
+                                                  className={`w-full px-2 py-2 bg-indigo-50/70 border border-indigo-200 rounded-lg text-xs font-black text-indigo-900 text-center sm:text-right focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'opacity-80 cursor-not-allowed' : ''}`}
                                               />
                                           </div>
 
                                           {/* 5. รายละเอียด */}
                                           <div className="sm:col-span-2">
-                                              <span className="sm:hidden text-xs font-bold text-indigo-400 mb-1 block text-left">รายละเอียด</span>
+                                              <span className="sm:hidden text-xs font-bold text-slate-700 mb-1.5 block text-left">รายละเอียด</span>
                                               <input
                                                   type="text"
                                                   placeholder="รายละเอียด (ถ้ามี)"
                                                   value={item.detail || ''}
                                                   disabled={viewOnlyMode}
                                                   onChange={(e) => handleSupportItemChange(idx, 'detail', e.target.value)}
-                                                  className={`w-full px-2 py-2 bg-white border border-indigo-200 rounded-lg text-xs text-left ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
+                                                  className={`w-full px-2 py-2 bg-white border border-indigo-200 rounded-lg text-xs text-left text-slate-800 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
                                               />
                                           </div>
 
-                                          {/* 6. ปุ่มลบ */}
-                                          <div className="sm:col-span-1 flex justify-center sm:justify-end">
+                                          {/* 6. ปุ่มลบ (Desktop Only) */}
+                                          <div className="hidden sm:flex sm:col-span-1 justify-end">
                                               {!viewOnlyMode && (
                                                   <button
+                                                      type="button"
                                                       onClick={() => handleRemoveSupportItem(idx)}
-                                                      className="p-1.5 text-indigo-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition"
+                                                      className="p-1.5 text-indigo-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                                      title={`ลบรายการที่ ${idx + 1}`}
                                                   >
                                                       <Trash2 className="w-4 h-4" />
                                                   </button>
                                               )}
                                           </div>
                                       </div>
+                                  </div>
                                   ))}
                               </div>
 
-                              <div className="flex justify-between items-center mt-4">
+                              {/* Footer Action Bar */}
+                              <div className="flex justify-between items-center mt-4 pt-3 border-t border-indigo-100/80">
                                   <button
+                                      type="button"
                                       onClick={handleAddSupportItem}
-                                      className="flex items-center gap-2 text-xs font-bold text-indigo-600 hover:text-indigo-800 hover:bg-indigo-100 px-3 py-2 rounded-lg transition w-fit"
+                                      className="flex items-center gap-2 text-xs font-bold text-indigo-700 hover:text-indigo-900 bg-white hover:bg-indigo-50 px-3.5 py-2 rounded-xl border border-indigo-200 transition shadow-2xs cursor-pointer w-fit"
                                   >
-                                      <Plus className="w-4 h-4" />
+                                      <Plus className="w-4 h-4 text-indigo-600" />
                                       เพิ่มรายการเงิน
                                   </button>
-                                  <div className="text-sm font-bold text-indigo-800 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100">
+                                  <div className="text-xs sm:text-sm font-black text-indigo-900 bg-white px-3.5 py-1.5 rounded-xl border border-indigo-200 shadow-2xs font-mono">
                                       รวม: ฿{customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0).toLocaleString()}
                                   </div>
                               </div>
@@ -6018,7 +6639,30 @@ const App = () => {
 
                                 {/* Dynamic Rows */}
                                 {quotationItems.map((item, idx) => (
-                                   <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-start animate-in fade-in slide-in-from-left-2 duration-300 bg-white p-3 sm:p-0 rounded-xl sm:bg-transparent border sm:border-none border-emerald-100 shadow-sm sm:shadow-none">
+                                   <div 
+                                       key={idx} 
+                                       className="rounded-2xl sm:rounded-none border border-emerald-200 sm:border-none overflow-hidden bg-white sm:bg-transparent shadow-xs sm:shadow-none animate-in fade-in slide-in-from-left-2 duration-300"
+                                   >
+                                       {/* Mobile Card Header */}
+                                       <div className="sm:hidden bg-gradient-to-r from-emerald-600 to-emerald-700 px-3.5 py-2 flex items-center justify-between text-white shadow-2xs">
+                                           <span className="font-black text-xs flex items-center gap-1.5 tracking-wide">
+                                               <FileText className="w-3.5 h-3.5 text-white/90" />
+                                               รายการที่ {idx + 1}
+                                           </span>
+                                           {!viewOnlyMode && (
+                                               <button
+                                                   type="button"
+                                                   onClick={() => handleRemoveQuotationItem(idx)}
+                                                   className="w-7 h-7 rounded-lg bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-90"
+                                                   title={`ลบรายการที่ ${idx + 1}`}
+                                               >
+                                                   <Trash2 className="w-3.5 h-3.5" />
+                                               </button>
+                                           )}
+                                       </div>
+
+                                       {/* Card Content / Desktop Row */}
+                                       <div className="p-3 sm:p-0 grid grid-cols-1 sm:grid-cols-12 gap-2 items-start">
                                        <div className="sm:col-span-3">
                                           <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">วันที่ทำบิล/รับเงิน</span>
                                           <ModernDateTimePicker
@@ -6071,16 +6715,22 @@ const App = () => {
                                             className="w-full px-2 py-2 bg-white border border-emerald-200 rounded-lg text-xs font-black text-emerald-700 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-right"
                                           />
                                        </div>
-                                       <div className="sm:col-span-1 flex justify-center sm:justify-end pt-1">
-                                          <button
-                                            onClick={() => handleRemoveQuotationItem(idx)}
-                                            className="p-1.5 text-emerald-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition"
-                                          >
-                                            <Trash2 className="w-4 h-4" />
-                                          </button>
+                                       {/* 6. ปุ่มลบ (Desktop Only) */}
+                                       <div className="hidden sm:flex sm:col-span-1 justify-end pt-1">
+                                          {!viewOnlyMode && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleRemoveQuotationItem(idx)}
+                                                className="p-1.5 text-emerald-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                                title={`ลบรายการที่ ${idx + 1}`}
+                                              >
+                                                <Trash2 className="w-4 h-4" />
+                                              </button>
+                                          )}
                                        </div>
-                                    </div>
-                                 ))}
+                                   </div>
+                               </div>
+                            ))}
                               </div>
 
                               <div className="flex justify-between items-center mt-4">
@@ -6104,7 +6754,7 @@ const App = () => {
                             <TrendingDown className="w-4 h-4" />
                             รายจ่ายจริง / ต้นทุนเพิ่ม (Expenses)
                          </h5>
-                         <p className="text-[10px] text-slate-400 -mt-1 ml-6">รายการนี้ไม่แสดงให้ลูกค้าเห็น (ใช้สำหรับคำนวณกำไรภายใน)</p>
+                         <p className="text-xs text-slate-400 -mt-1 ml-6">รายการนี้ไม่แสดงให้ลูกค้าเห็น (ใช้สำหรับคำนวณกำไรภายใน)</p>
                          <div className="bg-rose-50/50 rounded-2xl border border-rose-100 p-4">
                              <div className="space-y-3">
                                 {/* Header Row */}
@@ -6118,67 +6768,95 @@ const App = () => {
                                 </div>
 
                                 {expenses.map((item, idx) => (
-                                   <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-start animate-in fade-in slide-in-from-left-2 duration-300 bg-white p-3 sm:p-0 rounded-xl sm:bg-transparent border sm:border-none border-rose-100 shadow-sm sm:shadow-none">
-                                       <div className="sm:col-span-3">
-                                          <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">วันที่จ่ายเงิน</span>
-                                          <ModernDateTimePicker
-                                            value={item.date ? item.date.slice(0, 10) : ''}
-                                            hasTime={false}
-                                            compact={true}
-                                            placeholder="เลือกวันที่..."
-                                            onChange={(e) => handleExpenseChange(idx, 'date', e.target.value)}
-                                            className="border-rose-200 h-[34px]"
-                                          />
-                                       </div>
-                                       <div className="sm:col-span-2">
-                                          <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">หมวดหมู่</span>
-                                          <input
-                                            type="text"
-                                            list="expense-categories" 
-                                            placeholder="หมวดหมู่..."
-                                            value={item.category}
-                                            onChange={(e) => handleExpenseChange(idx, 'category', e.target.value)}
-                                            className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs focus:ring-2 focus:ring-rose-500/20"
-                                          />
-                                       </div>
-                                       <div className="sm:col-span-3">
-                                          <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">รายละเอียด</span>
-                                          <input
-                                            type="text"
-                                            placeholder="รายละเอียด..."
-                                            value={item.detail}
-                                            onChange={(e) => handleExpenseChange(idx, 'detail', e.target.value)}
-                                            className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs focus:ring-2 focus:ring-rose-500/20"
-                                          />
-                                       </div>
-                                       <div className="sm:col-span-1">
-                                          <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">จำนวน</span>
-                                          <input
-                                            type="number"
-                                            placeholder="1"
-                                            value={item.quantity}
-                                            onChange={(e) => handleExpenseChange(idx, 'quantity', e.target.value)}
-                                            className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs font-bold text-center text-slate-700 focus:ring-2 focus:ring-rose-500/20"
-                                          />
-                                       </div>
-                                       <div className="sm:col-span-2">
-                                          <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">ราคา/หน่วย</span>
-                                          <input
-                                            type="number"
-                                            placeholder="0.00"
-                                            value={item.unitPrice !== undefined ? item.unitPrice : item.price}
-                                            onChange={(e) => handleExpenseChange(idx, 'unitPrice', e.target.value)}
-                                            className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs font-semibold text-rose-800 focus:ring-2 focus:ring-rose-500/20 text-right"
-                                          />
-                                       </div>
-                                       <div className="sm:col-span-1 flex justify-center sm:justify-end pt-1">
-                                          <button
-                                            onClick={() => handleRemoveExpense(idx)}
-                                            className="p-1.5 text-rose-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition"
-                                          >
-                                            <Trash2 className="w-4 h-4" />
-                                          </button>
-                                       </div>
+                                    <div 
+                                        key={idx} 
+                                        className="rounded-2xl sm:rounded-none border border-rose-200 sm:border-none overflow-hidden bg-white sm:bg-transparent shadow-xs sm:shadow-none animate-in fade-in slide-in-from-left-2 duration-300"
+                                    >
+                                        {/* Mobile Card Header */}
+                                        <div className="sm:hidden bg-gradient-to-r from-rose-500 to-rose-600 px-3.5 py-2 flex items-center justify-between text-white shadow-2xs">
+                                            <span className="font-black text-xs flex items-center gap-1.5 tracking-wide">
+                                                <TrendingDown className="w-3.5 h-3.5 text-white/90" />
+                                                รายการที่ {idx + 1}
+                                            </span>
+                                            {!viewOnlyMode && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveExpense(idx)}
+                                                    className="w-7 h-7 rounded-lg bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-90"
+                                                    title={`ลบรายการที่ ${idx + 1}`}
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        {/* Card Content / Desktop Row */}
+                                        <div className="p-3 sm:p-0 grid grid-cols-1 sm:grid-cols-12 gap-2 items-start">
+                                            <div className="sm:col-span-3">
+                                               <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">วันที่จ่ายเงิน</span>
+                                               <ModernDateTimePicker
+                                                 value={item.date ? item.date.slice(0, 10) : ''}
+                                                 hasTime={false}
+                                                 compact={true}
+                                                 placeholder="เลือกวันที่..."
+                                                 onChange={(e) => handleExpenseChange(idx, 'date', e.target.value)}
+                                                 className="border-rose-200 h-[34px]"
+                                               />
+                                            </div>
+                                            <div className="sm:col-span-2">
+                                               <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">หมวดหมู่</span>
+                                               <input
+                                                 type="text"
+                                                 list="expense-categories" 
+                                                 placeholder="หมวดหมู่..."
+                                                 value={item.category}
+                                                 onChange={(e) => handleExpenseChange(idx, 'category', e.target.value)}
+                                                 className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs focus:ring-2 focus:ring-rose-500/20"
+                                               />
+                                            </div>
+                                            <div className="sm:col-span-3">
+                                               <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">รายละเอียด</span>
+                                               <input
+                                                 type="text"
+                                                 placeholder="รายละเอียด..."
+                                                 value={item.detail}
+                                                 onChange={(e) => handleExpenseChange(idx, 'detail', e.target.value)}
+                                                 className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs focus:ring-2 focus:ring-rose-500/20"
+                                               />
+                                            </div>
+                                            <div className="sm:col-span-1">
+                                               <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">จำนวน</span>
+                                               <input
+                                                 type="number"
+                                                 placeholder="1"
+                                                 value={item.quantity}
+                                                 onChange={(e) => handleExpenseChange(idx, 'quantity', e.target.value)}
+                                                 className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs font-bold text-center text-slate-700 focus:ring-2 focus:ring-rose-500/20"
+                                               />
+                                            </div>
+                                            <div className="sm:col-span-2">
+                                               <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">ราคา/หน่วย</span>
+                                               <input
+                                                 type="number"
+                                                 placeholder="0.00"
+                                                 value={item.unitPrice !== undefined ? item.unitPrice : item.price}
+                                                 onChange={(e) => handleExpenseChange(idx, 'unitPrice', e.target.value)}
+                                                 className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs font-semibold text-rose-800 focus:ring-2 focus:ring-rose-500/20 text-right"
+                                               />
+                                            </div>
+                                            <div className="hidden sm:flex sm:col-span-1 justify-end pt-1">
+                                               {!viewOnlyMode && (
+                                                   <button
+                                                     type="button"
+                                                     onClick={() => handleRemoveExpense(idx)}
+                                                     className="p-1.5 text-rose-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                                     title={`ลบรายการที่ ${idx + 1}`}
+                                                   >
+                                                     <Trash2 className="w-4 h-4" />
+                                                   </button>
+                                               )}
+                                            </div>
+                                        </div>
                                     </div>
                                  ))}
                               </div>
@@ -6211,7 +6889,7 @@ const App = () => {
                              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col justify-between">
                                 <div>
                                     <p className="text-sm font-bold text-slate-700 mb-1">1. เงินศิลปิน</p>
-                                    <p className="text-[10px] text-slate-500 mb-2">(ยอดสนับสนุน ไม่หักกำไร)</p>
+                                    <p className="text-xs text-slate-500 mb-2">(ยอดสนับสนุน ไม่หักกำไร)</p>
                                 </div>
                                 <p className={`font-black text-slate-800 tracking-tight break-all leading-tight ${(customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)).toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
                                     ฿{(customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)).toLocaleString()}
@@ -6222,7 +6900,7 @@ const App = () => {
                              <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 flex flex-col justify-between">
                                 <div>
                                     <p className="text-sm font-bold text-emerald-700 mb-1">2. รายได้</p>
-                                    <p className="text-[10px] text-emerald-600 mb-2">(รายการเสนอราคา)</p>
+                                    <p className="text-xs text-emerald-600 mb-2">(รายการเสนอราคา)</p>
                                 </div>
                                 <p className={`font-black text-emerald-700 tracking-tight break-all leading-tight ${(quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)).toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
                                     ฿{(quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)).toLocaleString()}
@@ -6233,7 +6911,7 @@ const App = () => {
                              <div className="bg-rose-50 p-4 rounded-2xl border border-rose-100 flex flex-col justify-between">
                                 <div>
                                     <p className="text-sm font-bold text-rose-700 mb-1">3. ค่าใช้จ่าย</p>
-                                    <p className="text-[10px] text-rose-500 mb-2">(รวมรายจ่ายจริง)</p>
+                                    <p className="text-xs text-rose-500 mb-2">(รวมรายจ่ายจริง)</p>
                                 </div>
                                 <p className={`font-black text-rose-600 tracking-tight break-all leading-tight ${totalExpenses.toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
                                     ฿{totalExpenses.toLocaleString()}
@@ -6244,7 +6922,7 @@ const App = () => {
                              <div className="bg-indigo-600 text-white p-4 rounded-2xl shadow-lg shadow-indigo-200 flex flex-col justify-between">
                                 <div>
                                     <p className="text-sm font-bold text-indigo-100 mb-1">4. กำไรสุทธิ</p>
-                                    <p className="text-[10px] text-indigo-200 mb-2">(รายได้ - ค่าใช้จ่าย)</p>
+                                    <p className="text-xs text-indigo-200 mb-2">(รายได้ - ค่าใช้จ่าย)</p>
                                 </div>
                                 <p className={`font-black tracking-tight break-all leading-tight ${((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) - totalExpenses).toString().length > 9 ? 'text-xl' : 'text-2xl'}`}>
                                   {((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) - totalExpenses) >= 0 ? '+' : ''}฿{((quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0)) - totalExpenses).toLocaleString()}

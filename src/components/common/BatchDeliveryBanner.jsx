@@ -170,9 +170,9 @@ export default function BatchDeliveryBanner({
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-black uppercase tracking-wider bg-white/25 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <span className="text-xs font-black uppercase tracking-wider bg-white/25 px-2 py-0.5 rounded-full flex items-center gap-1">
                 <span>⚡ Smart Batch Delivery Alert</span>
-                <span className="bg-amber-900/40 text-amber-100 px-1.5 py-0.2 rounded-full text-[10px]">
+                <span className="bg-amber-900/40 text-amber-100 px-1.5 py-0.2 rounded-full text-xs">
                   เฉพาะงานที่ยังไม่เสร็จ
                 </span>
               </span>
@@ -181,7 +181,7 @@ export default function BatchDeliveryBanner({
                 <span>{currentCluster.displayDate}</span>
               </span>
               {batchClusters.length > 1 && (
-                <span className="text-[11px] bg-white/20 px-2 py-0.5 rounded-full font-bold">
+                <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full font-bold">
                   กลุ่มที่ {currentIndex + 1} จาก {batchClusters.length}
                 </span>
               )}
@@ -207,7 +207,7 @@ export default function BatchDeliveryBanner({
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <span className="text-[11px] font-bold px-2 text-amber-100">
+              <span className="text-xs font-bold px-2 text-amber-100">
                 {currentIndex + 1}/{batchClusters.length}
               </span>
               <button
@@ -248,7 +248,7 @@ export default function BatchDeliveryBanner({
               <Truck className="w-4 h-4 text-amber-600" />
               <span>ลำดับคิวงานที่ยังไม่เสร็จ สำหรับจัดรถเที่ยวนี้:</span>
             </span>
-            <span className="text-[11px] text-amber-700 bg-amber-200/60 px-2 py-0.5 rounded-full font-bold">
+            <span className="text-xs text-amber-700 bg-amber-200/60 px-2 py-0.5 rounded-full font-bold">
               ยังไม่เสร็จ {currentCluster.items.length} งาน
             </span>
           </div>
@@ -264,7 +264,7 @@ export default function BatchDeliveryBanner({
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded font-mono">
+                      <span className="text-xs font-bold px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded font-mono">
                         #{idx + 1}
                       </span>
                       <span className="text-xs font-black text-slate-800 truncate">
@@ -272,7 +272,7 @@ export default function BatchDeliveryBanner({
                       </span>
                     </div>
 
-                    <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
+                    <div className="text-xs text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
                       <span className="truncate">ศิลปิน: <strong className="text-slate-700">{proj.artist || '-'}</strong></span>
                       {proj.deliveryDate && (
                         <span className="text-amber-800 font-medium">({proj.deliveryDate})</span>
@@ -280,11 +280,11 @@ export default function BatchDeliveryBanner({
                     </div>
 
                     <div className="mt-1.5 flex items-center gap-1.5">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${badge.color}`}>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-md border ${badge.color}`}>
                         {badge.label}
                       </span>
                       {proj.recipient && (
-                        <span className="text-[10px] text-slate-400 truncate">
+                        <span className="text-xs text-slate-400 truncate">
                           ผู้รับ: {proj.recipient}
                         </span>
                       )}

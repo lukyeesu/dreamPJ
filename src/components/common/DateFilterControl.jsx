@@ -46,7 +46,7 @@ export const DateFilterControl = ({ mode, setMode, date, setDate, range, setRang
       </div>
 
       {mode !== 'all' && (
-        <div className="flex-1 min-w-[140px] relative bg-white">
+        <div className="flex-1 min-w-[140px] relative bg-white h-full flex items-center">
 
         {mode === 'date' && (
           <ModernDateTimePicker
@@ -55,6 +55,7 @@ export const DateFilterControl = ({ mode, setMode, date, setDate, range, setRang
             hasTime={false}
             placeholder="เลือกวันที่..."
             pickerType="date"
+            className="border-0 bg-transparent rounded-none h-full py-0 shadow-none hover:border-0"
           />
         )}
 
@@ -65,6 +66,7 @@ export const DateFilterControl = ({ mode, setMode, date, setDate, range, setRang
             hasTime={false}
             placeholder="เลือกสัปดาห์..."
             pickerType="week"
+            className="border-0 bg-transparent rounded-none h-full py-0 shadow-none hover:border-0"
           />
         )}
 
@@ -75,6 +77,7 @@ export const DateFilterControl = ({ mode, setMode, date, setDate, range, setRang
             hasTime={false}
             placeholder="เลือกเดือน..."
             pickerType="month"
+            className="border-0 bg-transparent rounded-none h-full py-0 shadow-none hover:border-0"
           />
         )}
 
@@ -85,6 +88,7 @@ export const DateFilterControl = ({ mode, setMode, date, setDate, range, setRang
             hasTime={false}
             placeholder="เลือกปี..."
             pickerType="year"
+            className="border-0 bg-transparent rounded-none h-full py-0 shadow-none hover:border-0"
           />
         )}
 
@@ -97,7 +101,7 @@ export const DateFilterControl = ({ mode, setMode, date, setDate, range, setRang
                 hasTime={false}
                 placeholder="เริ่ม"
                 compact={true}
-                className="border-slate-200 h-9"
+                className="border-0 bg-transparent rounded-none h-full py-0 shadow-none hover:border-0"
               />
             </div>
             <span className="text-slate-300 shrink-0">-</span>
@@ -108,7 +112,7 @@ export const DateFilterControl = ({ mode, setMode, date, setDate, range, setRang
                 hasTime={false}
                 placeholder="สิ้นสุด"
                 compact={true}
-                className="border-slate-200 h-9"
+                className="border-0 bg-transparent rounded-none h-full py-0 shadow-none hover:border-0"
               />
             </div>
           </div>

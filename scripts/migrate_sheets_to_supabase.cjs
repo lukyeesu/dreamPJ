@@ -180,6 +180,14 @@ async function migrate() {
     await client.from('projects').delete().neq('id', '___PLACEHOLDER___');
     console.log('✅ Cleared old projects and financial items.');
 
+    // Clear deleted_records so stale deletion tombstones don't linger
+    try {
+      await client.from('deleted_records').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      console.log('✅ Cleared deleted_records.');
+    } catch (e) {
+      console.log('ℹ️ Note on deleted_records:', e.message);
+    }
+
     await client.from('artists').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     await client.from('customers').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     console.log('✅ Cleared old artists and customers.');
@@ -190,6 +198,14 @@ async function migrate() {
       console.log('✅ Cleared old delivery locations.');
     } catch (e) {
       console.log('ℹ️ delivery_locations table not created yet (will insert if created).');
+    }
+
+    // Clear old shop_settings
+    try {
+      await client.from('shop_settings').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      console.log('✅ Cleared old shop_settings.');
+    } catch (e) {
+      console.log('ℹ️ shop_settings clear note:', e.message);
     }
   } catch (err) {
     console.error('❌ Error clearing old records:', err.message);
@@ -219,10 +235,15 @@ async function migrate() {
       assets_folder_id: rawSettings.assets_drive_folder_id || '',
       line_bot_token: rawSettings.line_bot_token || '',
       telegram_bot_token: rawSettings.telegram_bot_token || '',
-      telegram_chat_id: String(rawSettings.telegram_chat_id || '')
+      telegram_chat_id: String(rawSettings.telegram_chat_id || ''),
+      project_categories: rawSettings.project_categories || [],
+      expense_categories: rawSettings.expense_categories || [],
+      deal_statuses: rawSettings.deal_statuses || [],
+      transport_statuses: rawSettings.transport_statuses || [],
+      drive_folders: rawSettings.drive_folders || []
     }];
     try {
-      await client.from('shop_settings').upsert(shopPayload);
+      await client.from('shop_settings').insert(shopPayload);
       console.log('✅ Shop settings migrated.');
     } catch (e) {
       console.warn('⚠️ Shop settings note:', e.message);
@@ -452,9 +473,10 @@ async function migrate() {
 
     // Parse date
     let projectDateTime = null;
-    if (row.rawDateTime) {
+    const dateCandidate = row.rawDateTime || row.date || row.rawDeliveryStart;
+    if (dateCandidate) {
       try {
-        const d = new Date(row.rawDateTime);
+        const d = new Date(dateCandidate);
         if (!isNaN(d.getTime())) projectDateTime = d.toISOString();
       } catch (e) {}
     }
@@ -542,7 +564,8 @@ async function migrate() {
     console.log(`\n📤 9.1 Inserting ${quotationItemsToInsert.length} quotation items...`);
     for (let i = 0; i < quotationItemsToInsert.length; i += 100) {
       const chunk = quotationItemsToInsert.slice(i, i + 100);
-      await client.from('project_quotation_items').insert(chunk);
+      const { error } = await client.from('project_quotation_items').insert(chunk);
+      if (error) console.error('⚠️ Quotation chunk error:', error.message);
     }
     console.log('✅ All quotation items inserted.');
   }
@@ -551,7 +574,8 @@ async function migrate() {
     console.log(`📤 9.2 Inserting ${supportItemsToInsert.length} customer support money items...`);
     for (let i = 0; i < supportItemsToInsert.length; i += 100) {
       const chunk = supportItemsToInsert.slice(i, i + 100);
-      await client.from('project_customer_support').insert(chunk);
+      const { error } = await client.from('project_customer_support').insert(chunk);
+      if (error) console.error('⚠️ Support chunk error:', error.message);
     }
     console.log('✅ All customer support money items inserted.');
   }
@@ -560,7 +584,8 @@ async function migrate() {
     console.log(`📤 9.3 Inserting ${expensesToInsert.length} expense items...`);
     for (let i = 0; i < expensesToInsert.length; i += 100) {
       const chunk = expensesToInsert.slice(i, i + 100);
-      await client.from('project_expenses').insert(chunk);
+      const { error } = await client.from('project_expenses').insert(chunk);
+      if (error) console.error('⚠️ Expense chunk error:', error.message);
     }
     console.log('✅ All expense items inserted.');
   }

@@ -47,8 +47,9 @@ import {
 } from './services/syncService';
 import Toast from './components/common/Toast';
 import ConfirmDialog from './components/common/ConfirmDialog';
+import { useStickyFilter } from './hooks/useStickyFilter';
 
-function QuotationsView({
+function Quotations({
   activities = [],
   allProjects = [],
   customers = [],
@@ -61,6 +62,7 @@ function QuotationsView({
   onRefresh
 }) {
   // Navigation & Filter States
+  const { isFilterStuck, filterSentinelRef } = useStickyFilter();
   const [searchQuery, setSearchQuery] = useState('');
   const [filterTab, setFilterTab] = useState('all'); // 'all' | 'unlinked' | 'linked'
   const [previewProject, setPreviewProject] = useState(null);
@@ -315,16 +317,20 @@ function QuotationsView({
 
       // Find standard price from material rates if not set
       const standardRate = materialRates.find(r => r.id === item.materialId || r.name === item.materialName);
-      const basePriceSqm = item.basePriceSqm ?? (standardRate ? Number(standardRate.default_price_sqm) : 450);
-      const unitPriceSqm = item.unitPriceSqm ?? basePriceSqm;
-      const isOverridden = unitPriceSqm !== basePriceSqm;
+      const basePriceSqm = item.basePriceSqm !== undefined && item.basePriceSqm !== '' && !isNaN(Number(item.basePriceSqm))
+        ? Number(item.basePriceSqm)
+        : (standardRate ? Number(standardRate.default_price_sqm) : 0);
+      const unitPriceSqm = item.unitPriceSqm !== undefined && item.unitPriceSqm !== '' && !isNaN(Number(item.unitPriceSqm))
+        ? Number(item.unitPriceSqm)
+        : basePriceSqm;
+      const isOverridden = basePriceSqm > 0 && unitPriceSqm !== basePriceSqm;
       const lineTotal = Math.round(totalSqm * unitPriceSqm);
 
       return {
         ...item,
         totalSqm,
         basePriceSqm,
-        unitPriceSqm,
+        unitPriceSqm: item.unitPriceSqm !== undefined ? item.unitPriceSqm : unitPriceSqm,
         isOverridden,
         lineTotal
       };
@@ -334,13 +340,11 @@ function QuotationsView({
   // Real-time Calculations for Floral & Equipment Items
   const calculatedFloral = useMemo(() => {
     return floralItems.map(item => {
-      const q = Number(item.qty) || 1;
-      const p = Number(item.unitPrice) || 0;
+      const q = item.qty !== undefined && item.qty !== '' ? (Number(item.qty) || 0) : 1;
+      const p = item.unitPrice !== undefined && item.unitPrice !== '' ? (Number(item.unitPrice) || 0) : 0;
       const lineTotal = Math.round(q * p);
       return {
         ...item,
-        qty: q,
-        unitPrice: p,
         lineTotal
       };
     });
@@ -525,30 +529,31 @@ function QuotationsView({
     setMarkupPercent(30);
     setFinalPriceInput(null);
 
-    // Initial default backdrop item
-    const defaultRate = materialRates[1] || materialRates[0] || { id: 'mat-fb-5mm', name: 'ฟิวเจอร์บอร์ด 5 มม. พร้อมไดคัท', default_price_sqm: 450 };
+    // Initial blank backdrop item
     setBackdropItems([
       {
         id: `bd-${Date.now()}`,
-        materialId: defaultRate.id,
-        materialName: defaultRate.name,
-        detail: 'ฉากหลักถ่ายรูป',
-        width: 2.4,
-        height: 2.4,
+        materialId: '',
+        materialName: '',
+        detail: '',
+        width: '',
+        height: '',
         qty: 1,
-        basePriceSqm: Number(defaultRate.default_price_sqm),
-        unitPriceSqm: Number(defaultRate.default_price_sqm)
+        basePriceSqm: '',
+        unitPriceSqm: ''
       }
     ]);
 
-    // Initial default floral item
+    // Initial blank floral item
     setFloralItems([
       {
         id: `fl-${Date.now()}`,
-        name: 'ซุ้มดอกไม้สดหน้าฉาก + โฟมโอเอซิส',
-        unit: 'เซ็ต',
+        name: '',
+        unit: '',
         qty: 1,
-        unitPrice: 4500
+        unitPrice: '',
+        inventory_id: null,
+        base_cost: 0
       }
     ]);
 
@@ -571,14 +576,14 @@ function QuotationsView({
       ? doc.backdrop_items
       : [{
           id: `bd-${Date.now()}`,
-          materialId: 'mat-fb-5mm',
-          materialName: 'ฟิวเจอร์บอร์ด 5 มม. พร้อมไดคัท',
-          detail: 'ฉากหลัก',
-          width: 2.4,
-          height: 2.4,
+          materialId: '',
+          materialName: '',
+          detail: '',
+          width: '',
+          height: '',
           qty: 1,
-          basePriceSqm: 450,
-          unitPriceSqm: 450
+          basePriceSqm: '',
+          unitPriceSqm: ''
         }]
     );
 
@@ -622,19 +627,18 @@ function QuotationsView({
 
   // Add Item Handlers
   const handleAddBackdropRow = () => {
-    const defaultRate = materialRates[0] || { id: 'mat-fb-3mm', name: 'ฟิวเจอร์บอร์ด 3 มม.', default_price_sqm: 350 };
-    setBackdropItems([
-      ...backdropItems,
+    setBackdropItems(prev => [
+      ...prev,
       {
         id: `bd-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        materialId: defaultRate.id,
-        materialName: defaultRate.name,
-        detail: 'ป้ายเสริม / สแตนดี้',
-        width: 1.0,
-        height: 1.5,
+        materialId: '',
+        materialName: '',
+        detail: '',
+        width: '',
+        height: '',
         qty: 1,
-        basePriceSqm: Number(defaultRate.default_price_sqm),
-        unitPriceSqm: Number(defaultRate.default_price_sqm)
+        basePriceSqm: '',
+        unitPriceSqm: ''
       }
     ]);
   };
@@ -646,9 +650,9 @@ function QuotationsView({
       {
         id: `fl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         name: '',
-        unit: 'ชิ้น',
+        unit: '',
         qty: 1,
-        unitPrice: 0,
+        unitPrice: '',
         inventory_id: null,
         base_cost: 0
       }
@@ -706,7 +710,10 @@ function QuotationsView({
       updated[index].basePriceSqm = Number(matchedRate.default_price_sqm);
       updated[index].unitPriceSqm = Number(matchedRate.default_price_sqm); // Reset to standard
     } else {
-      updated[index].materialName = selectedRateName;
+      updated[index].materialId = '';
+      updated[index].materialName = selectedRateName || '';
+      updated[index].basePriceSqm = '';
+      updated[index].unitPriceSqm = '';
     }
     setBackdropItems(updated);
   };
@@ -737,8 +744,18 @@ function QuotationsView({
         title: title.trim(),
         client_name: clientName.trim(),
         project_code: projectCode.trim() || null,
-        backdrop_items: calculatedBackdrops,
-        floral_items: calculatedFloral,
+        backdrop_items: calculatedBackdrops.map(b => ({
+          ...b,
+          width: Number(b.width) || 0,
+          height: Number(b.height) || 0,
+          qty: Number(b.qty) || 1,
+          unitPriceSqm: Number(b.unitPriceSqm) || 0
+        })),
+        floral_items: calculatedFloral.map(f => ({
+          ...f,
+          qty: Number(f.qty) || 1,
+          unitPrice: Number(f.unitPrice) || 0
+        })),
         backdrop_cost: totalBackdropCost,
         floral_cost: totalFloralCost,
         total_cost: totalCost,
@@ -778,10 +795,10 @@ function QuotationsView({
       });
 
       setIsModalOpen(false);
-      showToast('บันทึกใบเสนอราคาเรียบร้อย', 'success');
+      showToast('บันทึกการคำนวณราคาเรียบร้อย', 'success');
       if (onRefresh) onRefresh();
     } catch (err) {
-      showToast('บันทึกใบเสนอราคาไม่สำเร็จ: ' + err.message, 'error');
+      showToast('บันทึกการคำนวณราคาไม่สำเร็จ: ' + err.message, 'error');
     } finally {
       setIsSaving(false);
     }
@@ -804,7 +821,7 @@ function QuotationsView({
       setQuotationDocs(prev => prev.filter(d => d.id !== deleteConfirm.id));
       setDeleteConfirm({ isOpen: false, id: null, quoteNo: '' });
       setIsModalOpen(false);
-      showToast('ลบใบเสนอราคาเรียบร้อย', 'success');
+      showToast('ลบรายการคำนวณราคาเรียบร้อย', 'success');
       if (onRefresh) onRefresh();
     } catch (err) {
       showToast('ลบไม่สำเร็จ: ' + err.message, 'error');
@@ -855,102 +872,115 @@ function QuotationsView({
   };
 
   return (
-    <div className="space-y-6 sm:space-y-8 flex flex-col min-h-full pb-24 md:pb-6 px-4 sm:px-8 lg:px-10 pt-4">
+    <div className="flex flex-col gap-6 min-h-full pb-24 md:pb-6 px-4 sm:px-8 lg:px-10 pt-4">
       {/* 4 Summary Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-slate-500">ใบเสนอราคาทั้งหมด</span>
+            <span className="text-sm font-bold text-slate-600">รายการคำนวณราคาทั้งหมด</span>
             <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
-              <FileText className="w-4 h-4 sm:w-5 sm:h-5" />
+              <Calculator className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-slate-900">{stats.total} รายการ</p>
-          <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-slate-400">คลังประวัติคำนวณต้นทุน</div>
+          <div className="mt-1 pt-1 border-t border-slate-50 text-xs text-slate-500 font-medium">คลังประวัติคำนวณต้นทุน</div>
         </div>
 
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-amber-700">ยังไม่ผูกโปรเจกต์ (Draft)</span>
+            <span className="text-sm font-bold text-amber-800">ยังไม่ผูกโปรเจกต์ (Draft)</span>
             <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
               <Clock className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-amber-700">{stats.unlinked} รายการ</p>
-          <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-amber-600">ประเมินราคาล่วงหน้า</div>
+          <div className="mt-1 pt-1 border-t border-slate-50 text-xs text-amber-700 font-semibold">ประเมินราคาล่วงหน้า</div>
         </div>
 
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-emerald-700">ผูกโปรเจกต์แล้ว (Linked)</span>
+            <span className="text-sm font-bold text-emerald-800">ผูกโปรเจกต์แล้ว (Linked)</span>
             <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
               <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-emerald-700">{stats.linked} รายการ</p>
-          <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-emerald-600">เชื่อมโยงรหัสโปรเจกต์ P-XXXX</div>
+          <div className="mt-1 pt-1 border-t border-slate-50 text-xs text-emerald-700 font-semibold">เชื่อมโยงรหัสโปรเจกต์ P-XXXX</div>
         </div>
 
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-indigo-700">มูลค่ายอดเสนอราคารวม</span>
+            <span className="text-sm font-bold text-indigo-800">มูลค่ายอดคำนวณราคารวม</span>
             <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
               <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-indigo-700">฿{stats.totalQuotedValue.toLocaleString()}</p>
-          <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-indigo-600">รวมราคาเสนอขายลูกค้า</div>
+          <div className="mt-1 pt-1 border-t border-slate-50 text-xs text-indigo-700 font-semibold">รวมราคาเสนอขายลูกค้า</div>
         </div>
       </div>
 
-      {/* 2.1 ส่วนบน: Header & Filter Bar & Action Buttons */}
-      <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          {/* Status Filter Tabs */}
-          <div className="flex gap-1.5 p-1 bg-slate-100 rounded-2xl w-full sm:w-auto">
+      {/* 2.1 ส่วนบน: Header & Filter Bar */}
+      <div 
+        ref={filterSentinelRef} 
+        className="w-full h-0 -my-3 pointer-events-none opacity-0"
+      />
+      <div className={`bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out z-20 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 ${
+        isFilterStuck
+          ? '-mx-4 sm:-mx-8 lg:-mx-10 py-2 sm:py-2.5 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
+          : 'p-3 sm:p-3.5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
+      }`}>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+          {/* Search Bar */}
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="ค้นหาจากชื่อศิลปิน, ชื่องาน, เลขที่คำนวณราคา (QT-XXXX), หรือเลขโปรเจกต์ (P-XXXX)..."
+              className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 focus:bg-white transition-colors"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition cursor-pointer"
+                title="ล้างข้อความค้นหา"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Status Filter Dropdown (Replaces bulky button tabs) */}
+            <div className="relative flex-1 sm:w-56 shrink-0">
+              <select
+                value={filterTab}
+                onChange={(e) => setFilterTab(e.target.value)}
+                className="w-full pl-3.5 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
+              >
+                <option value="all">สถานะ: ทั้งหมด ({quotationDocs.length})</option>
+                <option value="unlinked">ยังไม่ผูกโปรเจกต์ ({stats.unlinked})</option>
+                <option value="linked">ผูกโปรเจกต์แล้ว ({stats.linked})</option>
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+
+            {/* Reset Filter Button */}
             <button
-              onClick={() => setFilterTab('all')}
-              className={`flex-1 sm:flex-none py-2 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer ${
-                filterTab === 'all'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                setFilterTab('all');
+              }}
+              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer shadow-2xs"
+              title="ล้างค่าตัวกรองทั้งหมด"
             >
-              ทั้งหมด ({quotationDocs.length})
-            </button>
-            <button
-              onClick={() => setFilterTab('unlinked')}
-              className={`flex-1 sm:flex-none py-2 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer ${
-                filterTab === 'unlinked'
-                  ? 'bg-white text-amber-700 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              ยังไม่ผูกโปรเจกต์ ({stats.unlinked})
-            </button>
-            <button
-              onClick={() => setFilterTab('linked')}
-              className={`flex-1 sm:flex-none py-2 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer ${
-                filterTab === 'linked'
-                  ? 'bg-white text-emerald-700 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              ผูกโปรเจกต์แล้ว ({stats.linked})
+              <RotateCcw className="w-4 h-4" />
             </button>
           </div>
-        </div>
-
-        {/* Search Bar */}
-        <div className="relative">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="ค้นหาจากชื่อศิลปิน, ชื่องาน, เลขใบเสนอราคา (QT-XXXX), หรือเลขโปรเจกต์ (P-XXXX)..."
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 focus:bg-white transition-colors"
-          />
         </div>
       </div>
 
@@ -959,21 +989,21 @@ function QuotationsView({
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-100 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                <th className="py-3.5 px-5">เลขใบเสนอราคา</th>
+              <tr className="bg-slate-50/80 border-b border-slate-100 text-xs sm:text-sm font-bold text-slate-700 uppercase tracking-wider">
+                <th className="py-3.5 px-5">เลขที่คำนวณราคา</th>
                 <th className="py-3.5 px-4">ชื่องาน / ศิลปิน</th>
                 <th className="py-3.5 px-4">เลขโปรเจกต์ที่ผูก</th>
                 <th className="py-3.5 px-4">สรุปรายการสเปก</th>
                 <th className="py-3.5 px-4 text-right">ต้นทุนรวม (Cost)</th>
-                <th className="py-3.5 px-4 text-right">ราคาเสนอ (Quote)</th>
+                <th className="py-3.5 px-4 text-right">ราคาเสนอขาย (Quote)</th>
                 <th className="py-3.5 px-5 text-right">จัดการ (Actions)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-sm">
               {filteredQuotations.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="py-12 text-center text-slate-400">
-                    ไม่พบใบเสนอราคา กดปุ่ม "+ สร้างใบเสนอราคาใหม่" เพื่อเริ่มต้นคำนวณต้นทุน
+                  <td colSpan="7" className="py-12 text-center text-slate-500 font-medium text-sm">
+                    ไม่พบรายการคำนวณราคา กดปุ่ม "+ คำนวณราคา" เพื่อเริ่มต้นประเมินต้นทุน
                   </td>
                 </tr>
               ) : (
@@ -991,21 +1021,21 @@ function QuotationsView({
                     >
                       {/* เลขใบเสนอราคา */}
                       <td className="py-3.5 px-5 font-bold">
-                        <div className="font-mono text-xs text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg inline-block font-black">
+                        <div className="font-mono text-xs sm:text-sm text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg inline-block font-black">
                           {doc.quote_no}
                         </div>
-                        <div className="text-[11px] text-slate-400 mt-1">
+                        <div className="text-xs text-slate-500 font-medium mt-1">
                           {getQuotationDisplayDate(doc)}
                         </div>
                       </td>
 
                       {/* ชื่องาน / ศิลปิน */}
                       <td className="py-3.5 px-4">
-                        <div className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                        <div className="font-bold text-slate-900 text-sm sm:text-base group-hover:text-indigo-600 transition-colors">
                           {doc.title}
                         </div>
                         {doc.client_name && (
-                          <div className="text-xs text-slate-500 mt-0.5">
+                          <div className="text-xs text-slate-600 font-medium mt-0.5">
                             ลูกค้า: {doc.client_name}
                           </div>
                         )}
@@ -1014,40 +1044,40 @@ function QuotationsView({
                       {/* เลขโปรเจกต์ที่ผูก */}
                       <td className="py-3.5 px-4">
                         {doc.project_code ? (
-                          <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 font-mono font-black text-xs border border-emerald-200">
+                          <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 font-mono font-black text-xs sm:text-sm border border-emerald-200">
                             {doc.project_code}
                           </span>
                         ) : (
-                          <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 font-bold text-xs border border-amber-200">
+                          <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 font-bold text-xs sm:text-sm border border-amber-200">
                             รอผูกโปรเจกต์
                           </span>
                         )}
                       </td>
 
                       {/* สรุปรายการ */}
-                      <td className="py-3.5 px-4 text-xs">
-                        <div className="text-slate-700 font-medium">
+                      <td className="py-3.5 px-4 text-xs sm:text-sm">
+                        <div className="text-slate-800 font-medium">
                           Backdrop {bdList.length} รายการ ({totalSqm.toFixed(1)} ตร.ม.)
                         </div>
-                        <div className="text-slate-400 mt-0.5">
+                        <div className="text-slate-500 font-medium mt-0.5">
                           ดอกไม้/อุปกรณ์ {flList.length} รายการ
                         </div>
                         {hasOverride && (
-                          <span className="inline-block mt-1 text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                          <span className="inline-block mt-1 text-xs font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">
                             มีปรับราคาหน้างาน
                           </span>
                         )}
                       </td>
 
                       {/* ต้นทุนรวม */}
-                      <td className="py-3.5 px-4 text-right font-bold text-slate-600 text-xs sm:text-sm">
+                      <td className="py-3.5 px-4 text-right font-bold text-slate-700 text-sm sm:text-base">
                         ฿{Number(doc.total_cost || 0).toLocaleString()}
                       </td>
 
                       {/* ราคาเสนอ (Quote) */}
-                      <td className="py-3.5 px-4 text-right font-black text-indigo-700 text-base">
+                      <td className="py-3.5 px-4 text-right font-black text-indigo-700 text-base sm:text-lg">
                         ฿{Number(doc.final_price || 0).toLocaleString()}
-                        <div className="text-[10px] text-emerald-600 font-bold">
+                        <div className="text-xs text-emerald-700 font-bold mt-0.5">
                           +{doc.markup_percent || 30}% Markup
                         </div>
                       </td>
@@ -1079,7 +1109,7 @@ function QuotationsView({
                           <button
                             onClick={() => promptDeleteQuotation(doc.id, doc.quote_no)}
                             className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                            title="ลบใบเสนอราคา"
+                            title="ลบรายการคำนวณราคา"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -1098,7 +1128,7 @@ function QuotationsView({
       <div className="md:hidden space-y-3">
         {filteredQuotations.length === 0 ? (
           <div className="bg-white p-8 rounded-2xl border border-slate-100 text-center text-slate-400">
-            ไม่พบใบเสนอราคา
+            ไม่พบรายการคำนวณราคา
           </div>
         ) : (
           filteredQuotations.map((doc) => (
@@ -1114,21 +1144,21 @@ function QuotationsView({
                       {doc.quote_no}
                     </span>
                     {doc.project_code ? (
-                      <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-50 text-emerald-800">
+                      <span className="px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-50 text-emerald-800">
                         {doc.project_code}
                       </span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-800">
+                      <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-50 text-amber-800">
                         รอผูกโปรเจกต์
                       </span>
                     )}
-                    <span className="text-[10px] text-slate-400 ml-auto">
+                    <span className="text-xs text-slate-500 font-medium ml-auto">
                       {getQuotationDisplayDate(doc)}
                     </span>
                   </div>
                   <h3 className="font-bold text-slate-900 text-sm mt-1">{doc.title}</h3>
                   {doc.client_name && (
-                    <p className="text-xs text-slate-400">ลูกค้า: {doc.client_name}</p>
+                    <p className="text-xs text-slate-600 font-medium">ลูกค้า: {doc.client_name}</p>
                   )}
                 </div>
 
@@ -1146,11 +1176,11 @@ function QuotationsView({
               {/* Price Breakdown */}
               <div className="bg-slate-50 p-2.5 rounded-xl flex items-center justify-between text-xs">
                 <div>
-                  <span className="text-slate-400 text-[10px] block">ต้นทุนรวม</span>
-                  <span className="font-bold text-slate-600">฿{Number(doc.total_cost || 0).toLocaleString()}</span>
+                  <span className="text-slate-500 text-xs font-medium block">ต้นทุนรวม</span>
+                  <span className="font-bold text-slate-700 text-sm">฿{Number(doc.total_cost || 0).toLocaleString()}</span>
                 </div>
                 <div className="text-right">
-                  <span className="text-slate-400 text-[10px] block">ราคาเสนอขาย</span>
+                  <span className="text-slate-500 text-xs font-medium block">ราคาเสนอขาย</span>
                   <span className="font-black text-indigo-700 text-base">฿{Number(doc.final_price || 0).toLocaleString()}</span>
                 </div>
               </div>
@@ -1181,9 +1211,9 @@ function QuotationsView({
                 <div>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                     <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
-                      {editingDocId ? 'แก้ไขใบเสนอราคา' : 'สร้างใบเสนอราคาใหม่'}
+                      {editingDocId ? 'แก้ไขการคำนวณราคา' : 'คำนวณราคาใหม่'}
                     </h3>
-                    <span className="bg-indigo-50 text-indigo-600 text-[10px] sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 font-mono w-fit">
+                    <span className="bg-indigo-50 text-indigo-700 text-xs sm:text-sm px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-200 font-mono w-fit">
                       {quoteNo}
                     </span>
                   </div>
@@ -1232,8 +1262,8 @@ function QuotationsView({
                         </button>
                       </div>
                     ) : (
-                      <span className="text-[11px] font-medium text-slate-400 bg-slate-100/80 px-2.5 py-1 rounded-lg">
-                        ใบเสนอราคาอิสระ (ยังไม่ผูกโปรเจกต์)
+                      <span className="text-xs font-semibold text-slate-600 bg-slate-100/80 px-2.5 py-1 rounded-lg">
+                        ราคาประเมินอิสระ (ยังไม่ผูกโปรเจกต์)
                       </span>
                     )}
                   </div>
@@ -1241,7 +1271,7 @@ function QuotationsView({
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-3.5">
                     {/* ชื่องาน / ศิลปิน * */}
                     <div className="sm:col-span-7">
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                      <label className="block text-sm font-bold text-slate-800 mb-1">
                         ชื่องาน / ศิลปิน *
                       </label>
                       <input
@@ -1256,10 +1286,10 @@ function QuotationsView({
 
                     {/* ชื่อลูกค้า / บ้านเบส (Searchable Autocomplete จากฐานข้อมูลลูกค้าและประวัติงาน) */}
                     <div className="sm:col-span-5 relative" ref={customerDropdownRef}>
-                      <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+                      <label className="block text-sm font-bold text-slate-800 mb-1 flex items-center justify-between">
                         <span>ชื่อลูกค้า / ผู้ติดต่อ / บ้านเบส</span>
                         {customerCandidates.length > 0 && (
-                          <span className="text-[10px] text-slate-400 font-normal">
+                          <span className="text-xs text-slate-500 font-medium">
                             (ค้นหาลูกค้าเก่าอัตโนมัติ)
                           </span>
                         )}
@@ -1279,7 +1309,7 @@ function QuotationsView({
                       {/* Dropdown Customer Candidates */}
                       {isCustomerDropdownOpen && filteredCustomerCandidates.length > 0 && (
                         <div className="absolute left-0 right-0 top-full mt-1.5 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 max-h-56 overflow-y-auto divide-y divide-slate-100">
-                          <div className="px-3 py-1.5 bg-slate-50 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between sticky top-0 backdrop-blur-sm z-10">
+                          <div className="px-3 py-1.5 bg-slate-50 text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center justify-between sticky top-0 backdrop-blur-sm z-10">
                             <span>รายชื่อลูกค้าในฐานข้อมูล</span>
                             <span>{filteredCustomerCandidates.length} รายการ</span>
                           </div>
@@ -1290,23 +1320,23 @@ function QuotationsView({
                                 setClientName(c.name);
                                 setIsCustomerDropdownOpen(false);
                               }}
-                              className="p-2.5 hover:bg-violet-50/80 cursor-pointer text-xs flex items-center justify-between transition-colors group"
+                              className="p-2.5 hover:bg-violet-50/80 cursor-pointer text-xs sm:text-sm flex items-center justify-between transition-colors group"
                             >
                               <div className="flex items-center gap-2">
                                 <span className="font-bold text-slate-800 group-hover:text-violet-700 transition-colors">
                                   {c.name}
                                 </span>
                                 {c.projectCount > 0 ? (
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold border border-emerald-100">
+                                  <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold border border-emerald-100">
                                     ลูกค้าเก่า ({c.projectCount} งาน)
                                   </span>
                                 ) : (
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium">
+                                  <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium">
                                     ลูกค้าในระบบ
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[11px] font-mono text-slate-400 group-hover:text-violet-600 transition-colors">
+                              <div className="text-xs font-mono text-slate-500 group-hover:text-violet-600 transition-colors">
                                 {c.phone || c.social}
                               </div>
                             </div>
@@ -1317,13 +1347,13 @@ function QuotationsView({
 
                     {/* ช่องผูกเลขโปรเจกต์ (Searchable Combobox / Autocomplete) */}
                     <div className="sm:col-span-12 relative" ref={projectDropdownRef}>
-                      <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+                      <label className="block text-sm font-bold text-slate-800 mb-1 flex items-center justify-between">
                         <span className="flex items-center gap-1.5">
                           <LinkIcon className="w-3.5 h-3.5 text-indigo-500" />
                           <span>ผูกกับโปรเจกต์ในระบบ (ทางเลือก - พิมพ์ค้นหารหัสหรือชื่อ)</span>
                         </span>
                         {projectCode && (
-                          <span className="text-[11px] font-mono text-emerald-600 font-bold">
+                          <span className="text-xs font-mono text-emerald-600 font-bold">
                             เลือก: {projectCode}
                           </span>
                         )}
@@ -1365,7 +1395,7 @@ function QuotationsView({
                           </div>
 
                           {filteredProjectOptions.length === 0 ? (
-                            <div className="p-3 text-xs text-slate-400 text-center">
+                            <div className="p-3 text-xs sm:text-sm text-slate-500 font-medium text-center">
                               ไม่พบโปรเจกต์ที่ตรงกับคำค้นหา
                             </div>
                           ) : (
@@ -1409,7 +1439,7 @@ function QuotationsView({
                         <h4 className="font-black text-slate-900 text-sm sm:text-base flex items-center gap-2">
                           <span>คำนวณ Backdrop & โครงสร้างป้าย (คิดตาม ตร.ม.)</span>
                         </h4>
-                        <p className="text-[11px] text-slate-500 font-medium">
+                        <p className="text-xs sm:text-sm text-slate-600 font-medium">
                           กว้าง x สูง x จำนวน = ตร.ม. อัตโนมัติ พร้อมดึงราคากลาง และแก้ไขราคาต่อหน่วยได้อิสระ
                         </p>
                       </div>
@@ -1420,25 +1450,45 @@ function QuotationsView({
                     {calculatedBackdrops.map((item, index) => (
                       <div
                         key={item.id}
-                        className={`p-4 rounded-2xl border transition-all shadow-xs space-y-3 ${
+                        className={`rounded-2xl border transition-all shadow-xs overflow-hidden ${
                           item.isOverridden
                             ? 'bg-amber-50/30 border-amber-300 hover:border-amber-400'
                             : 'bg-white border-slate-200/90 hover:border-indigo-300'
                         }`}
                       >
+                        {/* Mobile Card Header */}
+                        <div className="sm:hidden bg-gradient-to-r from-indigo-600 to-blue-600 px-3.5 py-2 flex items-center justify-between text-white shadow-2xs">
+                          <span className="font-black text-xs flex items-center gap-1.5 tracking-wide">
+                            <Layers className="w-3.5 h-3.5 text-white/90" />
+                            รายการที่ {index + 1}
+                          </span>
+                          {backdropItems.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setBackdropItems(backdropItems.filter((_, i) => i !== index))}
+                              className="w-7 h-7 rounded-lg bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-90"
+                              title={`ลบรายการที่ ${index + 1}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="p-4 space-y-3">
                         {/* Row 1: วัสดุ & จุดติดตั้ง */}
                         <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
                           <div className="sm:col-span-7">
-                            <label className="text-[11px] font-bold text-slate-600 mb-1 flex items-center gap-1">
+                            <label className="text-xs sm:text-sm font-bold text-slate-800 mb-1 flex items-center gap-1">
                               <span>ชนิดวัสดุโครงสร้าง / ป้าย</span>
-                              <span className="text-slate-400 font-normal">(ราคากลาง)</span>
+                              <span className="text-slate-500 font-medium text-xs">(ราคากลาง)</span>
                             </label>
                             <div className="relative">
                               <select
-                                value={item.materialName}
+                                value={item.materialName || ''}
                                 onChange={(e) => handleMaterialChange(index, e.target.value)}
                                 className="w-full pl-3 pr-8 py-2 bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors cursor-pointer appearance-none"
                               >
+                                <option value="">-- เลือกชนิดวัสดุโครงสร้าง --</option>
                                 {materialRates.map(r => (
                                   <option key={r.id || r.name} value={r.name}>
                                     {r.name} — ฿{Number(r.default_price_sqm).toLocaleString()} / ตร.ม.
@@ -1450,7 +1500,7 @@ function QuotationsView({
                           </div>
 
                           <div className="sm:col-span-5">
-                            <label className="text-[11px] font-bold text-slate-600 mb-1 block">
+                            <label className="text-xs sm:text-sm font-bold text-slate-800 mb-1 block">
                               จุดติดตั้ง / ชื่องานย่อย
                             </label>
                             <input
@@ -1471,15 +1521,16 @@ function QuotationsView({
                         <div className="grid grid-cols-2 sm:grid-cols-12 gap-2 sm:gap-3 items-end pt-2 border-t border-slate-100">
                           {/* กว้าง */}
                           <div className="col-span-1 sm:col-span-2">
-                            <label className="text-[10px] font-bold text-slate-500 block mb-1">กว้าง (เมตร)</label>
+                            <label className="text-xs sm:text-sm font-bold text-slate-700 block mb-1">กว้าง (เมตร)</label>
                             <input
                               type="number"
                               step="0.1"
                               min="0"
-                              value={item.width}
+                              placeholder="0"
+                              value={item.width !== undefined && item.width !== null ? item.width : ''}
                               onChange={(e) => {
                                 const updated = [...backdropItems];
-                                updated[index].width = parseFloat(e.target.value) || 0;
+                                updated[index].width = e.target.value === '' ? '' : (parseFloat(e.target.value) || 0);
                                 setBackdropItems(updated);
                               }}
                               className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-center font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono shadow-2xs"
@@ -1488,15 +1539,16 @@ function QuotationsView({
 
                           {/* สูง */}
                           <div className="col-span-1 sm:col-span-2">
-                            <label className="text-[10px] font-bold text-slate-500 block mb-1">สูง/ยาว (เมตร)</label>
+                            <label className="text-xs sm:text-sm font-bold text-slate-700 block mb-1">สูง/ยาว (เมตร)</label>
                             <input
                               type="number"
                               step="0.1"
                               min="0"
-                              value={item.height}
+                              placeholder="0"
+                              value={item.height !== undefined && item.height !== null ? item.height : ''}
                               onChange={(e) => {
                                 const updated = [...backdropItems];
-                                updated[index].height = parseFloat(e.target.value) || 0;
+                                updated[index].height = e.target.value === '' ? '' : (parseFloat(e.target.value) || 0);
                                 setBackdropItems(updated);
                               }}
                               className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-center font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono shadow-2xs"
@@ -1505,14 +1557,15 @@ function QuotationsView({
 
                           {/* จำนวน */}
                           <div className="col-span-1 sm:col-span-1">
-                            <label className="text-[10px] font-bold text-slate-500 block mb-1">จำนวน</label>
+                            <label className="text-xs sm:text-sm font-bold text-slate-700 block mb-1">จำนวน</label>
                             <input
                               type="number"
                               min="1"
-                              value={item.qty}
+                              placeholder="1"
+                              value={item.qty !== undefined && item.qty !== null ? item.qty : 1}
                               onChange={(e) => {
                                 const updated = [...backdropItems];
-                                updated[index].qty = parseInt(e.target.value) || 1;
+                                updated[index].qty = e.target.value === '' ? '' : (parseInt(e.target.value, 10) || 1);
                                 setBackdropItems(updated);
                               }}
                               className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-xl text-center font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono shadow-2xs"
@@ -1521,33 +1574,34 @@ function QuotationsView({
 
                           {/* รวม ตร.ม. (Calculated Badge) */}
                           <div className="col-span-1 sm:col-span-2 text-center">
-                            <label className="text-[10px] font-bold text-slate-500 block mb-1">พื้นที่รวม</label>
+                            <label className="text-xs sm:text-sm font-bold text-slate-700 block mb-1">พื้นที่รวม</label>
                             <div className="py-1.5 px-2 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs sm:text-sm font-black font-mono text-indigo-700">
-                              {item.totalSqm.toFixed(2)} <span className="text-[10px] font-medium text-indigo-500">ตร.ม.</span>
+                              {item.totalSqm.toFixed(2)} <span className="text-xs font-bold text-indigo-600">ตร.ม.</span>
                             </div>
                           </div>
 
                           {/* ราคา/ตร.ม. (Editable + Override / Revert button) */}
                           <div className="col-span-1 sm:col-span-2">
                             <div className="flex items-center justify-between mb-1">
-                              <label className="text-[10px] font-bold text-slate-500">฿ / ตร.ม.</label>
+                              <label className="text-xs sm:text-sm font-bold text-slate-700">฿ / ตร.ม.</label>
                               {item.isOverridden && (
                                 <button
                                   type="button"
                                   onClick={() => handleRevertBasePrice(index)}
-                                  className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-0.5 cursor-pointer"
+                                  className="text-xs text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-0.5 cursor-pointer"
                                   title="คืนค่าเป็นราคากลาง"
                                 >
-                                  <RotateCcw className="w-2.5 h-2.5" /> คืนค่า
+                                  <RotateCcw className="w-3 h-3" /> คืนค่า
                                 </button>
                               )}
                             </div>
                             <input
                               type="number"
-                              value={item.unitPriceSqm}
+                              placeholder="0"
+                              value={item.unitPriceSqm !== undefined && item.unitPriceSqm !== null ? item.unitPriceSqm : ''}
                               onChange={(e) => {
                                 const updated = [...backdropItems];
-                                updated[index].unitPriceSqm = parseFloat(e.target.value) || 0;
+                                updated[index].unitPriceSqm = e.target.value === '' ? '' : (parseFloat(e.target.value) || 0);
                                 setBackdropItems(updated);
                               }}
                               className={`w-full px-2.5 py-1.5 border rounded-xl font-bold font-mono text-xs sm:text-sm text-right focus:outline-none focus:ring-2 shadow-2xs ${
@@ -1561,7 +1615,7 @@ function QuotationsView({
                           {/* รวมเงิน & ปุ่มลบ */}
                           <div className="col-span-1 sm:col-span-3 flex items-center justify-end gap-2">
                             <div className="text-right flex-1">
-                              <label className="text-[10px] font-bold text-slate-400 block mb-0.5">รวมเงิน</label>
+                              <label className="text-xs sm:text-sm font-bold text-slate-700 block mb-0.5">รวมเงิน</label>
                               <span className="font-black text-slate-900 text-sm sm:text-base font-mono">
                                 ฿{item.lineTotal.toLocaleString()}
                               </span>
@@ -1570,13 +1624,14 @@ function QuotationsView({
                               <button
                                 type="button"
                                 onClick={() => setBackdropItems(backdropItems.filter((_, i) => i !== index))}
-                                className="p-2 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                                className="hidden sm:flex p-2 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
                                 title="ลบรายการนี้"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
                             )}
                           </div>
+                        </div>
                         </div>
                       </div>
                     ))}
@@ -1607,7 +1662,7 @@ function QuotationsView({
                         <h4 className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
                           <span>รายการดอกไม้ กระดาษ พร็อพ และบริการเสริม</span>
                         </h4>
-                        <p className="text-[11px] text-slate-500 font-medium">
+                        <p className="text-xs sm:text-sm text-slate-600 font-medium">
                           ดึงข้อมูลและราคาต้นทุนจากคลังพัสดุอัตโนมัติ หรือพิมพ์รายการเสริมเองได้อิสระ
                         </p>
                       </div>
@@ -1617,7 +1672,7 @@ function QuotationsView({
                   {/* Clean Floral Table List with Inline Inventory Dropdown */}
                   <div className="bg-white rounded-2xl border border-slate-200 overflow-visible shadow-xs">
                     {/* Table Header (shown on sm screens and up) */}
-                    <div className="hidden sm:grid grid-cols-12 gap-3 px-4 py-2.5 bg-slate-50/80 border-b border-slate-200 text-xs font-semibold text-slate-500">
+                    <div className="hidden sm:grid grid-cols-12 gap-3 px-4 py-2.5 bg-slate-50/80 border-b border-slate-200 text-xs sm:text-sm font-bold text-slate-700">
                       <div className="col-span-5">ชื่อรายการ / พัสดุจากคลัง</div>
                       <div className="col-span-1 text-center">หน่วย</div>
                       <div className="col-span-1 text-center">จำนวน</div>
@@ -1627,7 +1682,7 @@ function QuotationsView({
                     </div>
 
                     {/* Floral Items */}
-                    <div>
+                    <div className="space-y-3 sm:space-y-0">
                       {calculatedFloral.map((item, index) => {
                         const matchedInv = localInventory.find(
                           inv => inv.id === item.inventory_id || (item.name && inv.name.trim().toLowerCase() === item.name.trim().toLowerCase())
@@ -1650,11 +1705,28 @@ function QuotationsView({
                         return (
                           <div
                             key={item.id}
-                            className="p-3 sm:px-4 sm:py-3.5 grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-3 items-start border-b border-slate-100 last:border-b-0 hover:bg-slate-50/60 transition-colors relative"
+                            className="rounded-2xl sm:rounded-none border sm:border-0 border-violet-100 overflow-hidden bg-white sm:bg-transparent shadow-xs sm:shadow-none transition-colors relative"
                           >
+                            {/* Mobile Card Header */}
+                            <div className="sm:hidden bg-gradient-to-r from-violet-600 to-indigo-600 px-3.5 py-2 flex items-center justify-between text-white shadow-2xs">
+                              <span className="font-black text-xs flex items-center gap-1.5 tracking-wide">
+                                <Palette className="w-3.5 h-3.5 text-white/90" />
+                                รายการที่ {index + 1}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setFloralItems(floralItems.filter((_, i) => i !== index))}
+                                className="w-7 h-7 rounded-lg bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-90"
+                                title={`ลบรายการที่ ${index + 1}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            <div className="p-3 sm:px-4 sm:py-3.5 grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-3 items-start border-b sm:border-b-0 border-slate-100 last:border-b-0 hover:bg-slate-50/60 transition-colors relative">
                             {/* Col 1: Item Name / Combobox (col-span-5) */}
                             <div className="sm:col-span-5 relative" ref={isDropdownOpen ? floralDropdownRef : null}>
-                              <span className="sm:hidden text-[10px] font-bold text-slate-400 block mb-0.5">
+                              <span className="sm:hidden text-xs font-bold text-slate-700 block mb-0.5">
                                 ชื่อรายการ / พัสดุจากคลัง
                               </span>
 
@@ -1720,12 +1792,12 @@ function QuotationsView({
                               {/* Dropdown Menu (Opens upward near bottom to prevent modal clipping) */}
                               {isDropdownOpen && (
                                 <div className={`absolute left-0 right-0 ${openUpwards ? 'bottom-full mb-1.5' : 'top-full mt-1.5'} bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 p-2 max-h-64 overflow-y-auto divide-y divide-slate-100`}>
-                                  <div className="px-2.5 py-1.5 text-[11px] font-semibold text-slate-400 flex items-center justify-between">
-                                    <span className="flex items-center gap-1">
-                                      <Package className="w-3.5 h-3.5 text-violet-500" />
+                                  <div className="px-3 py-2 text-xs font-bold text-slate-600 flex items-center justify-between">
+                                    <span className="flex items-center gap-1.5">
+                                      <Package className="w-4 h-4 text-violet-600" />
                                       คลังพัสดุ ({filteredInventory.length} รายการ)
                                     </span>
-                                    <span className="text-[10px] text-slate-400">คลิกเพื่อดึงข้อมูลและราคาทุน</span>
+                                    <span className="text-xs text-slate-500 font-medium">คลิกเพื่อดึงข้อมูลและราคาทุน</span>
                                   </div>
 
                                   {/* Custom option if user typed something not strictly matching */}
@@ -1738,7 +1810,7 @@ function QuotationsView({
                                         <Plus className="w-3.5 h-3.5 text-violet-500" />
                                         <span>ใช้ชื่อนี้: &ldquo;{item.name}&rdquo;</span>
                                       </div>
-                                      <span className="text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-md font-medium">
+                                      <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-md font-semibold">
                                         รายการกำหนดเอง (นอกคลัง)
                                       </span>
                                     </div>
@@ -1760,31 +1832,31 @@ function QuotationsView({
                                       >
                                         <div className="space-y-0.5 pr-2">
                                           <div className="flex items-center gap-1.5 flex-wrap">
-                                            <span className="font-mono text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                                            <span className="font-mono text-xs font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
                                               {inv.code || '-'}
                                             </span>
-                                            <span className="font-semibold text-slate-800 text-xs sm:text-sm group-hover:text-violet-700 transition-colors">
+                                            <span className="font-bold text-slate-900 text-xs sm:text-sm group-hover:text-violet-700 transition-colors">
                                               {inv.name}
                                             </span>
                                           </div>
 
-                                          <div className="flex items-center gap-2 text-[11px]">
+                                          <div className="flex items-center gap-2 text-xs">
                                             {isOutOfStock ? (
-                                              <span className="inline-flex items-center gap-1 font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 text-[10px]">
-                                                <AlertTriangle className="w-2.5 h-2.5" /> หมดสต็อก (0 {inv.unit || 'ชิ้น'})
+                                              <span className="inline-flex items-center gap-1 font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 text-xs">
+                                                <AlertTriangle className="w-3 h-3" /> หมดสต็อก (0 {inv.unit || 'ชิ้น'})
                                               </span>
                                             ) : isLowStock ? (
-                                              <span className="inline-flex items-center gap-1 font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 text-[10px]">
-                                                <AlertCircle className="w-2.5 h-2.5" /> ใกล้หมด (เหลือ {inv.current_stock} {inv.unit || 'ชิ้น'})
+                                              <span className="inline-flex items-center gap-1 font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 text-xs">
+                                                <AlertCircle className="w-3 h-3" /> ใกล้หมด (เหลือ {inv.current_stock} {inv.unit || 'ชิ้น'})
                                               </span>
                                             ) : (
-                                              <span className="inline-flex items-center gap-1 font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 text-[10px]">
+                                              <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 text-xs">
                                                 คงเหลือ: {inv.current_stock} {inv.unit || 'ชิ้น'}
                                               </span>
                                             )}
 
                                             {inv.storage_location && (
-                                              <span className="text-[10px] text-slate-400 hidden sm:inline">
+                                              <span className="text-xs text-slate-500 hidden sm:inline">
                                                 ที่เก็บ: {inv.storage_location}
                                               </span>
                                             )}
@@ -1792,24 +1864,24 @@ function QuotationsView({
                                         </div>
 
                                         <div className="text-right shrink-0">
-                                          <span className="text-[10px] text-slate-400 block">ต้นทุนคลัง</span>
+                                          <span className="text-xs text-slate-500 font-medium block">ต้นทุนคลัง</span>
                                           <span className="font-mono font-bold text-violet-700 text-xs sm:text-sm">
                                             ฿{cost.toLocaleString()}
                                           </span>
-                                          <span className="text-[10px] text-slate-400 block">/{inv.unit || 'ชิ้น'}</span>
+                                          <span className="text-xs text-slate-500 block">/{inv.unit || 'ชิ้น'}</span>
                                         </div>
                                       </div>
                                     );
                                   })}
 
                                   {filteredInventory.length === 0 && (
-                                    <div className="p-4 text-center text-xs text-slate-400 space-y-1">
-                                      <p>ไม่พบพัสดุในคลังที่ตรงกับคำค้นหา</p>
+                                    <div className="p-4 text-center text-xs sm:text-sm text-slate-500 space-y-1.5">
+                                      <p className="font-semibold text-slate-700">ไม่พบพัสดุในคลังที่ตรงกับคำค้นหา</p>
                                       {item.name && (
                                         <button
                                           type="button"
                                           onClick={() => handleSelectCustomItem(index, item.name)}
-                                          className="text-violet-600 hover:text-violet-700 font-semibold underline cursor-pointer"
+                                          className="text-violet-700 hover:text-violet-800 font-bold underline cursor-pointer"
                                         >
                                           ใช้เป็นรายการกำหนดเอง: &ldquo;{item.name}&rdquo;
                                         </button>
@@ -1824,41 +1896,41 @@ function QuotationsView({
                                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                                   {/* Stock status badge */}
                                   {(matchedInv.current_stock ?? 0) <= 0 ? (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                                      <AlertTriangle className="w-3 h-3 text-rose-500" />
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                      <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
                                       หมดสต็อก (0 {matchedInv.unit || 'ชิ้น'})
                                     </span>
                                   ) : (matchedInv.current_stock ?? 0) <= (matchedInv.min_alert_threshold || 5) ? (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                                      <AlertCircle className="w-3 h-3 text-amber-600" />
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                      <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
                                       ใกล้หมด! เหลือ {matchedInv.current_stock} {matchedInv.unit || 'ชิ้น'}
                                     </span>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-medium bg-slate-100 text-slate-700">
-                                      <Package className="w-3 h-3 text-slate-500" />
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700">
+                                      <Package className="w-3.5 h-3.5 text-slate-500" />
                                       คงเหลือ: {matchedInv.current_stock} {matchedInv.unit || 'ชิ้น'}
                                     </span>
                                   )}
 
                                   {/* Cost Reference Tag */}
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold bg-violet-50 text-violet-700 border border-violet-100">
-                                    <Tag className="w-3 h-3 text-violet-500" />
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-semibold bg-violet-50 text-violet-700 border border-violet-100">
+                                    <Tag className="w-3.5 h-3.5 text-violet-500" />
                                     ทุนคลัง: <strong className="font-mono">฿{invCost.toLocaleString()}</strong>
                                   </span>
 
                                   {/* Profit / Margin comparison badge */}
                                   {unitPrice > invCost && invCost > 0 ? (
-                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                      <TrendingUp className="w-3 h-3 text-emerald-600" />
+                                    <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                      <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
                                       +฿{(unitPrice - invCost).toLocaleString()} กำไร ({Math.round(((unitPrice - invCost) / invCost) * 100)}%)
                                     </span>
                                   ) : unitPrice < invCost ? (
-                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
-                                      <AlertTriangle className="w-3 h-3 text-rose-500" />
+                                    <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                                      <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
                                       ต่ำกว่าทุน -฿{(invCost - unitPrice).toLocaleString()}
                                     </span>
                                   ) : invCost > 0 ? (
-                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-medium text-slate-500 bg-slate-50 border border-slate-200">
+                                    <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200">
                                       เท่าทุนคลัง
                                     </span>
                                   ) : null}
@@ -1868,7 +1940,7 @@ function QuotationsView({
                                     <button
                                       type="button"
                                       onClick={() => handleSetCostPrice(index, invCost)}
-                                      className="text-[10px] text-violet-600 hover:text-violet-800 underline font-semibold cursor-pointer ml-0.5"
+                                      className="text-xs text-violet-700 hover:text-violet-900 underline font-bold cursor-pointer ml-1"
                                       title="ปรับราคาเสนอให้เท่ากับต้นทุนคลัง"
                                     >
                                       ดึงราคาทุน
@@ -1876,7 +1948,7 @@ function QuotationsView({
                                   )}
                                 </div>
                               ) : item.name ? (
-                                <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-400 font-medium">
+                                <div className="mt-1 flex items-center gap-1 text-xs text-slate-500 font-medium">
                                   <span>รายการกำหนดเอง (นอกคลังพัสดุ)</span>
                                 </div>
                               ) : null}
@@ -1886,36 +1958,37 @@ function QuotationsView({
                             <div className="grid grid-cols-3 sm:contents gap-2 items-start">
                               {/* Col 2: Unit (sm:col-span-1) */}
                               <div className="sm:col-span-1">
-                                <span className="sm:hidden text-[10px] font-semibold text-slate-400 block mb-0.5">หน่วยนับ</span>
+                                <span className="sm:hidden text-xs font-bold text-slate-700 block mb-0.5">หน่วยนับ</span>
                                 <input
                                   type="text"
-                                  placeholder="ชิ้น"
-                                  value={item.unit || 'ชิ้น'}
+                                  placeholder="หน่วย"
+                                  value={item.unit || ''}
                                   onChange={(e) => {
                                     const updated = [...floralItems];
                                     updated[index].unit = e.target.value;
                                     setFloralItems(updated);
                                   }}
-                                  className="w-full px-1.5 py-2 bg-slate-50/70 hover:bg-white focus:bg-white border border-slate-200 rounded-xl text-center text-xs font-medium focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all shadow-2xs h-[38px]"
+                                  className="w-full px-1.5 py-2 bg-slate-50/70 hover:bg-white focus:bg-white border border-slate-200 rounded-xl text-center text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all shadow-2xs h-[38px]"
                                 />
                               </div>
 
                               {/* Col 3: Qty (sm:col-span-1) */}
                               <div className="sm:col-span-1">
-                                <span className="sm:hidden text-[10px] font-semibold text-slate-400 block mb-0.5">จำนวน</span>
+                                <span className="sm:hidden text-xs font-bold text-slate-700 block mb-0.5">จำนวน</span>
                                 <input
                                   type="number"
                                   min="1"
-                                  value={item.qty}
+                                  placeholder="1"
+                                  value={item.qty !== undefined && item.qty !== null ? item.qty : 1}
                                   onChange={(e) => {
                                     const updated = [...floralItems];
-                                    updated[index].qty = parseFloat(e.target.value) || 1;
+                                    updated[index].qty = e.target.value === '' ? '' : (parseFloat(e.target.value) || 0);
                                     setFloralItems(updated);
                                   }}
-                                  className="w-full px-1 py-2 bg-slate-50/70 hover:bg-white focus:bg-white border border-slate-200 rounded-xl text-center font-mono font-bold text-xs focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all shadow-2xs h-[38px]"
+                                  className="w-full px-1 py-2 bg-slate-50/70 hover:bg-white focus:bg-white border border-slate-200 rounded-xl text-center font-mono font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all shadow-2xs h-[38px]"
                                 />
-                                {matchedInv && matchedInv.item_type !== 'task' && (matchedInv.current_stock ?? 0) < item.qty && (
-                                  <span className="text-[10px] font-semibold text-rose-500 block text-center mt-0.5">
+                                {matchedInv && matchedInv.item_type !== 'task' && (matchedInv.current_stock ?? 0) < (Number(item.qty) || 0) && (Number(item.qty) > 0) && (
+                                  <span className="text-xs font-bold text-rose-600 block text-center mt-0.5">
                                     เกินสต็อก
                                   </span>
                                 )}
@@ -1923,13 +1996,14 @@ function QuotationsView({
 
                               {/* Col 4: Price / Unit (sm:col-span-2) */}
                               <div className="sm:col-span-2">
-                                <span className="sm:hidden text-[10px] font-semibold text-slate-400 block mb-0.5">ราคาเสนอ/หน่วย (฿)</span>
+                                <span className="sm:hidden text-xs font-bold text-slate-700 block mb-0.5">ราคาเสนอ/หน่วย (฿)</span>
                                 <input
                                   type="number"
-                                  value={item.unitPrice}
+                                  placeholder="0"
+                                  value={item.unitPrice !== undefined && item.unitPrice !== null ? item.unitPrice : ''}
                                   onChange={(e) => {
                                     const updated = [...floralItems];
-                                    updated[index].unitPrice = parseFloat(e.target.value) || 0;
+                                    updated[index].unitPrice = e.target.value === '' ? '' : (parseFloat(e.target.value) || 0);
                                     setFloralItems(updated);
                                   }}
                                   className="w-full px-2 py-2 bg-slate-50/70 hover:bg-white focus:bg-white border border-slate-200 rounded-xl text-right font-mono font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all shadow-2xs h-[38px]"
@@ -1941,7 +2015,7 @@ function QuotationsView({
                             <div className="flex sm:contents items-center justify-between pt-1 sm:pt-0">
                               {/* Col 5: Line Total (sm:col-span-2) */}
                               <div className="sm:col-span-2 text-left sm:text-right">
-                                <span className="sm:hidden text-[10px] font-semibold text-slate-400 block mb-0.5">รวมเงิน</span>
+                                <span className="sm:hidden text-xs font-bold text-slate-700 block mb-0.5">รวมเงิน</span>
                                 <div className="h-[38px] flex items-center justify-start sm:justify-end">
                                   <span className="font-mono font-bold text-slate-800 text-xs sm:text-sm">
                                     ฿{item.lineTotal.toLocaleString()}
@@ -1950,7 +2024,7 @@ function QuotationsView({
                               </div>
 
                               {/* Col 6: Delete button (sm:col-span-1) */}
-                              <div className="sm:col-span-1 flex items-center justify-end sm:justify-center">
+                              <div className="hidden sm:flex sm:col-span-1 items-center justify-end sm:justify-center">
                                 <div className="h-[38px] flex items-center justify-end sm:justify-center">
                                   <button
                                     type="button"
@@ -1963,15 +2037,16 @@ function QuotationsView({
                                 </div>
                               </div>
                             </div>
+                            </div>
                           </div>
                         );
                       })}
 
                       {floralItems.length === 0 && (
-                        <div className="p-8 text-center text-xs text-slate-400 space-y-2">
-                          <Palette className="w-8 h-8 text-slate-300 mx-auto" />
-                          <p className="font-medium">ยังไม่มีรายการดอกไม้หรืออุปกรณ์เสริม</p>
-                          <p className="text-[11px] text-slate-400">กด &ldquo;+ เพิ่มรายการเสริม&rdquo; ด้านล่าง เพื่อเลือกพัสดุจากคลังหรือกรอกรายการเสริม</p>
+                        <div className="p-8 text-center text-slate-500 space-y-2">
+                          <Palette className="w-8 h-8 text-slate-400 mx-auto" />
+                          <p className="font-bold text-slate-700 text-sm">ยังไม่มีรายการดอกไม้หรืออุปกรณ์เสริม</p>
+                          <p className="text-xs sm:text-sm text-slate-500 font-medium">กด &ldquo;+ เพิ่มรายการเสริม&rdquo; ด้านล่าง เพื่อเลือกพัสดุจากคลังหรือกรอกรายการเสริม</p>
                         </div>
                       )}
                     </div>
@@ -2012,13 +2087,13 @@ function QuotationsView({
                     />
                     {/* Quick note chips */}
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[10px] font-bold text-slate-400">คีย์เวิร์ดด่วน:</span>
+                      <span className="text-xs font-bold text-slate-600">คีย์เวิร์ดด่วน:</span>
                       {['ธีมพาสเทลสดใส', 'ส่งมอบก่อน 12:00 น.', 'ต้องแลกบัตรเข้าพื้นที่', 'มีบันไดสูง 3 ขั้น'].map(chip => (
                         <button
                           key={chip}
                           type="button"
                           onClick={() => setNote(prev => prev ? `${prev}\n• ${chip}` : `• ${chip}`)}
-                          className="text-[10px] px-2 py-0.5 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-600 rounded-md font-medium transition cursor-pointer"
+                          className="text-xs px-2.5 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 rounded-lg font-semibold transition cursor-pointer"
                         >
                           + {chip}
                         </button>
@@ -2035,26 +2110,26 @@ function QuotationsView({
                           <Calculator className="w-5 h-5" />
                         </div>
                         <div>
-                          <h4 className="text-sm font-black text-slate-900">สรุปโครงสร้างต้นทุน &amp; กำไร</h4>
-                          <p className="text-[11px] text-slate-400 font-medium">คำนวณราคาเสนอและกำไรสุทธิเรียลไทม์</p>
+                          <h4 className="text-sm sm:text-base font-black text-slate-900">สรุปโครงสร้างต้นทุน &amp; กำไร</h4>
+                          <p className="text-xs sm:text-sm text-slate-500 font-medium">คำนวณราคาเสนอและกำไรสุทธิเรียลไทม์</p>
                         </div>
                       </div>
-                      <span className="text-xs font-mono font-bold text-slate-500 bg-slate-50 px-3 py-1 rounded-full border border-slate-200">
+                      <span className="text-xs sm:text-sm font-mono font-bold text-slate-600 bg-slate-50 px-3 py-1 rounded-full border border-slate-200">
                         {backdropItems.length} ป้าย | {floralItems.length} เสริม
                       </span>
                     </div>
 
                     {/* Cost Breakdown Grid */}
                     <div className="grid grid-cols-2 gap-3">
-                      <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col justify-between">
-                        <span className="text-[11px] font-bold text-slate-500 block">ต้นทุนป้ายโครงสร้าง (ตร.ม.)</span>
-                        <span className="font-mono font-black text-slate-900 text-base mt-0.5">
+                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col justify-between">
+                        <span className="text-xs sm:text-sm font-bold text-slate-700 block">ต้นทุนป้ายโครงสร้าง (ตร.ม.)</span>
+                        <span className="font-mono font-black text-slate-900 text-base sm:text-lg mt-0.5">
                           ฿{totalBackdropCost.toLocaleString()}
                         </span>
                       </div>
-                      <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col justify-between">
-                        <span className="text-[11px] font-bold text-slate-500 block">ต้นทุนดอกไม้ &amp; พัสดุเสริม</span>
-                        <span className="font-mono font-black text-slate-900 text-base mt-0.5">
+                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col justify-between">
+                        <span className="text-xs sm:text-sm font-bold text-slate-700 block">ต้นทุนดอกไม้ &amp; พัสดุเสริม</span>
+                        <span className="font-mono font-black text-slate-900 text-base sm:text-lg mt-0.5">
                           ฿{totalFloralCost.toLocaleString()}
                         </span>
                       </div>
@@ -2063,8 +2138,8 @@ function QuotationsView({
                     {/* Total Cost COGS Banner */}
                     <div className="flex items-center justify-between px-4 py-3 rounded-2xl bg-amber-50/80 border border-amber-200/80">
                       <div>
-                        <span className="text-xs font-bold text-amber-950 block">ต้นทุนจริงรวมทั้งหมด (Total Cost)</span>
-                        <span className="text-[10px] text-amber-700 font-medium">ค่าป้ายโครงสร้าง + พัสดุและดอกไม้</span>
+                        <span className="text-xs sm:text-sm font-bold text-amber-950 block">ต้นทุนจริงรวมทั้งหมด (Total Cost)</span>
+                        <span className="text-xs text-amber-800 font-medium">ค่าป้ายโครงสร้าง + พัสดุและดอกไม้</span>
                       </div>
                       <span className="font-mono font-black text-amber-900 text-lg sm:text-xl">
                         ฿{totalCost.toLocaleString()}
@@ -2076,14 +2151,14 @@ function QuotationsView({
                       {/* Row 1: Markup % Quick Select */}
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                          <label className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-1.5">
                             <TrendingUp className="w-4 h-4 text-violet-600" />
                             <span>บวกอัตรากำไร (% Markup)</span>
                           </label>
-                          <span className="text-[11px] text-slate-400 font-medium">เลือกกำไรด่วน หรือพิมพ์ % เอง</span>
+                          <span className="text-xs text-slate-600 font-medium">เลือกกำไรด่วน หรือพิมพ์ % เอง</span>
                         </div>
 
-                        <div className="bg-slate-100/90 p-1 rounded-2xl flex items-center gap-1.5">
+                        <div className="bg-slate-100/90 p-1.5 rounded-2xl flex items-center gap-1.5">
                           {[20, 30, 40, 50].map(pct => {
                             const isSelected = markupPercent === pct && finalPriceInput === null;
                             return (
@@ -2094,7 +2169,7 @@ function QuotationsView({
                                   setMarkupPercent(pct);
                                   setFinalPriceInput(null);
                                 }}
-                                className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                                className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-xl transition-all cursor-pointer ${
                                   isSelected
                                     ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-sm font-black'
                                     : 'bg-white text-slate-700 hover:text-slate-900 border border-slate-200/60 shadow-2xs hover:bg-slate-50'
@@ -2114,10 +2189,10 @@ function QuotationsView({
                                 setMarkupPercent(val);
                                 setFinalPriceInput(null);
                               }}
-                              className="w-full text-center text-xs font-black font-mono text-slate-900 focus:outline-none"
+                              className="w-full text-center text-xs sm:text-sm font-black font-mono text-slate-900 focus:outline-none"
                               placeholder="0"
                             />
-                            <span className="text-xs font-bold text-slate-400">%</span>
+                            <span className="text-xs sm:text-sm font-bold text-slate-600">%</span>
                           </div>
                         </div>
                       </div>
@@ -2127,10 +2202,10 @@ function QuotationsView({
                         <div>
                           <label className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-1.5 whitespace-nowrap">
                             <span>ราคาเสนอสุทธิ</span>
-                            <span className="text-slate-400 font-normal text-xs">(Final Price)</span>
+                            <span className="text-slate-500 font-semibold text-xs">(Final Price)</span>
                           </label>
-                          <span className="text-[11px] text-slate-500 font-medium block mt-0.5">
-                            ยอดรวมสุทธิในใบเสนอราคา
+                          <span className="text-xs sm:text-sm text-slate-600 font-medium block mt-0.5">
+                            ยอดรวมสุทธิในการคำนวณราคา
                           </span>
                         </div>
 
@@ -2156,15 +2231,15 @@ function QuotationsView({
                       <div className="flex items-center gap-2">
                         <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
                         <div>
-                          <span className="text-xs font-bold text-emerald-950 block">กำไรประเมินสุทธิของร้าน (Net Profit)</span>
-                          <span className="text-[10px] text-emerald-700 font-medium">ราคาเสนอสุทธิ - ต้นทุนรวม</span>
+                          <span className="text-xs sm:text-sm font-bold text-emerald-950 block">กำไรประเมินสุทธิของร้าน (Net Profit)</span>
+                          <span className="text-xs text-emerald-800 font-medium">ราคาเสนอสุทธิ - ต้นทุนรวม</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-black text-emerald-700 text-base sm:text-lg">
                           +{estimatedProfit >= 0 ? `฿${estimatedProfit.toLocaleString()}` : `-฿${Math.abs(estimatedProfit).toLocaleString()}`}
                         </span>
-                        <span className="px-2.5 py-1 bg-emerald-600 text-white rounded-xl font-bold font-mono text-xs shadow-xs">
+                        <span className="px-3 py-1 bg-emerald-600 text-white rounded-xl font-bold font-mono text-xs sm:text-sm shadow-xs">
                           {estimatedProfitMargin}% margin
                         </span>
                       </div>
@@ -2214,7 +2289,7 @@ function QuotationsView({
                     className="py-3 px-4 sm:px-5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-2xl font-bold text-sm transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 border border-emerald-200/50"
                   >
                     <Copy className="w-4 h-4" />
-                    <span className="hidden sm:inline">โคลนเป็นใบงานใหม่</span>
+                    <span className="hidden sm:inline">โคลนเป็นรายการใหม่</span>
                   </button>
                 )}
 
@@ -2228,7 +2303,7 @@ function QuotationsView({
                   ) : (
                     <Check className="w-4 h-4" />
                   )}
-                  <span>{isSaving ? 'กำลังบันทึก...' : 'บันทึกใบเสนอราคา'}</span>
+                  <span>{isSaving ? 'กำลังบันทึก...' : 'บันทึกราคาโปรเจกต์'}</span>
                 </button>
               </div>
             </div>
@@ -2261,7 +2336,7 @@ function QuotationsView({
                     ตั้งค่าราคากลางวัสดุต่อ ตร.ม.
                   </h3>
                   <p className="text-xs sm:text-sm text-slate-500 font-medium">
-                    กำหนดราคามาตรฐานต่อ ตร.ม. สำหรับใช้ดึงเป็นค่าเริ่มต้นในใบเสนอราคาใหม่
+                    กำหนดราคามาตรฐานต่อ ตร.ม. สำหรับใช้ดึงเป็นค่าเริ่มต้นในการคำนวณราคาใหม่
                   </p>
                 </div>
               </div>
@@ -2277,8 +2352,8 @@ function QuotationsView({
             <form onSubmit={handleSaveMasterRates} className="flex flex-col flex-1 overflow-hidden">
               {/* Scrollable Form Body */}
               <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-4 overscroll-contain">
-                <div className="text-xs text-amber-800 bg-amber-50/80 p-3.5 rounded-2xl border border-amber-200/70">
-                  💡 <b>กฎความถูกต้องของข้อมูล:</b> การแก้ไขราคากลางจะมีผลกับ <u>ใบเสนอราคาใหม่</u> เท่านั้น จะไม่กระทบตัวเลขในใบเสนอราคาเก่าที่เคยบันทึกไปแล้ว
+                <div className="text-xs sm:text-sm text-amber-900 bg-amber-50/90 p-4 rounded-2xl border border-amber-200/80 leading-relaxed font-medium">
+                  💡 <b>กฎความถูกต้องของข้อมูล:</b> การแก้ไขราคากลางจะมีผลกับ <u>รายการคำนวณราคาใหม่</u> เท่านั้น จะไม่กระทบตัวเลขในรายการคำนวณราคาเดิมที่เคยบันทึกไปแล้ว
                 </div>
 
                 {/* Table of Material Rates */}
@@ -2286,12 +2361,12 @@ function QuotationsView({
                   {editingRates.map((rate, index) => (
                     <div
                       key={rate.id || index}
-                      className="p-3.5 bg-slate-50/70 rounded-2xl border border-slate-100 flex items-center justify-between gap-3 text-xs"
+                      className="p-3.5 sm:p-4 bg-slate-50/70 rounded-2xl border border-slate-200 flex items-center justify-between gap-3 text-sm"
                     >
-                      <div className="flex-1 font-bold text-slate-800">
+                      <div className="flex-1 font-bold text-slate-800 text-sm sm:text-base">
                         {rate.name}
                       </div>
-                      <div className="flex items-center gap-1.5 w-36">
+                      <div className="flex items-center gap-2 w-40">
                         <input
                           type="number"
                           min="0"
@@ -2301,9 +2376,9 @@ function QuotationsView({
                             updated[index].default_price_sqm = parseFloat(e.target.value) || 0;
                             setEditingRates(updated);
                           }}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-right font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-right font-black font-mono text-sm sm:text-base text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                         />
-                        <span className="text-slate-400 shrink-0 font-medium">฿/ตร.ม.</span>
+                        <span className="text-slate-600 shrink-0 font-bold text-xs sm:text-sm">฿/ตร.ม.</span>
                       </div>
                     </div>
                   ))}
@@ -2316,19 +2391,19 @@ function QuotationsView({
                     placeholder="ชื่อวัสดุใหม่ เช่น พลาสวูด 10 มม."
                     value={newRateName}
                     onChange={(e) => setNewRateName(e.target.value)}
-                    className="flex-1 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                    className="flex-1 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
                   />
                   <input
                     type="number"
                     placeholder="ราคา/ตร.ม."
                     value={newRatePrice}
                     onChange={(e) => setNewRatePrice(e.target.value)}
-                    className="w-28 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                    className="w-28 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
                   />
                   <button
                     type="button"
                     onClick={handleAddNewRate}
-                    className="px-4 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-xs font-bold shrink-0 transition active:scale-95 cursor-pointer"
+                    className="px-4 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-xs sm:text-sm font-bold shrink-0 transition active:scale-95 cursor-pointer"
                   >
                     + เพิ่ม
                   </button>
@@ -2360,8 +2435,8 @@ function QuotationsView({
       {/* Confirmation Dialog */}
       <ConfirmDialog
         isOpen={deleteConfirm.isOpen}
-        title="ยืนยันการลบใบเสนอราคา"
-        message={`ต้องการลบใบเสนอราคาเลขที่ "${deleteConfirm.quoteNo}" ออกจากระบบหรือไม่? การกระทำนี้ไม่สามารถย้อนคืนได้`}
+        title="ยืนยันการลบรายการคำนวณราคา"
+        message={`ต้องการลบรายการคำนวณราคาเลขที่ "${deleteConfirm.quoteNo}" ออกจากระบบหรือไม่? การกระทำนี้ไม่สามารถย้อนคืนได้`}
         confirmText="ยืนยันลบ"
         cancelText="ยกเลิก"
         type="danger"
@@ -2381,4 +2456,4 @@ function QuotationsView({
   );
 }
 
-export default React.memo(QuotationsView);
+export default React.memo(Quotations);

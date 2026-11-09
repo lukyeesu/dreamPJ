@@ -91,7 +91,7 @@ export default function VenueDetailModal({ isOpen, onClose, venue, onUpdateVenue
                   {formData.name || venue.name}
                 </h3>
                 {formData.zone && (
-                  <span className="bg-indigo-50 text-indigo-600 text-[10px] sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 w-fit">
+                  <span className="bg-indigo-50 text-indigo-600 text-xs sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 w-fit">
                     {formData.zone}
                   </span>
                 )}

@@ -80,8 +80,8 @@ export default function VenueDirectoryModal({
                   <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
                     คลังลายแทงสถานที่จัดส่ง
                   </h3>
-                  <span className="bg-indigo-50 text-indigo-600 text-[10px] sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 w-fit">
-                    Event Venues
+                  <span className="bg-indigo-50 text-indigo-600 text-xs sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 w-fit">
+                    Delivery Locations
                   </span>
                 </div>
                 <p className="text-xs sm:text-sm text-slate-500 font-medium">
@@ -141,11 +141,11 @@ export default function VenueDirectoryModal({
               >
                 <div className="space-y-2.5">
                   <div className="flex items-start justify-between gap-2">
-                    <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
+                    <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
                       {venue.zone || 'ทั่วไป'}
                     </span>
                     {venue.dock_contact_phone && (
-                      <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                      <span className="text-xs font-semibold text-emerald-600 flex items-center gap-1">
                         <Phone className="w-3 h-3" />
                         {venue.dock_contact_phone}
                       </span>
@@ -172,13 +172,13 @@ export default function VenueDirectoryModal({
                 </div>
 
                 <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-indigo-600 group-hover:underline flex items-center gap-1">
+                  <span className="text-xs font-bold text-indigo-600 group-hover:underline flex items-center gap-1">
                     <span>เปิดลายแทงนำทาง</span>
                     <ExternalLink className="w-3 h-3" />
                   </span>
 
                   {venue.loading_dock_map_link && (
-                    <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                    <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
                       มีพิกัดจุดโหลดจริง
                     </span>
                   )}

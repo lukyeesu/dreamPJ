@@ -17,13 +17,20 @@ import {
   Building,
   Calendar,
   X,
-  Eye
+  Eye,
+  RotateCcw,
+  ChevronDown
 } from 'lucide-react';
 import { saveCustomerSync } from './services/syncService';
 import Toast from './components/common/Toast';
+import { useStickyFilter } from './hooks/useStickyFilter';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { customerFormSchema } from './schemas/customerSchema';
 
-function CustomersView({
+function Customers({
   customers = [],
+  customerStats = {},
   activities = [],
   isCreateOpen = false,
   onCloseCreate,
@@ -31,6 +38,7 @@ function CustomersView({
   onFilterByCustomer,
   onRefresh
 }) {
+  const { isFilterStuck, filterSentinelRef } = useStickyFilter();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTier, setSelectedTier] = useState('all');
   const [sortBy, setSortBy] = useState('spend'); // 'spend' | 'orders' | 'name'
@@ -44,16 +52,24 @@ function CustomersView({
     setToast({ show: true, message, type });
   };
 
-  // Form state
-  const [formData, setFormData] = useState({
-    name: '',
-    phone: '',
-    line_id: '',
-    social_account: '',
-    email: '',
-    tax_id: '',
-    billing_address: '',
-    vip_tier: 'general'
+  // Form state (React Hook Form + Zod)
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors }
+  } = useForm({
+    resolver: zodResolver(customerFormSchema),
+    defaultValues: {
+      name: '',
+      phone: '',
+      line_id: '',
+      social_account: '',
+      email: '',
+      tax_id: '',
+      billing_address: '',
+      vip_tier: 'general'
+    }
   });
 
   // Listen to single top header button
@@ -75,14 +91,16 @@ function CustomersView({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isModalOpen]);
 
-  // Aggregate customer intelligence across both customers table and activities
+  // Aggregate customer intelligence across customers table, server summary stats, and activities
   const customerDirectory = useMemo(() => {
     const map = new Map();
+    const hasServerStats = customerStats && typeof customerStats === 'object' && Object.keys(customerStats).length > 0;
 
-    // 1. Seed from customers table
+    // 1. Seed from customers table (ignoring empty or '-' invalid placeholders)
     customers.forEach(c => {
       const key = (c.name || '').trim().toLowerCase();
-      if (!key) return;
+      if (!key || key === '-' || key === 'unknown') return;
+      const serverStat = (hasServerStats && customerStats[key]) ? customerStats[key] : null;
       map.set(key, {
         id: c.id,
         name: c.name,
@@ -93,16 +111,40 @@ function CustomersView({
         tax_id: c.tax_id || '',
         billing_address: c.billing_address || '',
         vip_tier: c.vip_tier || 'general',
-        projectCount: 0,
-        totalSpend: 0,
-        totalSupport: 0,
-        lastOrderDate: '',
+        projectCount: serverStat ? serverStat.projectCount : 0,
+        totalSpend: serverStat ? serverStat.totalSpend : 0,
+        totalSupport: serverStat ? serverStat.totalSupport : 0,
+        lastOrderDate: serverStat ? serverStat.lastOrderDate : '',
         lastProjectId: null,
         projects: []
       });
     });
 
-    // 2. Aggregate from all project activities
+    // 2. Also seed any customers discovered from server summary stats that aren't in customers table yet
+    if (hasServerStats) {
+      Object.entries(customerStats).forEach(([key, stat]) => {
+        if (!key || key === '-' || key === 'unknown' || map.has(key)) return;
+        map.set(key, {
+          id: null,
+          name: stat.name || key,
+          phone: '',
+          line_id: '',
+          social_account: '',
+          email: '',
+          tax_id: '',
+          billing_address: '',
+          vip_tier: 'general',
+          projectCount: stat.projectCount || 0,
+          totalSpend: stat.totalSpend || 0,
+          totalSupport: stat.totalSupport || 0,
+          lastOrderDate: stat.lastOrderDate || '',
+          lastProjectId: null,
+          projects: []
+        });
+      });
+    }
+
+    // 3. Aggregate from loaded project activities (populate sample projects & fallback stats)
     activities.forEach(item => {
       const cName = (item.customer || '').trim();
       if (!cName || cName === '-' || cName === 'Unknown') return;
@@ -130,17 +172,31 @@ function CustomersView({
       }
 
       const entry = map.get(key);
-      entry.projectCount += 1;
-      entry.totalSpend += (item.wage || 0) + (parseFloat(item.deliveryFee) || 0);
+      if (!hasServerStats) {
+        entry.projectCount += 1;
+        const qSum = item.quotationItems && item.quotationItems.length > 0
+          ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || 0), 0)
+          : 0;
+        const wageVal = qSum > 0 ? qSum : (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0);
+        entry.totalSpend += wageVal + (parseFloat(item.deliveryFee) || 0);
 
-      const support = (item.customerSupport || []).reduce((sum, cs) => sum + (parseFloat(cs.price) || 0), 0);
-      entry.totalSupport += support;
+        const calcSupport = (item.customerSupport && item.customerSupport.length > 0)
+          ? item.customerSupport.reduce((sum, cs) => sum + (parseFloat(cs.price) || 0), 0)
+          : 0;
+        const support = calcSupport > 0 ? calcSupport : (parseFloat(item.customerSupportTotal || item.customer_support_total) || 0);
+        entry.totalSupport += support;
 
-      const dateStr = item.deliveryDate || item.date || '';
-      if (dateStr && (!entry.lastOrderDate || dateStr > entry.lastOrderDate)) {
-        entry.lastOrderDate = dateStr;
-        entry.lastProjectId = item.id;
+        const dateStr = item.deliveryDate || item.date || '';
+        if (dateStr && (!entry.lastOrderDate || dateStr > entry.lastOrderDate)) {
+          entry.lastOrderDate = dateStr;
+          entry.lastProjectId = item.id;
+        }
       }
+
+      // Update phone/contact info if entry didn't have it
+      if (!entry.phone && item.customerInfo?.phone) entry.phone = item.customerInfo.phone;
+      if (!entry.line_id && item.customerInfo?.line) entry.line_id = item.customerInfo.line;
+      if (!entry.social_account && item.customerInfo?.social) entry.social_account = item.customerInfo.social;
 
       if (entry.projects.length < 5) {
         entry.projects.push(item);
@@ -155,7 +211,7 @@ function CustomersView({
       if (sortBy === 'orders') return b.projectCount - a.projectCount;
       return a.name.localeCompare(b.name, 'th');
     });
-  }, [customers, activities, sortBy]);
+  }, [customers, customerStats, activities, sortBy]);
 
   // Filtered
   const filteredCustomers = useMemo(() => {
@@ -186,7 +242,7 @@ function CustomersView({
   const handleOpenModal = (customer = null) => {
     if (customer) {
       setEditingCustomer(customer);
-      setFormData({
+      reset({
         name: customer.name || '',
         phone: customer.phone || '',
         line_id: customer.line_id || '',
@@ -198,7 +254,7 @@ function CustomersView({
       });
     } else {
       setEditingCustomer(null);
-      setFormData({
+      reset({
         name: '',
         phone: '',
         line_id: '',
@@ -212,18 +268,12 @@ function CustomersView({
     setIsModalOpen(true);
   };
 
-  // Submit Save Customer
-  const handleSave = async (e) => {
-    e.preventDefault();
-    if (!formData.name.trim()) {
-      showToast('กรุณากรอกชื่อลูกค้า', 'error');
-      return;
-    }
-
+  // Submit Save Customer (React Hook Form onSubmit)
+  const onSubmitCustomer = async (data) => {
     setIsSaving(true);
     try {
       const payload = {
-        ...formData,
+        ...data,
         id: editingCustomer?.id || undefined
       };
       await saveCustomerSync(payload);
@@ -266,7 +316,7 @@ function CustomersView({
         );
       default:
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-600">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
             ลูกค้าทั่วไป
           </span>
         );
@@ -274,7 +324,7 @@ function CustomersView({
   };
 
   return (
-    <div className="space-y-6 sm:space-y-8 flex flex-col min-h-full pb-24 md:pb-6 px-4 sm:px-8 lg:px-10 pt-4">
+    <div className="flex flex-col gap-6 min-h-full pb-24 md:pb-6 px-4 sm:px-8 lg:px-10 pt-4">
       {/* 4 Summary Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -285,7 +335,7 @@ function CustomersView({
             </div>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-slate-900">{stats.total.toLocaleString()} ราย</p>
-          <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-slate-400">ในระบบจัดการ</div>
+          <div className="mt-1 pt-1 border-t border-slate-50 text-xs text-slate-400">ในระบบจัดการ</div>
         </div>
 
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -296,7 +346,7 @@ function CustomersView({
             </div>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-emerald-700">{stats.repeat.toLocaleString()} ราย</p>
-          <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-emerald-600">มากกว่า 1 โปรเจกต์</div>
+          <div className="mt-1 pt-1 border-t border-slate-50 text-xs text-emerald-600">มากกว่า 1 โปรเจกต์</div>
         </div>
 
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -307,7 +357,7 @@ function CustomersView({
             </div>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-pink-700">{stats.vipFandom.toLocaleString()} ราย</p>
-          <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-pink-600">ลูกค้าประจำคนสำคัญ</div>
+          <div className="mt-1 pt-1 border-t border-slate-50 text-xs text-pink-600">ลูกค้าประจำคนสำคัญ</div>
         </div>
 
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -318,60 +368,87 @@ function CustomersView({
             </div>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-indigo-700">฿{Math.round(stats.totalSpendAll).toLocaleString()}</p>
-          <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-indigo-600">จากลูกค้าทั้งหมด</div>
+          <div className="mt-1 pt-1 border-t border-slate-50 text-xs text-indigo-600">จากลูกค้าทั้งหมด</div>
         </div>
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col md:flex-row gap-3 items-center justify-between">
-        <div className="relative w-full md:w-96">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="ค้นหาชื่อลูกค้า, เบอร์โทร, LINE, โซเชียล..."
-            className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-slate-50 focus:bg-white transition-all font-medium"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition cursor-pointer"
-              title="ล้างข้อความค้นหา"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-xs font-bold text-slate-500">ระดับ:</span>
-            <select
-              value={selectedTier}
-              onChange={(e) => setSelectedTier(e.target.value)}
-              className="text-xs sm:text-sm py-2 px-3 rounded-xl border border-slate-200 bg-slate-50 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="all">ทั้งหมด ({customerDirectory.length})</option>
-              <option value="vip_fandom">Fandom VIP</option>
-              <option value="gold">VIP Gold</option>
-              <option value="silver">VIP Silver</option>
-              <option value="general">ลูกค้าทั่วไป</option>
-            </select>
+      <div 
+        ref={filterSentinelRef} 
+        className="w-full h-0 -my-3 pointer-events-none opacity-0"
+      />
+      <div className={`bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out z-20 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 ${
+        isFilterStuck
+          ? '-mx-4 sm:-mx-8 lg:-mx-10 py-2 sm:py-2.5 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
+          : 'p-3 sm:p-3.5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
+      }`}>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+          {/* Search Box */}
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="ค้นหาชื่อลูกค้า, เบอร์โทร, LINE, โซเชียล..."
+              className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-slate-50 focus:bg-white transition-all font-medium"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition cursor-pointer"
+                title="ล้างข้อความค้นหา"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-xs font-bold text-slate-500">เรียงตาม:</span>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="text-xs sm:text-sm py-2 px-3 rounded-xl border border-slate-200 bg-slate-50 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          <div className="flex items-center gap-2 shrink-0">
+            {/* VIP Tier Dropdown */}
+            <div className="relative w-36 sm:w-44 shrink-0">
+              <select
+                value={selectedTier}
+                onChange={(e) => setSelectedTier(e.target.value)}
+                className="w-full pl-3.5 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
+              >
+                <option value="all">ระดับ: ทั้งหมด ({customerDirectory.length})</option>
+                <option value="vip_fandom">Fandom VIP</option>
+                <option value="gold">VIP Gold</option>
+                <option value="silver">VIP Silver</option>
+                <option value="general">ลูกค้าทั่วไป</option>
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+
+            {/* SortBy Dropdown */}
+            <div className="relative w-36 sm:w-44 shrink-0">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="w-full pl-3.5 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
+              >
+                <option value="spend">เรียง: ยอดใช้จ่าย</option>
+                <option value="orders">เรียง: จำนวนงาน</option>
+                <option value="name">เรียง: ชื่อ ก-ฮ / A-Z</option>
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+
+            {/* Reset Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                setSelectedTier('all');
+                setSortBy('spend');
+              }}
+              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer shadow-2xs"
+              title="ล้างค่าตัวกรองทั้งหมด"
             >
-              <option value="spend">ยอดใช้จ่ายสูงสุด</option>
-              <option value="orders">จำนวนงานมากสุด</option>
-              <option value="name">ชื่อ ก-ฮ / A-Z</option>
-            </select>
+              <RotateCcw className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
@@ -381,7 +458,7 @@ function CustomersView({
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-100 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+              <tr className="bg-slate-50/80 border-b border-slate-100 text-xs font-bold text-slate-600 uppercase tracking-wider">
                 <th className="py-3.5 px-5">ลูกค้า / บ้านเบส</th>
                 <th className="py-3.5 px-4">ระดับสมาชิก</th>
                 <th className="py-3.5 px-4">ช่องทางติดต่อ</th>
@@ -457,7 +534,7 @@ function CustomersView({
                     <td className="py-3.5 px-4 text-right font-black text-slate-800">
                       ฿{Math.round(cust.totalSpend).toLocaleString()}
                       {cust.totalSupport > 0 && (
-                        <div className="text-[11px] text-purple-600 font-semibold">
+                        <div className="text-xs text-purple-600 font-semibold">
                           ซัพพอร์ต ฿{Math.round(cust.totalSupport).toLocaleString()}
                         </div>
                       )}
@@ -470,7 +547,7 @@ function CustomersView({
                           {cust.lastProjectId && (
                             <button
                               onClick={() => onOpenProjectModal && onOpenProjectModal(cust.lastProjectId)}
-                              className="text-[11px] text-indigo-600 hover:underline font-bold"
+                              className="text-xs text-indigo-600 hover:underline font-bold"
                             >
                               {cust.lastProjectId}
                             </button>
@@ -558,7 +635,7 @@ function CustomersView({
               {/* Stats & Actions */}
               <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
                 <div>
-                  <span className="text-slate-400 text-[10px] block">ยอดสั่งซื้อรวม</span>
+                  <span className="text-slate-600 text-xs font-bold block">ยอดสั่งซื้อรวม</span>
                   <span className="font-black text-slate-900">฿{Math.round(cust.totalSpend).toLocaleString()}</span>
                 </div>
                 <button
@@ -599,7 +676,7 @@ function CustomersView({
                       {editingCustomer ? 'แก้ไขข้อมูลลูกค้า' : 'เพิ่มลูกค้าใหม่'}
                     </h3>
                     {editingCustomer?.name && (
-                      <span className="bg-indigo-50 text-indigo-600 text-[10px] sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 w-fit">
+                      <span className="bg-indigo-50 text-indigo-600 text-xs sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 w-fit">
                         {editingCustomer.name}
                       </span>
                     )}
@@ -618,19 +695,22 @@ function CustomersView({
               </button>
             </div>
 
-            <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden">
+            <form onSubmit={handleSubmit(onSubmitCustomer)} className="flex flex-col flex-1 overflow-hidden">
               {/* Scrollable Form Body */}
               <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-5 overscroll-contain">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">ชื่อลูกค้า / ชื่อบ้านเบส *</label>
                   <input
                     type="text"
-                    required
                     placeholder="เช่น คุณแพรว, Fandom Nunew Official"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                    {...register('name')}
+                    className={`w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 transition-all ${
+                      errors.name ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
+                    }`}
                   />
+                  {errors.name && (
+                    <p className="text-xs text-rose-600 font-bold mt-1">{errors.name.message}</p>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -639,8 +719,7 @@ function CustomersView({
                     <input
                       type="tel"
                       placeholder="0812345678"
-                      value={formData.phone}
-                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                      {...register('phone')}
                       className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                     />
                   </div>
@@ -649,8 +728,7 @@ function CustomersView({
                     <input
                       type="text"
                       placeholder="@line_id"
-                      value={formData.line_id}
-                      onChange={(e) => setFormData({ ...formData, line_id: e.target.value })}
+                      {...register('line_id')}
                       className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                     />
                   </div>
@@ -662,8 +740,7 @@ function CustomersView({
                     <input
                       type="text"
                       placeholder="@twitter_account"
-                      value={formData.social_account}
-                      onChange={(e) => setFormData({ ...formData, social_account: e.target.value })}
+                      {...register('social_account')}
                       className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                     />
                   </div>
@@ -672,18 +749,21 @@ function CustomersView({
                     <input
                       type="email"
                       placeholder="customer@example.com"
-                      value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                      {...register('email')}
+                      className={`w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 transition-all ${
+                        errors.email ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
+                      }`}
                     />
+                    {errors.email && (
+                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.email.message}</p>
+                    )}
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">ระดับ VIP สมาชิก</label>
                   <select
-                    value={formData.vip_tier}
-                    onChange={(e) => setFormData({ ...formData, vip_tier: e.target.value })}
+                    {...register('vip_tier')}
                     className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                   >
                     <option value="general">ลูกค้าทั่วไป (General)</option>
@@ -698,8 +778,7 @@ function CustomersView({
                   <textarea
                     rows="3"
                     placeholder="ที่อยู่สำหรับออกบิลและจัดส่งเอกสาร..."
-                    value={formData.billing_address}
-                    onChange={(e) => setFormData({ ...formData, billing_address: e.target.value })}
+                    {...register('billing_address')}
                     className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
                   ></textarea>
                 </div>
@@ -744,4 +823,4 @@ function CustomersView({
   );
 }
 
-export default React.memo(CustomersView);
+export default React.memo(Customers);

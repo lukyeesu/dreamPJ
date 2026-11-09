@@ -169,7 +169,7 @@ const getProjectStatementRows = (item) => {
     });
   }
 
-  const sTotal = item._sTotal || (supportItems.reduce((sum, it) => sum + it.amount, 0));
+  const sTotal = item._sTotal || (supportItems.reduce((sum, it) => sum + it.amount, 0)) || (parseFloat(item.customerSupportTotal || item.customer_support_total) || 0);
 
   if (sTotal > 0 || supportItems.length > 0) {
     rows.push({
@@ -199,7 +199,7 @@ const getProjectStatementRows = (item) => {
     });
   }
 
-  const qTotal = item._qTotal || parseFloat(item.wage) || (quotationItems.reduce((sum, it) => sum + it.amount, 0));
+  const qTotal = item._qTotal || (quotationItems.reduce((sum, it) => sum + it.amount, 0)) || (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0);
 
   if (qTotal > 0 || quotationItems.length > 0) {
     rows.push({
@@ -231,7 +231,7 @@ const getProjectStatementRows = (item) => {
     });
   }
 
-  const eTotal = item._eTotal || parseFloat(item.totalExpenses) || (expenseItems.reduce((sum, it) => sum + it.amount, 0));
+  const eTotal = item._eTotal || (expenseItems.reduce((sum, it) => sum + it.amount, 0)) || (parseFloat(item.totalExpenses || item.total_expenses) || 0);
 
   if (eTotal > 0 || expenseItems.length > 0) {
     rows.push({
@@ -372,7 +372,7 @@ const escapeHtml = (str) => {
     .replace(/'/g, '&#39;');
 };
 
-function FinanceView({
+function Finance({
   activities = [],
   dealStatuses = [],
   transportStatuses = [],
@@ -582,7 +582,7 @@ function FinanceView({
       });
     };
 
-    window.addEventListener('scroll', checkSticky, { passive: true });
+    window.addEventListener('scroll', checkSticky, { passive: true, capture: true });
     window.addEventListener('resize', checkSticky, { passive: true });
     const mainEl = document.querySelector('main');
     if (mainEl) {
@@ -593,7 +593,7 @@ function FinanceView({
 
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
-      window.removeEventListener('scroll', checkSticky);
+      window.removeEventListener('scroll', checkSticky, { capture: true });
       window.removeEventListener('resize', checkSticky);
       if (mainEl) {
         mainEl.removeEventListener('scroll', checkSticky);
@@ -739,17 +739,20 @@ function FinanceView({
 
     // Precalculate all item metrics once to maximize render performance
     return filtered.map(item => {
-      const qTotal = item.quotationItems && item.quotationItems.length > 0
-        ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || 0), 0)
-        : (parseFloat(item.wage) || 0);
-
-      const sTotal = item.customerSupport && item.customerSupport.length > 0
-        ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
+      const calcQ = item.quotationItems && item.quotationItems.length > 0
+        ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || ((parseFloat(q.unitPrice) || 0) * (parseFloat(q.quantity) || 1)) || 0), 0)
         : 0;
+      const qTotal = calcQ > 0 ? calcQ : (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0);
 
-      const eTotal = item.expenses && item.expenses.length > 0
-        ? item.expenses.reduce((sum, e) => sum + (parseFloat(e.price) || 0), 0)
+      const calcS = item.customerSupport && item.customerSupport.length > 0
+        ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || ((parseFloat(s.denomination || s.unitPrice) || 0) * (parseFloat(s.quantity) || 1)) || 0), 0)
         : 0;
+      const sTotal = calcS > 0 ? calcS : (parseFloat(item.customerSupportTotal || item.customer_support_total) || 0);
+
+      const calcE = item.expenses && item.expenses.length > 0
+        ? item.expenses.reduce((sum, e) => sum + (parseFloat(e.price) || ((parseFloat(e.unitPrice) || 0) * (parseFloat(e.quantity) || 1)) || 0), 0)
+        : 0;
+      const eTotal = calcE > 0 ? calcE : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
 
       const explicitTransfer = parseFloat(item.transferredAmount ?? item.transferAmount);
       const itemTransfer = !isNaN(explicitTransfer) && explicitTransfer > 0
@@ -2018,7 +2021,6 @@ function FinanceView({
           </button>
         </div>
       </div>
-    </div>
   </div>
 
   <div class="paper-container">
@@ -2073,7 +2075,6 @@ function FinanceView({
           <div style="color: #64748b; font-size: 11px; margin-top: 4px;">วันที่: ......./......./...........</div>
         </div>
       </div>
-    </div>
 
     <!-- ========================================================
          ส่วนที่ 2: ตารางหลักฐานสลิปโอนเงิน (แบบสลิป)
@@ -2190,17 +2191,20 @@ function FinanceView({
     ];
 
     const rows = processedData.map(item => {
-      const qTotal = item.quotationItems && item.quotationItems.length > 0
-        ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || 0), 0)
-        : (parseFloat(item.wage) || 0);
-
-      const sTotal = item.customerSupport && item.customerSupport.length > 0
-        ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
+      const calcQ = item.quotationItems && item.quotationItems.length > 0
+        ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || ((parseFloat(q.unitPrice) || 0) * (parseFloat(q.quantity) || 1)) || 0), 0)
         : 0;
+      const qTotal = calcQ > 0 ? calcQ : (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0);
 
-      const eTotal = item.expenses && item.expenses.length > 0
-        ? item.expenses.reduce((sum, e) => sum + (parseFloat(e.price) || 0), 0)
+      const calcS = item.customerSupport && item.customerSupport.length > 0
+        ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || ((parseFloat(s.denomination || s.unitPrice) || 0) * (parseFloat(s.quantity) || 1)) || 0), 0)
         : 0;
+      const sTotal = calcS > 0 ? calcS : (parseFloat(item.customerSupportTotal || item.customer_support_total) || 0);
+
+      const calcE = item.expenses && item.expenses.length > 0
+        ? item.expenses.reduce((sum, e) => sum + (parseFloat(e.price) || ((parseFloat(e.unitPrice) || 0) * (parseFloat(e.quantity) || 1)) || 0), 0)
+        : 0;
+      const eTotal = calcE > 0 ? calcE : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
 
       const profit = qTotal - eTotal;
       const status = item.paymentStatus === 'paid' ? 'ชำระครบแล้ว'
@@ -2236,7 +2240,7 @@ function FinanceView({
   };
 
   return (
-    <div className="w-full space-y-6 px-4 sm:px-8 lg:px-10 pt-4 pb-24 md:pb-10 font-sans">
+    <div className="w-full flex flex-col gap-6 px-4 sm:px-8 lg:px-10 pt-4 pb-24 md:pb-10 font-sans">
       {/* =========================================================================
           PRINT-ONLY STYLES & HEADER
          ========================================================================= */}
@@ -2308,73 +2312,90 @@ function FinanceView({
       {/* =========================================================================
           TOP TOOLBAR & CONTROLS (Screen Only)
          ========================================================================= */}
-      <div className="no-print flex items-center justify-between gap-2 pb-1">
-        {/* View Mode Toggle: Clean segmented control */}
-        <div className="bg-slate-100 p-1 rounded-xl flex items-center border border-slate-200 shrink-0 overflow-x-auto">
+      <div className="no-print flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 pb-1">
+        {/* View Mode Toggle: Clean segmented control (Full-width 4-column grid on mobile, inline-flex on desktop) */}
+        <div className="grid grid-cols-4 sm:flex items-center w-full sm:w-auto bg-slate-100 p-1 rounded-2xl border border-slate-200/90 shadow-2xs gap-1">
+          {/* 1. Feed / รายรับ-รายจ่าย */}
           <button
             onClick={() => handleViewModeChange('feed')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 rounded-xl sm:rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer select-none group ${
               viewMode === 'feed'
-                ? 'bg-white text-emerald-700 shadow-sm'
-                : 'text-slate-500 hover:text-slate-800'
+                ? 'bg-white text-emerald-700 shadow-xs ring-1 ring-black/5'
+                : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
             }`}
           >
-            <LayoutList className="w-4 h-4 text-emerald-600" />
-            <span>รายรับ-รายจ่าย</span>
+            <LayoutList className={`w-4 h-4 shrink-0 transition-colors ${viewMode === 'feed' ? 'text-emerald-600' : 'text-slate-400 group-hover:text-slate-600'}`} />
+            <span className="leading-tight text-center">
+              <span className="hidden sm:inline">รายรับ-รายจ่าย</span>
+              <span className="sm:hidden">รายรับ-จ่าย</span>
+            </span>
           </button>
+
+          {/* 2. Sheet / ตารางบัญชี */}
           <button
             onClick={() => handleViewModeChange('sheet')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 rounded-xl sm:rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer select-none group ${
               viewMode === 'sheet'
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'text-slate-500 hover:text-slate-800'
+                ? 'bg-white text-indigo-700 shadow-xs ring-1 ring-black/5'
+                : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
             }`}
           >
-            <TableIcon className="w-4 h-4 text-indigo-600" />
-            <span>ตารางบัญชี (พิมพ์)</span>
+            <TableIcon className={`w-4 h-4 shrink-0 transition-colors ${viewMode === 'sheet' ? 'text-indigo-600' : 'text-slate-400 group-hover:text-slate-600'}`} />
+            <span className="leading-tight text-center">
+              <span className="hidden sm:inline">ตารางบัญชี (พิมพ์)</span>
+              <span className="sm:hidden">ตารางบัญชี</span>
+            </span>
           </button>
+
+          {/* 3. Dashboard / การ์ดสรุป */}
           <button
             onClick={() => handleViewModeChange('dashboard')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 rounded-xl sm:rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer select-none group ${
               viewMode === 'dashboard'
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'text-slate-500 hover:text-slate-800'
+                ? 'bg-white text-sky-700 shadow-xs ring-1 ring-black/5'
+                : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
             }`}
           >
-            <BarChart2 className="w-4 h-4 text-sky-600" />
-            <span>การ์ดสรุป</span>
+            <BarChart2 className={`w-4 h-4 shrink-0 transition-colors ${viewMode === 'dashboard' ? 'text-sky-600' : 'text-slate-400 group-hover:text-slate-600'}`} />
+            <span className="leading-tight text-center">การ์ดสรุป</span>
           </button>
+
+          {/* 4. Slips / ตารางสลิป */}
           <button
             onClick={() => handleViewModeChange('slips')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 py-2 sm:py-1.5 px-1 sm:px-3 rounded-xl sm:rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer select-none group ${
               viewMode === 'slips'
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'text-slate-500 hover:text-slate-800'
+                ? 'bg-white text-amber-700 shadow-xs ring-1 ring-black/5'
+                : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
             }`}
           >
-            <Receipt className="w-4 h-4 text-amber-600" />
-            <span>ตารางสลิป</span>
+            <Receipt className={`w-4 h-4 shrink-0 transition-colors ${viewMode === 'slips' ? 'text-amber-600' : 'text-slate-400 group-hover:text-slate-600'}`} />
+            <span className="leading-tight text-center">ตารางสลิป</span>
           </button>
         </div>
 
-        {/* Action Buttons: Export Excel & Print */}
-        <div className="flex items-center gap-2">
+        {/* Action Buttons: Export Excel & Print A4 */}
+        <div className="flex items-center gap-2 shrink-0">
           {/* Export CSV Button */}
           <button
             onClick={handleExportCSV}
-            className="flex items-center justify-center w-10 h-10 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl shadow-xs transition active:scale-95 shrink-0"
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 h-9 sm:w-10 sm:h-10 px-3 sm:px-0 bg-white border border-slate-200/90 hover:bg-slate-50 text-slate-700 rounded-xl shadow-2xs transition active:scale-95 shrink-0"
             title="ส่งออกไฟล์ Excel/CSV"
           >
-            <Download className="w-5 h-5 text-emerald-600" />
+            <Download className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600 shrink-0" />
+            <span className="text-xs font-bold text-slate-700 sm:hidden">Export Excel</span>
           </button>
 
-          {/* Print to A4 Button (Icon only, larger touch size) */}
+          {/* Print to A4 Button */}
           <button
             onClick={() => handlePrint(viewMode === 'slips' ? 'slips' : tableDetailMode)}
-            className="flex items-center justify-center w-10 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md shadow-indigo-100 transition-all hover:-translate-y-0.5 active:translate-y-0 shrink-0"
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 h-9 sm:w-10 sm:h-10 px-3 sm:px-0 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-2xs shadow-indigo-100 transition active:scale-95 shrink-0"
             title={viewMode === 'slips' ? "พิมพ์ตารางสลิป A4" : "พิมพ์เอกสาร A4"}
           >
-            <Printer className="w-5 h-5" />
+            <Printer className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+            <span className="text-xs font-bold sm:hidden">
+              {viewMode === 'slips' ? 'พิมพ์ตารางสลิป' : 'พิมพ์รายงาน A4'}
+            </span>
           </button>
         </div>
       </div>
@@ -2408,9 +2429,9 @@ function FinanceView({
               );
             })()}
           </div>
-          <div className="flex items-center justify-between mt-1.5 pt-2 sm:mt-2 sm:pt-2.5 border-t border-slate-100 text-xs text-slate-500 font-medium">
-            <span className="text-[11px] sm:text-xs text-slate-600 font-medium whitespace-nowrap">ส่งต่อศิลปิน</span>
-            <span className="inline-flex items-center font-medium text-[10px] sm:text-xs text-slate-600 bg-slate-100 px-1.5 sm:px-2 py-0.5 rounded-full shrink-0">
+          <div className="flex items-center justify-between mt-1.5 pt-2 sm:mt-2 sm:pt-2.5 border-t border-slate-100 text-xs sm:text-sm text-slate-700 font-semibold">
+            <span className="text-xs sm:text-sm text-slate-700 font-semibold whitespace-nowrap">ส่งต่อศิลปิน</span>
+            <span className="inline-flex items-center font-bold text-xs sm:text-sm text-slate-700 bg-slate-100 px-2 sm:px-2.5 py-0.5 rounded-full shrink-0">
               ไม่หักกำไร
             </span>
           </div>
@@ -2441,9 +2462,9 @@ function FinanceView({
               );
             })()}
           </div>
-          <div className="flex items-center justify-between mt-1.5 pt-2 sm:mt-2 sm:pt-2.5 border-t border-slate-100 text-xs text-slate-500 font-medium">
-            <span className="text-[11px] sm:text-xs text-slate-500 font-medium whitespace-nowrap" title={`ยอดจ้างรวม: ฿${formatCurrency(financialSummary.totalQuotation)}`}>ยอดจ้างรวม</span>
-            <span className="inline-flex items-center font-bold text-[11px] sm:text-xs text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100/60 shrink-0">
+          <div className="flex items-center justify-between mt-1.5 pt-2 sm:mt-2 sm:pt-2.5 border-t border-slate-100 text-xs sm:text-sm text-slate-600 font-medium">
+            <span className="text-xs sm:text-sm text-slate-600 font-semibold whitespace-nowrap" title={`ยอดจ้างรวม: ฿${formatCurrency(financialSummary.totalQuotation)}`}>ยอดจ้างรวม</span>
+            <span className="inline-flex items-center font-bold text-xs sm:text-sm text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100/60 shrink-0">
               {financialSummary.projectCount} งาน
             </span>
           </div>
@@ -2474,9 +2495,9 @@ function FinanceView({
               );
             })()}
           </div>
-          <div className="flex items-center justify-between mt-1.5 pt-2 sm:mt-2 sm:pt-2.5 border-t border-slate-100 text-xs text-slate-500 font-medium">
-            <span className="text-[11px] sm:text-xs text-slate-500 font-medium whitespace-nowrap">ต้นทุนต่องาน</span>
-            <span className="inline-flex items-center font-bold text-[11px] sm:text-xs text-rose-700 bg-rose-50 px-1.5 sm:px-2 py-0.5 rounded-full border border-rose-100/60 shrink-0">
+          <div className="flex items-center justify-between mt-1.5 pt-2 sm:mt-2 sm:pt-2.5 border-t border-slate-100 text-xs sm:text-sm text-slate-600 font-medium">
+            <span className="text-xs sm:text-sm text-slate-600 font-semibold whitespace-nowrap">ต้นทุนต่องาน</span>
+            <span className="inline-flex items-center font-bold text-xs sm:text-sm text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-100/60 shrink-0">
               {financialSummary.totalQuotation > 0
                 ? `${((financialSummary.totalExpenses / financialSummary.totalQuotation) * 100).toFixed(1)}%`
                 : '0%'}
@@ -2510,10 +2531,10 @@ function FinanceView({
               );
             })()}
           </div>
-          <div className="flex items-center justify-between mt-1.5 pt-2 sm:mt-2 sm:pt-2.5 border-t border-emerald-100/80 text-xs font-semibold text-emerald-800">
-            <span className="text-[11px] sm:text-xs text-emerald-800 font-bold whitespace-nowrap">Margin สุทธิ</span>
-            <span className="inline-flex items-center gap-1 font-bold text-[11px] sm:text-xs text-emerald-800 bg-emerald-100/80 px-1.5 sm:px-2 py-0.5 rounded-full border border-emerald-200/80 shrink-0">
-              <TrendingUp className="w-3 h-3 text-emerald-600 shrink-0" />
+          <div className="flex items-center justify-between mt-1.5 pt-2 sm:mt-2 sm:pt-2.5 border-t border-emerald-100/80 text-xs sm:text-sm font-bold text-emerald-800">
+            <span className="text-xs sm:text-sm text-emerald-800 font-bold whitespace-nowrap">Margin สุทธิ</span>
+            <span className="inline-flex items-center gap-1 font-bold text-xs sm:text-sm text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-full border border-emerald-200/80 shrink-0">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
               <span>{financialSummary.netMarginPercent}%</span>
             </span>
           </div>
@@ -2523,12 +2544,15 @@ function FinanceView({
       {/* =========================================================================
           FILTER TOOLBAR (Clean, Modern, Unified Mobile & Desktop Filter)
          ========================================================================= */}
-      <div ref={filterSentinelRef} className="h-px w-full pointer-events-none opacity-0 -mb-px" />
       <div 
-        className={`no-print bg-white transition-all duration-200 ease-in-out z-40 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0
+        ref={filterSentinelRef} 
+        className="w-full h-0 -my-3 pointer-events-none opacity-0"
+      />
+      <div 
+        className={`no-print bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out z-40 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0
           ${isFilterStuck
-            ? '-mx-4 sm:-mx-8 lg:-mx-10 mt-0 py-2.5 sm:py-3 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none mb-4'
-            : 'mt-2 sm:mt-3 p-3.5 sm:p-5 rounded-[2rem] sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)] mb-4'
+            ? '-mx-4 sm:-mx-8 lg:-mx-10 py-2.5 sm:py-3 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
+            : 'p-3.5 sm:p-4 rounded-[2rem] sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
           }
         `}
       >
@@ -2639,9 +2663,9 @@ function FinanceView({
         {/* --- DESKTOP FILTER LAYOUT (แถวเดียวเป็นค่าเริ่มต้น กดปุ่มเพื่อเปิดตัวกรองเพิ่มเติม) --- */}
         <div className="hidden md:flex flex-col gap-2.5">
           {/* แถวที่ 1: ค้นหา + ตัวเลือกวันที่ + ปุ่มตัวกรองเพิ่มเติม + ปุ่มรีเซ็ต */}
-          <div className="flex gap-3 h-[48px]">
+          <div className="flex items-center gap-3 h-[48px]">
             {/* กล่องค้นหา Desktop */}
-            <div className="relative flex-[2] bg-slate-50 border border-slate-200/70 rounded-2xl hover:border-indigo-300 focus-within:bg-white focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all shadow-xs">
+            <div className="relative flex-[1.2] min-w-[260px] h-full bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all shadow-xs">
               <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
                 <Search className="w-5 h-5" />
               </div>
@@ -2664,7 +2688,7 @@ function FinanceView({
             </div>
 
             {/* เลือกวันที่ Desktop */}
-            <div className="flex-1 min-w-[280px]">
+            <div className="flex-1 min-w-[320px] max-w-[440px] h-full">
               <DateFilterControl
                 mode={dateFilterMode}
                 setMode={setDateFilterMode}
@@ -2675,11 +2699,11 @@ function FinanceView({
               />
             </div>
 
-            {/* ปุ่มเปิด/ซ่อนตัวกรองเพิ่มเติม Desktop */}
+            {/* ปุ่มเปิด/ซ่อนตัวกรองเพิ่มเติม Desktop (Icon Only) */}
             <button
               type="button"
               onClick={() => setIsDesktopFilterExpanded(!isDesktopFilterExpanded)}
-              className={`h-[48px] px-3.5 rounded-2xl font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 active:scale-95 border cursor-pointer ${
+              className={`h-full px-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 active:scale-95 border cursor-pointer shadow-xs ${
                 isDesktopFilterExpanded 
                   ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-200' 
                   : (paymentStatusFilter !== 'all' || sortOrder !== 'desc')
@@ -2691,7 +2715,7 @@ function FinanceView({
             >
               <SlidersHorizontal className="w-4 h-4" />
               {(paymentStatusFilter !== 'all' || sortOrder !== 'desc') && (
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                <span className={`px-1.5 py-0.5 rounded-full text-xs font-black ${
                   isDesktopFilterExpanded ? 'bg-white text-indigo-600' : 'bg-indigo-200 text-indigo-800'
                 }`}>
                   {[paymentStatusFilter !== 'all', sortOrder !== 'desc'].filter(Boolean).length}
@@ -2703,7 +2727,7 @@ function FinanceView({
             {/* ปุ่มรีเซ็ตฟิลเตอร์ Desktop */}
             <button
               onClick={handleResetFilters}
-              className="px-5 bg-slate-50 border border-slate-200/70 text-slate-500 rounded-2xl font-bold hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors flex items-center justify-center shadow-xs shrink-0 cursor-pointer active:scale-95"
+              className="h-full w-[48px] bg-white border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-2xl font-bold transition-colors flex items-center justify-center shadow-xs shrink-0 cursor-pointer active:scale-95"
               title="ล้างค่าตัวกรองทั้งหมด"
             >
               <RotateCcw className="w-4 h-4" />
@@ -2806,7 +2830,7 @@ function FinanceView({
                                     <span className="font-bold text-xs text-slate-900">
                                       {dtParts.date}
                                     </span>
-                                    <span className="text-[11px] text-slate-500 font-mono mt-0.5">
+                                    <span className="text-xs text-slate-500 font-mono mt-0.5 font-medium">
                                       {dtParts.time}
                                     </span>
                                   </div>
@@ -2825,7 +2849,7 @@ function FinanceView({
                                       {item.id}
                                     </span>
                                     {!isFirstRow && (
-                                      <span className="text-[10px] text-slate-400 font-mono select-none">↳</span>
+                                      <span className="text-xs text-slate-400 font-mono select-none">↳</span>
                                     )}
                                   </div>
                                 </td>
@@ -2843,7 +2867,7 @@ function FinanceView({
                                             <span className="text-slate-400">•</span>
                                             <span className="font-medium text-slate-700">{it.name}</span>
                                             {it.amount > 0 && (
-                                              <span className="text-slate-500 font-mono text-[11px]">
+                                              <span className="text-slate-600 font-mono text-xs font-medium">
                                                 (฿{formatCurrency(it.amount)})
                                               </span>
                                             )}
@@ -2863,7 +2887,7 @@ function FinanceView({
                                       {entry.typeLabel}
                                     </span>
                                     {entry.category && entry.category !== '-' && (
-                                      <span className="text-[10px] font-semibold text-slate-500 px-1.5 py-0.5 bg-slate-100 rounded border border-slate-200">
+                                      <span className="text-xs font-semibold text-slate-600 px-2 py-0.5 bg-slate-100 rounded border border-slate-200">
                                         {entry.category}
                                       </span>
                                     )}
@@ -2897,7 +2921,7 @@ function FinanceView({
                                       <span className="font-black text-sm text-emerald-600">
                                         +฿{formatCurrency(entry.incomeAmount)}
                                       </span>
-                                      <span className="text-[10px] text-emerald-700/70 font-semibold">
+                                      <span className="text-xs text-emerald-800 font-bold">
                                         {entry.type === 'support' ? 'เงินศิลปิน' : 'รายรับ'}
                                       </span>
                                     </div>
@@ -2906,7 +2930,7 @@ function FinanceView({
                                       <span className="font-black text-sm text-rose-600">
                                         -฿{formatCurrency(entry.expenseAmount)}
                                       </span>
-                                      <span className="text-[10px] text-rose-600/70 font-semibold">รายจ่ายจริง</span>
+                                      <span className="text-xs text-rose-700 font-bold">รายจ่ายจริง</span>
                                     </div>
                                   ) : (
                                     <span className="text-slate-300 font-mono">฿0</span>
@@ -2916,7 +2940,7 @@ function FinanceView({
                                 {/* 7. สถานะ */}
                                 <td className="px-4 py-3.5 align-top text-center">
                                   <span
-                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border whitespace-nowrap ${
+                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${
                                       entry.paymentStatus === 'paid'
                                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                         : entry.paymentStatus === 'deposit'
@@ -3042,7 +3066,7 @@ function FinanceView({
                       </div>
 
                       <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border ${
                           item._paymentStatus === 'paid'
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                             : item._paymentStatus === 'deposit'
@@ -3069,17 +3093,17 @@ function FinanceView({
                       </h4>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         {item.category && (
-                          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                          <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                             {item.category}
                           </span>
                         )}
                         {item.artist && (
-                          <span className="text-[11px] font-semibold text-indigo-600">
+                          <span className="text-xs font-bold text-indigo-700">
                             ศิลปิน: {item.artist}
                           </span>
                         )}
                         {item.customer && (
-                          <span className="text-[11px] text-slate-500">
+                          <span className="text-xs text-slate-600 font-medium">
                             ลูกค้า: {item.customer}
                           </span>
                         )}
@@ -3095,7 +3119,7 @@ function FinanceView({
                         >
                           <div className="flex items-center justify-between">
                             <span
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${entry.typeBadge}`}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold border ${entry.typeBadge}`}
                             >
                               {entry.typeLabel}
                             </span>
@@ -3120,7 +3144,7 @@ function FinanceView({
                               {entry.items.map((it, itIdx) => (
                                 <div
                                   key={itIdx}
-                                  className="flex items-center justify-between text-[11px] text-slate-600 font-mono"
+                                  className="flex items-center justify-between text-xs text-slate-700 font-mono font-medium"
                                 >
                                   <span className="truncate pr-2">• {it.name}</span>
                                   {it.amount > 0 && (
@@ -3215,7 +3239,7 @@ function FinanceView({
                       แก้ไขรายการธุรกรรม
                     </h3>
                     {editingTx?.projectId && (
-                      <span className="bg-amber-50 text-amber-700 text-[10px] sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-amber-100 font-mono w-fit">
+                      <span className="bg-amber-50 text-amber-700 text-xs px-2.5 py-1 rounded-lg font-bold border border-amber-100 font-mono w-fit">
                         {editingTx.projectId}
                       </span>
                     )}
@@ -3413,7 +3437,7 @@ function FinanceView({
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
                       <span>วันที่ทำรายการ *</span>
-                      <span className="text-[11px] text-indigo-600 font-semibold">(ระบุวันและเวลา)</span>
+                      <span className="text-xs text-indigo-700 font-bold">(ระบุวันและเวลา)</span>
                     </label>
                     <ModernDateTimePicker
                       value={newTxFormData.dateTime}
@@ -3504,9 +3528,14 @@ function FinanceView({
                     <button
                       type="button"
                       onClick={handleAddTxItem}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-black transition-all active:scale-95 cursor-pointer shadow-xs"
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border text-xs font-black transition-all active:scale-95 cursor-pointer shadow-xs"
+                      style={{
+                        backgroundColor: 'var(--theme-light, #f0f9ff)',
+                        borderColor: 'color-mix(in srgb, var(--theme-main, #0284c7) 30%, transparent)',
+                        color: 'var(--theme-main, #0284c7)'
+                      }}
                     >
-                      <Plus className="w-4 h-4 text-sky-600" />
+                      <Plus className="w-4 h-4" style={{ color: 'var(--theme-main, #0284c7)' }} />
                       <span>เพิ่มรายการ</span>
                     </button>
                   </div>
@@ -3520,63 +3549,83 @@ function FinanceView({
                   </div>
 
                   {/* Item Rows */}
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     {newTxFormData.items.map((it, idx) => {
                       const itemTotal = (Number(it.quantity) || 1) * (Number(it.price) || 0);
 
                       return (
                         <div
                           key={it.id || idx}
-                          className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-2.5 items-center bg-slate-50/80 p-2.5 sm:p-3 rounded-2xl border border-slate-200/70 hover:border-slate-300 transition-colors"
+                          className="rounded-2xl border border-slate-200/90 overflow-hidden bg-slate-50/80 hover:border-slate-300 transition-colors shadow-2xs"
                         >
-                          <div className="sm:col-span-6">
-                            <input
-                              type="text"
-                              placeholder="ค้นหาหรือพิมพ์ชื่อรายการ..."
-                              value={it.detail}
-                              onChange={(e) => handleUpdateTxItem(idx, 'detail', e.target.value)}
-                              required
-                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all placeholder:text-slate-400"
-                            />
-                          </div>
-                          <div className="flex items-center gap-2 sm:col-span-2">
-                            <span className="text-xs text-slate-500 font-bold sm:hidden">จำนวน:</span>
-                            <input
-                              type="number"
-                              min="1"
-                              value={it.quantity}
-                              onChange={(e) => handleUpdateTxItem(idx, 'quantity', e.target.value)}
-                              className="w-full px-2 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-center text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                            />
-                          </div>
-                          <div className="flex items-center gap-2 sm:col-span-2">
-                            <span className="text-xs text-slate-500 font-bold sm:hidden">ราคา:</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="any"
-                              placeholder="0"
-                              value={it.price}
-                              onChange={(e) => handleUpdateTxItem(idx, 'price', e.target.value)}
-                              required
-                              className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-right text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                            />
-                          </div>
-                          <div className="flex items-center justify-between sm:justify-end gap-2 sm:col-span-2">
-                            <span className="text-xs text-slate-500 font-bold sm:hidden">รวม:</span>
-                            <span className="font-black text-sm text-slate-900 tabular-nums">
-                              {formatCurrency(itemTotal)} บาท
+                          {/* Mobile Card Header */}
+                          <div className="sm:hidden bg-gradient-to-r from-sky-600 to-indigo-600 px-3.5 py-2 flex items-center justify-between text-white shadow-2xs">
+                            <span className="font-black text-xs flex items-center gap-1.5 tracking-wide">
+                              <Receipt className="w-3.5 h-3.5 text-white/90" />
+                              รายการที่ {idx + 1}
                             </span>
                             {newTxFormData.items.length > 1 && (
                               <button
                                 type="button"
                                 onClick={() => handleRemoveTxItem(idx)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                                title="ลบรายการนี้"
+                                className="w-7 h-7 rounded-lg bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-90"
+                                title={`ลบรายการที่ ${idx + 1}`}
                               >
-                                <Trash2 className="w-4 h-4" />
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             )}
+                          </div>
+
+                          <div className="p-2.5 sm:p-3 grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-2.5 items-center">
+                            <div className="sm:col-span-6">
+                              <input
+                                type="text"
+                                placeholder="ค้นหาหรือพิมพ์ชื่อรายการ..."
+                                value={it.detail}
+                                onChange={(e) => handleUpdateTxItem(idx, 'detail', e.target.value)}
+                                required
+                                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all placeholder:text-slate-400"
+                              />
+                            </div>
+                            <div className="flex items-center gap-2 sm:col-span-2">
+                              <span className="text-xs text-slate-500 font-bold sm:hidden">จำนวน:</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={it.quantity}
+                                onChange={(e) => handleUpdateTxItem(idx, 'quantity', e.target.value)}
+                                className="w-full px-2 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-center text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                              />
+                            </div>
+                            <div className="flex items-center gap-2 sm:col-span-2">
+                              <span className="text-xs text-slate-500 font-bold sm:hidden">ราคา:</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                placeholder="0"
+                                value={it.price}
+                                onChange={(e) => handleUpdateTxItem(idx, 'price', e.target.value)}
+                                required
+                                className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-right text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                              />
+                            </div>
+                            <div className="flex items-center justify-between sm:justify-end gap-2 sm:col-span-2">
+                              <span className="text-xs text-slate-500 font-bold sm:hidden">รวม:</span>
+                              <span className="font-black text-sm text-slate-900 tabular-nums">
+                                {formatCurrency(itemTotal)} บาท
+                              </span>
+                              {newTxFormData.items.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveTxItem(idx)}
+                                  className="hidden sm:flex p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                  title="ลบรายการนี้"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );
@@ -3613,9 +3662,10 @@ function FinanceView({
                           onClick={() => setNewTxFormData(prev => ({ ...prev, discountType: 'baht' }))}
                           className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
                             newTxFormData.discountType === 'baht'
-                              ? 'bg-sky-500 text-white shadow-xs'
+                              ? 'text-white shadow-xs'
                               : 'text-slate-500 hover:text-slate-800'
                           }`}
+                          style={newTxFormData.discountType === 'baht' ? { backgroundColor: 'var(--theme-main, #0284c7)' } : undefined}
                         >
                           บาท
                         </button>
@@ -3624,9 +3674,10 @@ function FinanceView({
                           onClick={() => setNewTxFormData(prev => ({ ...prev, discountType: 'percent' }))}
                           className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
                             newTxFormData.discountType === 'percent'
-                              ? 'bg-sky-500 text-white shadow-xs'
+                              ? 'text-white shadow-xs'
                               : 'text-slate-500 hover:text-slate-800'
                           }`}
+                          style={newTxFormData.discountType === 'percent' ? { backgroundColor: 'var(--theme-main, #0284c7)' } : undefined}
                         >
                           %
                         </button>
@@ -3644,7 +3695,8 @@ function FinanceView({
                           name="taxType"
                           checked={newTxFormData.taxType === 'include'}
                           onChange={() => setNewTxFormData(prev => ({ ...prev, taxType: 'include' }))}
-                          className="w-4 h-4 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                          className="w-4 h-4 cursor-pointer"
+                          style={{ accentColor: 'var(--theme-main, #0284c7)' }}
                         />
                         <span>รวม VAT</span>
                       </label>
@@ -3654,7 +3706,8 @@ function FinanceView({
                           name="taxType"
                           checked={newTxFormData.taxType === 'exclude'}
                           onChange={() => setNewTxFormData(prev => ({ ...prev, taxType: 'exclude' }))}
-                          className="w-4 h-4 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                          className="w-4 h-4 cursor-pointer"
+                          style={{ accentColor: 'var(--theme-main, #0284c7)' }}
                         />
                         <span>แยก VAT</span>
                       </label>
@@ -3664,7 +3717,8 @@ function FinanceView({
                           name="taxType"
                           checked={newTxFormData.taxType === 'none'}
                           onChange={() => setNewTxFormData(prev => ({ ...prev, taxType: 'none' }))}
-                          className="w-4 h-4 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                          className="w-4 h-4 cursor-pointer"
+                          style={{ accentColor: 'var(--theme-main, #0284c7)' }}
                         />
                         <span>ไม่มี VAT</span>
                       </label>
@@ -3672,7 +3726,13 @@ function FinanceView({
                   </div>
 
                   {/* ยอดสุทธิ Hero Card */}
-                  <div className="bg-gradient-to-r from-sky-500 to-blue-600 text-white rounded-2xl p-4 flex items-center justify-between shadow-lg shadow-sky-500/25">
+                  <div
+                    className="text-white rounded-2xl p-4 flex items-center justify-between shadow-lg transition-all duration-300"
+                    style={{
+                      background: 'var(--theme-logo-bg, var(--theme-main, #8b5cf6))',
+                      boxShadow: '0 10px 25px -5px var(--theme-shadow, rgba(139, 92, 246, 0.35))'
+                    }}
+                  >
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center shrink-0">
                         <Activity className="w-5 h-5 text-white" />
@@ -3823,7 +3883,7 @@ function FinanceView({
                     {/* Header: Date + Project ID + Net badge */}
                     <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[11px] font-black bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md">
+                        <span className="text-xs font-black bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md">
                           {displayProjectDate}
                         </span>
                         <span className="text-xs font-mono font-bold text-slate-600">
@@ -3840,7 +3900,7 @@ function FinanceView({
                     {/* Project Title & Client/Artist */}
                     <div>
                       <h4 className="text-sm font-black text-slate-900 leading-snug">{item.name || 'ไม่มีชื่องาน'}</h4>
-                      <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[11px] text-slate-500">
+                      <div className="flex flex-wrap items-center gap-2 mt-0.5 text-xs text-slate-600 font-medium">
                         {item.customer && <span>ลูกค้า: <strong className="text-slate-700">{item.customer}</strong></span>}
                         {item.customer && item.artist && <span>•</span>}
                         {item.artist && <span>ศิลปิน: <strong className="text-slate-700">{item.artist}</strong></span>}
@@ -3851,7 +3911,7 @@ function FinanceView({
                     <div className="space-y-2 text-xs bg-slate-50/70 p-2.5 rounded-xl border border-slate-100">
                       {/* 1. เงินสนับสนุน */}
                       <div>
-                        <div className="flex items-center justify-between font-bold text-slate-800 text-[11px]">
+                        <div className="flex items-center justify-between font-bold text-slate-800 text-xs">
                           <span>1. เงินสนับสนุนศิลปิน (Money Order)</span>
                           <span className="text-indigo-600 tabular-nums">{sTotal > 0 ? `฿${formatCurrency(sTotal)}` : '-'}</span>
                         </div>
@@ -3861,21 +3921,25 @@ function FinanceView({
                               const supDate = formatItemDate(sup.date || item.paymentDate || item.rawDateTime || item.date);
                               const denomText = sup.denomination >= 20 ? `แบงค์ ${sup.denomination}บ.` : `เหรียญ ${sup.denomination}บ.`;
                               return (
-                                <p key={sIdx} className="text-[11px] text-slate-600">
+                                <p key={sIdx} className="text-xs text-slate-700 font-medium">
                                   -{denomText} x {sup.quantity}ใบ = {formatCurrency(sup.price)}บ. {supDate ? `(${supDate})` : ''}
                                   {sup.detail ? ` ${sup.detail}` : ''}
                                 </p>
                               );
                             })}
                           </div>
+                        ) : sTotal > 0 ? (
+                          <p className="text-xs text-slate-700 font-medium pl-2">
+                            -ยอดเงินส่งต่อศิลปินรวม {formatCurrency(sTotal)}บ.
+                          </p>
                         ) : (
-                          <p className="text-[10px] text-slate-400 pl-2 italic">ไม่มีรายการ</p>
+                          <p className="text-xs text-slate-400 pl-2 italic">ไม่มีรายการ</p>
                         )}
                       </div>
 
                       {/* 2. รายการเสนอราคา */}
                       <div className="pt-1.5 border-t border-slate-200/60">
-                        <div className="flex items-center justify-between font-bold text-slate-800 text-[11px]">
+                        <div className="flex items-center justify-between font-bold text-slate-800 text-xs">
                           <span>2. รายการเสนอราคา (Quotation)</span>
                           <span className="text-emerald-700 tabular-nums">{qTotal > 0 ? `฿${formatCurrency(qTotal)}` : '-'}</span>
                         </div>
@@ -3885,24 +3949,24 @@ function FinanceView({
                               const qDate = formatItemDate(quote.date || item.paymentDate || item.rawDateTime || item.date);
                               const qLabel = quote.category ? `[${quote.category}] ` : '';
                               return (
-                                <p key={qIdx} className="text-[11px] text-slate-600">
+                                <p key={qIdx} className="text-xs text-slate-700 font-medium">
                                   -{qLabel}{quote.detail || 'รายการงาน'} {formatCurrency(quote.price)}บ. {qDate ? `(${qDate})` : ''}
                                 </p>
                               );
                             })}
                           </div>
                         ) : qTotal > 0 ? (
-                          <p className="text-[11px] text-slate-600 pl-2">
+                          <p className="text-xs text-slate-700 font-medium pl-2">
                             -ค่าจ้าง/บริการ {formatCurrency(qTotal)}บ.
                           </p>
                         ) : (
-                          <p className="text-[10px] text-slate-400 pl-2 italic">ไม่มีรายการ</p>
+                          <p className="text-xs text-slate-400 pl-2 italic">ไม่มีรายการ</p>
                         )}
                       </div>
 
                       {/* 3. รายจ่ายจริง */}
                       <div className="pt-1.5 border-t border-slate-200/60">
-                        <div className="flex items-center justify-between font-bold text-slate-800 text-[11px]">
+                        <div className="flex items-center justify-between font-bold text-slate-800 text-xs">
                           <span>3. รายจ่ายจริง / ต้นทุนเพิ่ม (Expenses)</span>
                           <span className="text-rose-600 tabular-nums">{eTotal > 0 ? `฿${formatCurrency(eTotal)}` : '-'}</span>
                         </div>
@@ -3912,39 +3976,43 @@ function FinanceView({
                               const expDate = formatItemDate(exp.date || item.paymentDate || item.rawDateTime || item.date);
                               const expLabel = exp.category ? `[${exp.category}] ` : '';
                               return (
-                                <p key={eIdx} className="text-[11px] text-slate-600">
+                                <p key={eIdx} className="text-xs text-slate-700 font-medium">
                                   -{expLabel}{exp.detail || 'ค่าใช้จ่าย'} {exp.quantity > 1 ? `${exp.quantity}หน่วย ` : ''}{formatCurrency(exp.price)}บ. {expDate ? `(${expDate})` : ''}
                                 </p>
                               );
                             })}
                           </div>
+                        ) : eTotal > 0 ? (
+                          <p className="text-xs text-slate-700 font-medium pl-2">
+                            -ยอดค่าใช้จ่ายจริงรวม {formatCurrency(eTotal)}บ.
+                          </p>
                         ) : (
-                          <p className="text-[10px] text-slate-400 pl-2 italic">ไม่มีรายการ</p>
+                          <p className="text-xs text-slate-400 pl-2 italic">ไม่มีรายการ</p>
                         )}
                       </div>
                     </div>
 
                     {/* Summary 5-Column Strip for this item */}
                     <div className="grid grid-cols-5 gap-1 pt-2 border-t border-slate-100 text-center">
-                      <div className="bg-slate-50 p-1 rounded-lg">
-                        <span className="text-[9px] text-slate-400 block font-medium truncate">ยอดโอน</span>
-                        <span className="text-[10px] sm:text-[11px] font-bold text-slate-800 tabular-nums">{itemTransfer > 0 ? formatCurrency(itemTransfer) : '-'}</span>
+                      <div className="bg-slate-50 p-1.5 rounded-lg">
+                        <span className="text-xs text-slate-600 block font-bold truncate">ยอดโอน</span>
+                        <span className="text-xs sm:text-sm font-bold text-slate-800 tabular-nums">{itemTransfer > 0 ? formatCurrency(itemTransfer) : '-'}</span>
                       </div>
-                      <div className="bg-slate-50 p-1 rounded-lg">
-                        <span className="text-[9px] text-slate-400 block font-medium truncate">เงินศิลปิน</span>
-                        <span className="text-[10px] sm:text-[11px] font-bold text-slate-800 tabular-nums">{sTotal > 0 ? formatCurrency(sTotal) : '-'}</span>
+                      <div className="bg-slate-50 p-1.5 rounded-lg">
+                        <span className="text-xs text-slate-600 block font-bold truncate">เงินศิลปิน</span>
+                        <span className="text-xs sm:text-sm font-bold text-slate-800 tabular-nums">{sTotal > 0 ? formatCurrency(sTotal) : '-'}</span>
                       </div>
-                      <div className="bg-slate-50 p-1 rounded-lg">
-                        <span className="text-[9px] text-slate-400 block font-medium truncate">รายรับ</span>
-                        <span className="text-[10px] sm:text-[11px] font-bold text-slate-800 tabular-nums">{qTotal > 0 ? formatCurrency(qTotal) : '-'}</span>
+                      <div className="bg-slate-50 p-1.5 rounded-lg">
+                        <span className="text-xs text-slate-600 block font-bold truncate">รายรับ</span>
+                        <span className="text-xs sm:text-sm font-bold text-slate-800 tabular-nums">{qTotal > 0 ? formatCurrency(qTotal) : '-'}</span>
                       </div>
-                      <div className="bg-slate-50 p-1 rounded-lg">
-                        <span className="text-[9px] text-slate-400 block font-medium truncate">รายจ่าย</span>
-                        <span className="text-[10px] sm:text-[11px] font-bold text-rose-600 tabular-nums">{eTotal > 0 ? formatCurrency(eTotal) : '-'}</span>
+                      <div className="bg-slate-50 p-1.5 rounded-lg">
+                        <span className="text-xs text-slate-600 block font-bold truncate">รายจ่าย</span>
+                        <span className="text-xs sm:text-sm font-bold text-rose-600 tabular-nums">{eTotal > 0 ? formatCurrency(eTotal) : '-'}</span>
                       </div>
-                      <div className="bg-emerald-50/70 p-1 rounded-lg border border-emerald-100">
-                        <span className="text-[9px] text-emerald-800 block font-bold truncate">กำไร/ขาดทุน</span>
-                        <span className="text-[10px] sm:text-[11px] font-black text-emerald-700 tabular-nums">{formatCurrency(netBalance)}</span>
+                      <div className="bg-emerald-50/70 p-1.5 rounded-lg border border-emerald-100">
+                        <span className="text-xs text-emerald-800 block font-black truncate">กำไร/ขาดทุน</span>
+                        <span className="text-xs sm:text-sm font-black text-emerald-700 tabular-nums">{formatCurrency(netBalance)}</span>
                       </div>
                     </div>
                   </div>
@@ -4020,7 +4088,7 @@ function FinanceView({
                           <div className="font-black text-slate-900 leading-snug">
                             {item.id} {item.name ? `- ${item.name}` : ''}
                           </div>
-                          <div className="no-print text-[11px] font-normal text-slate-400 mt-0.5 leading-tight">
+                          <div className="no-print text-xs font-medium text-slate-600 mt-0.5 leading-tight">
                             {clientInfo}
                           </div>
 
@@ -4043,6 +4111,10 @@ function FinanceView({
                                       </p>
                                     );
                                   })
+                                ) : sTotal > 0 ? (
+                                  <p className="text-xs text-slate-700 pl-3 font-medium">
+                                    -ยอดเงินส่งต่อศิลปินรวม {formatCurrency(sTotal)}บาท {displayProjectDate ? `- ${displayProjectDate}` : ''}
+                                  </p>
                                 ) : (
                                   <p className="text-xs text-slate-400 pl-3 italic">-ไม่มีรายการสนับสนุน</p>
                                 )}
@@ -4089,6 +4161,10 @@ function FinanceView({
                                       </p>
                                     );
                                   })
+                                ) : eTotal > 0 ? (
+                                  <p className="text-xs text-slate-700 pl-3 font-medium">
+                                    -ยอดค่าใช้จ่ายจริงรวม {formatCurrency(eTotal)}บาท {displayProjectDate ? `- ${displayProjectDate}` : ''}
+                                  </p>
                                 ) : (
                                   <p className="text-xs text-slate-400 pl-3 italic">-ไม่มีรายการค่าใช้จ่ายจริง</p>
                                 )}
@@ -4244,7 +4320,7 @@ function FinanceView({
 
                         <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
                           {/* Payment Status Pill */}
-                          <span className={`px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-full text-[11px] sm:text-xs lg:text-sm font-bold border whitespace-nowrap ${
+                          <span className={`px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-full text-xs lg:text-sm font-bold border whitespace-nowrap ${
                             paymentStatus === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200/70' :
                             paymentStatus === 'deposit' ? 'bg-sky-50 text-sky-700 border-sky-200/70' :
                             paymentStatus === 'refunded' ? 'bg-rose-50 text-rose-700 border-rose-200/70' :
@@ -4302,7 +4378,7 @@ function FinanceView({
                           <span className="text-base sm:text-lg md:text-xl xl:text-2xl font-black text-indigo-700 tracking-tight tabular-nums mt-1 sm:mt-1.5">
                             {sTotal > 0 ? `฿${formatCurrency(sTotal)}` : '-'}
                           </span>
-                          <span className="text-[11px] sm:text-xs lg:text-sm text-indigo-400 font-medium truncate mt-1">
+                          <span className="text-xs lg:text-sm text-indigo-500 font-semibold truncate mt-1">
                             {sTotal > 0 ? `${item.customerSupport?.length || 0} รายการ` : 'ไม่มียอดส่งต่อ'}
                           </span>
                         </div>
@@ -4315,7 +4391,7 @@ function FinanceView({
                           <span className="text-base sm:text-lg md:text-xl xl:text-2xl font-black text-slate-900 tracking-tight tabular-nums mt-1 sm:mt-1.5">
                             ฿{formatCurrency(qTotal)}
                           </span>
-                          <span className="text-[11px] sm:text-xs lg:text-sm text-slate-400 font-medium truncate mt-1">
+                          <span className="text-xs lg:text-sm text-slate-500 font-medium truncate mt-1">
                             {hasQuotation ? `${item.quotationItems.length} รายการ` : 'ค่าจ้างรวม'}
                           </span>
                         </div>
@@ -4328,7 +4404,7 @@ function FinanceView({
                           <span className="text-base sm:text-lg md:text-xl xl:text-2xl font-black text-rose-600 tracking-tight tabular-nums mt-1 sm:mt-1.5">
                             {eTotal > 0 ? `฿${formatCurrency(eTotal)}` : '-'}
                           </span>
-                          <span className="text-[11px] sm:text-xs lg:text-sm text-rose-400 font-medium truncate mt-1">
+                          <span className="text-xs lg:text-sm text-rose-500 font-semibold truncate mt-1">
                             {eTotal > 0 ? `${item.expenses?.length || 0} รายการ` : 'ไม่มีต้นทุนเพิ่ม'}
                           </span>
                         </div>
@@ -4349,8 +4425,8 @@ function FinanceView({
                           }`}>
                             {profit >= 0 ? '+' : ''}฿{formatCurrency(profit)}
                           </span>
-                          <span className={`text-[11px] sm:text-xs lg:text-sm font-semibold truncate mt-1 ${
-                            profit >= 0 ? 'text-emerald-600' : 'text-rose-500'
+                          <span className={`text-xs lg:text-sm font-bold truncate mt-1 ${
+                            profit >= 0 ? 'text-emerald-700' : 'text-rose-600'
                           }`}>
                             {qTotal > 0 ? `Margin ${((profit / qTotal) * 100).toFixed(0)}%` : '-'}
                           </span>
@@ -4364,7 +4440,7 @@ function FinanceView({
                       >
                         <div className="flex items-center gap-2 truncate">
                           <span>{isExpanded ? 'ซ่อนรายละเอียดรายการย่อย' : 'ดูแจกแจงรายการย่อย'}</span>
-                          <span className="text-[11px] sm:text-xs lg:text-sm px-2.5 py-0.5 bg-slate-100 text-slate-600 rounded-md group-hover:bg-indigo-50 group-hover:text-indigo-600 font-semibold">
+                          <span className="text-xs lg:text-sm px-2.5 py-0.5 bg-slate-100 text-slate-700 rounded-md group-hover:bg-indigo-50 group-hover:text-indigo-700 font-bold">
                             {(item.quotationItems?.length || 0) + (item.customerSupport?.length || 0) + (item.expenses?.length || 0)} รายการ
                           </span>
                         </div>
@@ -4395,7 +4471,7 @@ function FinanceView({
                                       <div key={idx} className="flex items-start justify-between gap-2.5 text-slate-600 text-xs sm:text-sm pb-1.5 border-b border-indigo-100/50 last:border-b-0">
                                         <div className="truncate flex-1">
                                           <span className="font-semibold text-slate-700 block">{denomText} x {s.quantity}</span>
-                                          <div className="flex items-center gap-2 text-[11px] sm:text-xs text-slate-400 mt-0.5">
+                                          <div className="flex items-center gap-2 text-xs text-slate-500 font-medium mt-0.5">
                                             {s.detail && <span>({s.detail})</span>}
                                             {s.date && <span>{formatItemDate(s.date)}</span>}
                                           </div>
@@ -4404,6 +4480,8 @@ function FinanceView({
                                       </div>
                                     );
                                   })
+                                ) : sTotal > 0 ? (
+                                  <p className="text-xs sm:text-sm text-slate-700 font-medium">ยอดเงินส่งต่อศิลปินรวม ฿{formatCurrency(sTotal)}</p>
                                 ) : (
                                   <p className="text-xs sm:text-sm text-slate-400 italic">ไม่มีรายการส่งต่อศิลปิน</p>
                                 )}
@@ -4427,7 +4505,7 @@ function FinanceView({
                                     <div key={idx} className="flex items-start justify-between gap-2.5 text-slate-600 text-xs sm:text-sm pb-1.5 border-b border-slate-100 last:border-b-0">
                                       <div className="truncate flex-1">
                                         <span className="font-semibold text-slate-700 block">{q.detail || 'รายการงาน'}</span>
-                                        <div className="flex items-center gap-2 text-[11px] sm:text-xs text-slate-400 mt-0.5">
+                                        <div className="flex items-center gap-2 text-xs text-slate-500 font-medium mt-0.5">
                                           {q.category && <span>({q.category})</span>}
                                           {q.date && <span>{formatItemDate(q.date)}</span>}
                                         </div>
@@ -4458,7 +4536,7 @@ function FinanceView({
                                     <div key={idx} className="flex items-start justify-between gap-2.5 text-slate-600 text-xs sm:text-sm pb-1.5 border-b border-rose-100/50 last:border-b-0">
                                       <div className="truncate flex-1">
                                         <span className="font-semibold text-slate-700 block">{e.detail || 'ค่าใช้จ่าย'}</span>
-                                        <div className="flex items-center gap-2 text-[11px] sm:text-xs text-slate-400 mt-0.5">
+                                        <div className="flex items-center gap-2 text-xs text-slate-500 font-medium mt-0.5">
                                           {e.category && <span>({e.category})</span>}
                                           {e.quantity > 1 && <span>จำนวน: {e.quantity}</span>}
                                           {e.date && <span>{formatItemDate(e.date)}</span>}
@@ -4467,6 +4545,8 @@ function FinanceView({
                                       <span className="font-bold text-rose-600 tabular-nums shrink-0 text-xs sm:text-sm lg:text-base">฿{formatCurrency(e.price)}</span>
                                     </div>
                                   ))
+                                ) : eTotal > 0 ? (
+                                  <p className="text-xs sm:text-sm text-slate-700 font-medium">ยอดค่าใช้จ่ายจริงรวม ฿{formatCurrency(eTotal)}</p>
                                 ) : (
                                   <p className="text-xs sm:text-sm text-slate-400 italic">ไม่มีรายการรายจ่ายเพิ่มเติม</p>
                                 )}
@@ -4543,7 +4623,7 @@ function FinanceView({
                     }`}
                   >
                     <span>เฉพาะมีสลิป</span>
-                    <span className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0.2 rounded-full font-extrabold">
+                    <span className="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-black">
                       {projectsWithSlipsCount}
                     </span>
                   </button>
@@ -4687,7 +4767,7 @@ function FinanceView({
                                         <Maximize2 className="w-5 h-5" />
                                         <span className="text-xs font-bold">ดูขยาย</span>
                                       </div>
-                                      <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-xs rounded text-[10px] text-white font-medium">
+                                      <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-xs rounded text-xs text-white font-bold">
                                         ใบที่ {slipIdx + 1}
                                       </div>
                                     </div>
@@ -4771,4 +4851,4 @@ function FinanceView({
   );
 }
 
-export default React.memo(FinanceView);
+export default React.memo(Finance);

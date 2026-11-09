@@ -24,12 +24,19 @@ import {
   Clock,
   Sparkles,
   Warehouse,
-  Edit3
+  Edit3,
+  FileText,
+  RotateCcw,
+  ChevronDown
 } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { saveLocationSync } from './services/syncService';
 import Toast from './components/common/Toast';
+import { useStickyFilter } from './hooks/useStickyFilter';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { locationFormSchema } from './schemas/locationSchema';
 
 // Flower2U Central Workshop & Logistics Hub Default Settings
 export const DEFAULT_FLOWER2U_HUB = {
@@ -169,14 +176,17 @@ function getVenueCoordinate(venue, index = 0) {
   return [13.7563 + radius * Math.sin(angle), 100.5018 + radius * Math.cos(angle)];
 }
 
-function VenuesView({
-  venues = [],
+function Locations({
+  locations = [],
+  venues: venuesProp = [],
   isCreateOpen = false,
   onCloseCreate,
   onSelectVenue,
   onRefresh,
   shopInfo
 }) {
+  const { isFilterStuck, filterSentinelRef } = useStickyFilter();
+  const venues = locations.length > 0 ? locations : venuesProp;
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedZone, setSelectedZone] = useState('all');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -240,7 +250,7 @@ function VenuesView({
           hubMarkerRef.current.setLatLng(parsed);
           hubMarkerRef.current.bindPopup(`
             <div class="p-1 font-sans text-slate-800">
-              <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">จุดเริ่มต้นขนส่ง (ร้าน)</span>
+              <span class="text-xs font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">จุดเริ่มต้นขนส่ง (ร้าน)</span>
               <h4 class="font-bold text-sm text-slate-900 mt-1">${updated.name}</h4>
               <p class="text-xs text-slate-500 mt-0.5">${updated.description}</p>
             </div>
@@ -256,7 +266,7 @@ function VenuesView({
           hubMarkerRef.current.setLatLng(e.detail.coords);
           hubMarkerRef.current.bindPopup(`
             <div class="p-1 font-sans text-slate-800">
-              <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">จุดเริ่มต้นขนส่ง</span>
+              <span class="text-xs font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">จุดเริ่มต้นขนส่ง</span>
               <h4 class="font-bold text-sm text-slate-900 mt-1">${e.detail.name}</h4>
               <p class="text-xs text-slate-500 mt-0.5">${e.detail.description}</p>
             </div>
@@ -312,7 +322,7 @@ function VenuesView({
       hubMarkerRef.current.setLatLng(updated.coords);
       hubMarkerRef.current.bindPopup(`
         <div class="p-1 font-sans text-slate-800">
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">จุดเริ่มต้นขนส่ง</span>
+          <span class="text-xs font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">จุดเริ่มต้นขนส่ง</span>
           <h4 class="font-bold text-sm text-slate-900 mt-1">${updated.name}</h4>
           <p class="text-xs text-slate-500 mt-0.5">${updated.description}</p>
         </div>
@@ -366,7 +376,7 @@ function VenuesView({
 
         marker.bindPopup(`
           <div class="p-1 font-sans text-slate-800">
-            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700">📍 ตำแหน่งของคุณปัจจุบัน</span>
+            <span class="text-xs font-bold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700">📍 ตำแหน่งของคุณปัจจุบัน</span>
             <p class="font-mono text-xs font-bold text-slate-900 mt-1">${latitude.toFixed(6)}, ${longitude.toFixed(6)}</p>
             <p class="text-xs text-slate-500 mt-0.5">ห่างจากจุดเริ่มต้นขนส่ง ~${dist} กม. (~${estMins} นาที)</p>
           </div>
@@ -390,15 +400,23 @@ function VenuesView({
     window.open(`https://www.google.com/maps/@${center.lat},${center.lng},${zoom}z`, '_blank');
   };
 
-  const [newVenue, setNewVenue] = useState({
-    name: '',
-    zone: 'ทั่วไป',
-    default_map_link: '',
-    loading_dock_map_link: '',
-    gate_info: '',
-    parking_height_limit: '',
-    dock_contact_phone: '',
-    delivery_tips: ''
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors }
+  } = useForm({
+    resolver: zodResolver(locationFormSchema),
+    defaultValues: {
+      name: '',
+      zone: 'ทั่วไป',
+      default_map_link: '',
+      loading_dock_map_link: '',
+      gate_info: '',
+      parking_height_limit: '',
+      dock_contact_phone: '',
+      delivery_tips: ''
+    }
   });
   const [isSaving, setIsSaving] = useState(false);
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
@@ -514,7 +532,7 @@ function VenuesView({
       .addTo(map)
       .bindPopup(`
         <div class="p-1 font-sans text-slate-800">
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">จุดเริ่มต้นขนส่ง</span>
+          <span class="text-xs font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">จุดเริ่มต้นขนส่ง</span>
           <h4 class="font-bold text-sm text-slate-900 mt-1">${hubSettings.name}</h4>
           <p class="text-xs text-slate-500 mt-0.5">${hubSettings.description}</p>
         </div>
@@ -557,7 +575,7 @@ function VenuesView({
       const popupHtml = `
         <div class="p-1 font-sans text-slate-800 max-w-xs">
           <div class="flex items-center justify-between gap-2 mb-1.5">
-            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+            <span class="text-xs font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
               📌 พิกัดที่คุณเลือกบนแผนที่
             </span>
           </div>
@@ -566,11 +584,11 @@ function VenuesView({
           </div>
           <div class="mt-2 p-2 rounded-xl bg-slate-50 border border-slate-200 text-xs flex items-center justify-between">
             <div>
-              <span class="text-slate-400 block text-[10px]">ระยะทางจากจุดเริ่มต้น</span>
+              <span class="text-slate-500 block text-xs font-medium">ระยะทางจากจุดเริ่มต้น</span>
               <span class="font-black text-slate-800">~${dist} กม.</span>
             </div>
             <div class="text-right">
-              <span class="text-slate-400 block text-[10px]">เวลาขับรถเฉลี่ย</span>
+              <span class="text-slate-500 block text-xs font-medium">เวลาขับรถเฉลี่ย</span>
               <span class="font-black text-indigo-600">~${estMins} นาที</span>
             </div>
           </div>
@@ -671,10 +689,10 @@ function VenuesView({
       const popupContent = `
         <div class="p-1 font-sans text-slate-800 max-w-xs">
           <div class="flex items-center gap-1.5 mb-1">
-            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">
+            <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">
               ${venue.zone || 'ทั่วไป'}
             </span>
-            ${isDockPin ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800">มีพิกัดจุดโหลด</span>' : ''}
+            ${isDockPin ? '<span class="text-xs font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800">มีพิกัดจุดโหลด</span>' : ''}
           </div>
           <h4 class="font-bold text-sm text-slate-900 leading-snug">${venue.name}</h4>
           ${venue.gate_info ? `<p class="text-xs text-slate-600 mt-1">🚪 <b>จุดเทียบรถ:</b> ${venue.gate_info}</p>` : ''}
@@ -683,11 +701,11 @@ function VenuesView({
           
           <div class="mt-2 p-2 rounded-xl bg-slate-50 border border-slate-200 text-xs flex items-center justify-between">
             <div>
-              <span class="text-slate-400 block text-[10px]">ระยะทางจากร้าน</span>
+              <span class="text-slate-500 block text-xs font-medium">ระยะทางจากร้าน</span>
               <span class="font-black text-slate-800">~${dist} กม.</span>
             </div>
             <div class="text-right">
-              <span class="text-slate-400 block text-[10px]">เวลาเดินทางเฉลี่ย</span>
+              <span class="text-slate-500 block text-xs font-medium">เวลาเดินทางเฉลี่ย</span>
               <span class="font-black text-indigo-600">~${estMins} นาที</span>
             </div>
           </div>
@@ -768,7 +786,7 @@ function VenuesView({
   const handleOpenCreateModal = (venue = null) => {
     if (venue) {
       setEditingVenue(venue);
-      setNewVenue({
+      reset({
         name: venue.name || '',
         zone: venue.zone || 'ทั่วไป',
         default_map_link: venue.default_map_link || '',
@@ -780,7 +798,7 @@ function VenuesView({
       });
     } else {
       setEditingVenue(null);
-      setNewVenue({
+      reset({
         name: '',
         zone: 'ทั่วไป',
         default_map_link: '',
@@ -794,16 +812,11 @@ function VenuesView({
     setIsCreateModalOpen(true);
   };
 
-  const handleSaveVenue = async (e) => {
-    e.preventDefault();
-    if (!newVenue.name.trim()) {
-      showToast('กรุณาระบุชื่อสถานที่', 'error');
-      return;
-    }
+  const onSubmitVenue = async (formData) => {
     setIsSaving(true);
     try {
       await saveLocationSync({
-        ...newVenue,
+        ...formData,
         id: editingVenue?.id || undefined
       });
       setIsCreateModalOpen(false);
@@ -817,7 +830,7 @@ function VenuesView({
   };
 
   return (
-    <div className="space-y-6 sm:space-y-8 flex flex-col min-h-full pb-24 md:pb-6 px-4 sm:px-8 lg:px-10 pt-4">
+    <div className="flex flex-col gap-6 min-h-full pb-24 md:pb-6 px-4 sm:px-8 lg:px-10 pt-4">
       {/* 4 Summary Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -828,7 +841,7 @@ function VenuesView({
             </div>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-slate-900">{stats.total} แห่ง</p>
-          <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-slate-400">ครอบคลุมทุกโซนจัดงาน</div>
+          <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-slate-400">ครอบคลุมทุกโซนจัดงาน</div>
         </div>
 
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -839,7 +852,7 @@ function VenuesView({
             </div>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-amber-700">{stats.withDockPin} แห่ง</p>
-          <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-amber-600">ปักหมุด Loading Dock ตรงจุด</div>
+          <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-amber-600">ปักหมุด Loading Dock ตรงจุด</div>
         </div>
 
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -850,7 +863,7 @@ function VenuesView({
             </div>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-sky-700">{stats.withGateInfo} แห่ง</p>
-          <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-sky-600">มีแนวทางเข้าตึกชัดเจน</div>
+          <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-sky-600">มีแนวทางเข้าตึกชัดเจน</div>
         </div>
 
         <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
@@ -861,7 +874,7 @@ function VenuesView({
             </div>
           </div>
           <p className="text-2xl sm:text-3xl font-black text-emerald-700">{stats.withPhone} แห่ง</p>
-          <div className="mt-1 pt-1 border-t border-slate-50 text-[11px] text-emerald-600">กดโทรออกหน้างานได้ทันที</div>
+          <div className="mt-1 pt-1 border-t border-slate-100 text-xs font-semibold text-emerald-600">กดโทรออกหน้างานได้ทันที</div>
         </div>
       </div>
 
@@ -873,7 +886,7 @@ function VenuesView({
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="px-2.5 py-0.5 rounded-md bg-indigo-500/30 text-indigo-200 text-[10px] font-bold uppercase tracking-wider border border-indigo-400/20">
+              <span className="px-2.5 py-0.5 rounded-md bg-indigo-500/30 text-indigo-200 text-xs font-bold uppercase tracking-wider border border-indigo-400/20">
                 จุดเริ่มต้นขนส่ง (Logistics Origin)
               </span>
               <span className="text-xs text-indigo-300 font-mono">
@@ -1054,7 +1067,7 @@ function VenuesView({
 
         {/* Map Interactive Tip Footer */}
         {isMapExpanded && (
-          <div className="px-4 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 flex-wrap gap-2">
+          <div className="px-4 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 flex-wrap gap-2">
             <span className="flex items-center gap-1.5 font-medium">
               💡 <span>คลิกจุดใดก็ได้บนแผนที่เพื่อดูพิกัด ละติจูด/ลองจิจูด และนำทางแบบ Google Maps</span>
             </span>
@@ -1066,30 +1079,66 @@ function VenuesView({
       </div>
 
       {/* Search & Filter Toolbar */}
-      <div className="bg-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-sm space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="sm:col-span-2 relative">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+      <div 
+        ref={filterSentinelRef} 
+        className="w-full h-0 -my-3 pointer-events-none opacity-0"
+      />
+      <div className={`bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out z-20 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 ${
+        isFilterStuck
+          ? '-mx-4 sm:-mx-8 lg:-mx-10 py-2 sm:py-2.5 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
+          : 'p-3 sm:p-3.5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
+      }`}>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+          {/* Search Box */}
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
               type="text"
               placeholder="ค้นหาชื่อสถานที่ ประตู หรือคำค้น (เช่น อิมแพ็ค, CTW, สยาม, ไบเทค)..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-medium"
+              className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-medium"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition cursor-pointer"
+                title="ล้างข้อความค้นหา"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
-          <div>
-            <select
-              value={selectedZone}
-              onChange={(e) => setSelectedZone(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Zone Dropdown */}
+            <div className="relative w-44 sm:w-56 shrink-0">
+              <select
+                value={selectedZone}
+                onChange={(e) => setSelectedZone(e.target.value)}
+                className="w-full pl-3.5 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
+              >
+                <option value="all">ทุกโซนพื้นที่ ({venues.length})</option>
+                {zones.map(z => (
+                  <option key={z} value={z}>{z}</option>
+                ))}
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+
+            {/* Reset Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                setSelectedZone('all');
+              }}
+              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer shadow-2xs"
+              title="ล้างค่าตัวกรองทั้งหมด"
             >
-              <option value="all">ทุกโซนพื้นที่ ({venues.length})</option>
-              {zones.map(z => (
-                <option key={z} value={z}>{z}</option>
-              ))}
-            </select>
+              <RotateCcw className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
@@ -1097,16 +1146,16 @@ function VenuesView({
       {/* Desktop Table View */}
       <div className="hidden md:block bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full text-left border-collapse min-w-[1060px]">
             <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-100 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                <th className="py-3.5 px-5">สถานที่จัดส่ง</th>
-                <th className="py-3.5 px-4">โซน</th>
-                <th className="py-3.5 px-4">ประตู / จุดเทียบรถขนของ (Loading Dock)</th>
-                <th className="py-3.5 px-4 text-center">จำกัดความสูง</th>
-                <th className="py-3.5 px-4">เบอร์ติดต่อ รปภ./จุดโหลด</th>
-                <th className="py-3.5 px-4">เคล็ดลับการเข้าตึก</th>
-                <th className="py-3.5 px-5 text-right">เส้นทาง & นำทาง</th>
+              <tr className="bg-slate-50/90 border-b border-slate-200/70 text-xs font-bold text-slate-600 uppercase tracking-wider select-none">
+                <th className="py-4 px-5 min-w-[240px]">สถานที่จัดส่ง</th>
+                <th className="py-4 px-4 min-w-[100px] whitespace-nowrap">โซน</th>
+                <th className="py-4 px-4 min-w-[240px] max-w-[340px]">ประตู / จุดเทียบรถ (Loading Dock)</th>
+                <th className="py-4 px-3 text-center min-w-[110px] whitespace-nowrap">จำกัดความสูง</th>
+                <th className="py-4 px-4 min-w-[150px] whitespace-nowrap">เบอร์ติดต่อ รปภ./จุดโหลด</th>
+                <th className="py-4 px-4 min-w-[180px] max-w-[280px]">หมายเหตุ</th>
+                <th className="py-4 px-5 text-right min-w-[170px] whitespace-nowrap">เส้นทาง & จัดการ</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-sm">
@@ -1120,107 +1169,114 @@ function VenuesView({
                 filteredVenues.map((venue, idx) => (
                   <tr
                     key={venue.id || venue.name}
-                    className={`hover:bg-slate-50/60 transition-colors group cursor-pointer ${
-                      activeVenue?.name === venue.name ? 'bg-indigo-50/40' : ''
+                    className={`hover:bg-slate-50/80 transition-colors group cursor-pointer ${
+                      activeVenue?.name === venue.name ? 'bg-indigo-50/50 ring-1 ring-inset ring-indigo-200' : ''
                     }`}
                     onClick={() => handleFlyToVenue(venue, idx)}
                   >
-                    <td className="py-3.5 px-5 font-bold text-slate-900">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleFlyToVenue(venue, idx);
-                          }}
-                          className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white transition-colors"
-                          title="ซูมและแสดงเส้นทาง"
-                        >
-                          <Route className="w-3.5 h-3.5" />
-                        </button>
-                        <div>
-                          <div className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                    <td className="py-4 px-5">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-50 to-indigo-100/70 text-indigo-600 flex items-center justify-center shrink-0 border border-indigo-100/80 shadow-xs">
+                          <Building2 className="w-4 h-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors text-sm leading-snug break-words">
                             {venue.name}
                           </div>
                           {Array.isArray(venue.aliases) && venue.aliases.length > 0 && (
-                            <div className="text-xs text-slate-400 font-normal">
-                              ({venue.aliases.join(', ')})
+                            <div className="text-xs text-slate-600 font-medium tracking-tight mt-0.5 truncate" title={venue.aliases.join(', ')}>
+                              ชื่อเรียก: {venue.aliases.join(', ')}
                             </div>
                           )}
                         </div>
                       </div>
                     </td>
 
-                    <td className="py-3.5 px-4 text-xs font-semibold text-slate-600">
-                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">
+                    <td className="py-4 px-4 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100/70 shadow-xs">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
                         {venue.zone || 'ทั่วไป'}
                       </span>
                     </td>
 
-                    <td className="py-3.5 px-4 text-xs text-slate-700">
+                    <td className="py-4 px-4 min-w-[240px] max-w-[340px]">
                       {venue.gate_info ? (
-                        <div className="flex items-center gap-1.5 font-medium text-slate-800">
-                          <Truck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                          <span>{venue.gate_info}</span>
+                        <div className="bg-amber-50/60 hover:bg-amber-50/90 p-2.5 rounded-xl border border-amber-200/50 transition-colors">
+                          <div className="flex items-start gap-2 text-xs font-semibold text-slate-800 break-words leading-relaxed">
+                            <Truck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                            <span className="break-words leading-relaxed">{venue.gate_info}</span>
+                          </div>
                         </div>
                       ) : (
-                        <span className="text-slate-300">-</span>
+                        <span className="text-slate-300 font-semibold pl-2">-</span>
                       )}
                     </td>
 
-                    <td className="py-3.5 px-4 text-center">
+                    <td className="py-4 px-3 text-center whitespace-nowrap">
                       {venue.parking_height_limit ? (
-                        <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 font-bold text-xs border border-amber-200">
-                          {venue.parking_height_limit}
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-900 font-mono font-bold text-xs border border-amber-200/80 shadow-xs">
+                          <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>{venue.parking_height_limit}</span>
                         </span>
                       ) : (
-                        <span className="text-slate-300">-</span>
+                        <span className="text-slate-300 font-semibold">-</span>
                       )}
                     </td>
 
-                    <td className="py-3.5 px-4 text-xs">
+                    <td className="py-4 px-4 whitespace-nowrap">
                       {venue.dock_contact_phone ? (
                         <a
                           href={`tel:${venue.dock_contact_phone}`}
                           onClick={(e) => e.stopPropagation()}
-                          className="font-bold text-emerald-700 hover:underline flex items-center gap-1"
+                          className="font-mono font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100/80 px-3 py-1.5 rounded-xl border border-emerald-200/60 inline-flex items-center gap-2 transition-all active:scale-95 shadow-xs text-xs group"
+                          title="กดเพื่อโทรออกหา รปภ./จุดโหลด"
                         >
-                          <Phone className="w-3 h-3 text-emerald-600" />
-                          <span>{venue.dock_contact_phone}</span>
+                          <Phone className="w-3.5 h-3.5 text-emerald-600 group-hover:scale-110 transition-transform shrink-0" />
+                          <span className="tracking-wide">{venue.dock_contact_phone}</span>
                         </a>
                       ) : (
-                        <span className="text-slate-300">-</span>
+                        <span className="text-slate-300 font-semibold pl-2">-</span>
                       )}
                     </td>
 
-                    <td className="py-3.5 px-4 text-xs text-slate-500 max-w-xs truncate">
-                      {venue.delivery_tips || '-'}
+                    <td className="py-4 px-4 min-w-[180px] max-w-[280px]">
+                      {venue.delivery_tips ? (
+                        <div className="flex items-start gap-1.5 text-xs text-slate-600 bg-slate-50/70 p-2.5 rounded-xl border border-slate-200/60 leading-relaxed break-words">
+                          <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                          <span className="break-words leading-relaxed">{venue.delivery_tips}</span>
+                        </div>
+                      ) : (
+                        <span className="text-slate-300 font-semibold pl-2">-</span>
+                      )}
                     </td>
 
-                    <td className="py-3.5 px-5 text-right">
-                      <div className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                    <td className="py-4 px-5 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1.5 justify-end" onClick={(e) => e.stopPropagation()}>
                         <button
+                          type="button"
                           onClick={() => handleFlyToVenue(venue, idx)}
-                          className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-bold flex items-center gap-1 transition"
-                          title="แสดงเส้นทางบนแผนที่"
+                          className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm shadow-indigo-200 transition-all active:scale-95 cursor-pointer"
+                          title="ซูมและแสดงเส้นทางบนแผนที่"
                         >
-                          <Route className="w-3 h-3" />
-                          <span>เส้นทาง</span>
+                          <Route className="w-3.5 h-3.5 shrink-0" />
+                          <span className="whitespace-nowrap">ดูเส้นทาง</span>
                         </button>
                         {(venue.loading_dock_map_link || venue.default_map_link) && (
                           <a
                             href={venue.loading_dock_map_link || venue.default_map_link}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                            className="p-1.5 rounded-xl text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200/60 transition-colors shrink-0"
                             title="เปิด Google Maps นำทาง"
                           >
                             <ExternalLink className="w-4 h-4" />
                           </a>
                         )}
                         <button
+                          type="button"
                           onClick={() => handleOpenCreateModal(venue)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors"
-                          title="แก้ไขสถานที่"
+                          className="p-1.5 rounded-xl text-slate-500 hover:text-amber-600 hover:bg-amber-50 border border-slate-200/60 transition-colors shrink-0 cursor-pointer"
+                          title="แก้ไขข้อมูลสถานที่"
                         >
                           <Edit className="w-4 h-4" />
                         </button>
@@ -1238,80 +1294,138 @@ function VenuesView({
       <div className="md:hidden space-y-3">
         {filteredVenues.length === 0 ? (
           <div className="bg-white p-8 rounded-2xl border border-slate-100 text-center text-slate-400">
-            ไม่พบสถานที่
+            ไม่พบสถานที่ที่ตรงกับการค้นหา
           </div>
         ) : (
           filteredVenues.map((venue, idx) => (
             <div
               key={venue.id || venue.name}
-              className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3"
+              className={`bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3.5 transition-all ${
+                activeVenue?.name === venue.name ? 'ring-2 ring-indigo-500/30 bg-indigo-50/20' : ''
+              }`}
             >
+              {/* Header: Zone Badge + Location Name & Aliases */}
               <div className="flex items-start justify-between gap-2">
-                <div>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700">
-                    {venue.zone || 'ทั่วไป'}
-                  </span>
-                  <h3 className="font-bold text-slate-900 text-sm mt-1">{venue.name}</h3>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => handleFlyToVenue(venue, idx)}
-                    className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600"
-                    title="ซูมและแสดงเส้นทาง"
-                  >
-                    <Route className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleOpenCreateModal(venue)}
-                    className="p-1.5 text-slate-400 hover:text-amber-600"
-                  >
-                    <Edit className="w-4 h-4" />
-                  </button>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100">
+                      {venue.zone || 'ทั่วไป'}
+                    </span>
+                    {Array.isArray(venue.aliases) && venue.aliases.length > 0 && (
+                      <span className="text-xs text-slate-500 font-medium truncate">
+                        ({venue.aliases.join(', ')})
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="font-bold text-slate-900 text-base leading-snug">
+                    {venue.name}
+                  </h3>
                 </div>
               </div>
 
-              {/* Gate & Dock Info */}
-              <div className="bg-slate-50 p-2.5 rounded-xl text-xs space-y-1">
-                {venue.gate_info && (
-                  <div className="text-slate-800 font-medium flex items-center gap-1.5">
+              {/* Detail Rows (แสดงข้อมูลครบถ้วน หากว่างขึ้น -) */}
+              <div className="bg-slate-50/80 p-3 rounded-xl text-xs space-y-2 border border-slate-100">
+                {/* Gate & Dock Info */}
+                <div className="flex items-start gap-2">
+                  <div className="flex items-center gap-1 text-slate-500 font-semibold shrink-0 min-w-[85px] pt-0.5">
                     <Truck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                    <span>{venue.gate_info}</span>
+                    <span>จุดเทียบรถ:</span>
                   </div>
-                )}
-                {venue.parking_height_limit && (
-                  <div className="text-amber-800 font-bold flex items-center gap-1.5">
+                  <div className="flex-1 font-medium text-slate-800 break-words leading-relaxed">
+                    {venue.gate_info ? venue.gate_info : <span className="text-slate-300">-</span>}
+                  </div>
+                </div>
+
+                {/* Height Limit */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-slate-500 font-semibold shrink-0 min-w-[85px]">
                     <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                    <span>จำกัดความสูง: {venue.parking_height_limit}</span>
+                    <span>ความสูงจำกัด:</span>
                   </div>
-                )}
-                {venue.dock_contact_phone && (
-                  <div className="text-emerald-700 font-bold flex items-center gap-1.5 pt-0.5">
+                  <div className="flex-1">
+                    {venue.parking_height_limit ? (
+                      <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 font-bold text-xs border border-amber-200 inline-block">
+                        {venue.parking_height_limit}
+                      </span>
+                    ) : (
+                      <span className="text-slate-300">-</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Dock Contact Phone */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-slate-500 font-semibold shrink-0 min-w-[85px]">
                     <Phone className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                    <a href={`tel:${venue.dock_contact_phone}`}>โทร รปภ.: {venue.dock_contact_phone}</a>
+                    <span>เบอร์ รปภ./จุดโหลด:</span>
                   </div>
-                )}
+                  <div className="flex-1">
+                    {venue.dock_contact_phone ? (
+                      <a
+                        href={`tel:${venue.dock_contact_phone}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100 inline-flex items-center gap-1 hover:bg-emerald-100 transition"
+                      >
+                        <Phone className="w-3 h-3 text-emerald-600 shrink-0" />
+                        <span>{venue.dock_contact_phone}</span>
+                      </a>
+                    ) : (
+                      <span className="text-slate-300">-</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Notes / Delivery Tips */}
+                <div className="flex items-start gap-2 pt-0.5 border-t border-slate-200/60">
+                  <div className="flex items-center gap-1 text-slate-500 font-semibold shrink-0 min-w-[85px] pt-0.5">
+                    <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>หมายเหตุ:</span>
+                  </div>
+                  <div className="flex-1 text-slate-600 break-words leading-relaxed">
+                    {venue.delivery_tips ? venue.delivery_tips : <span className="text-slate-300">-</span>}
+                  </div>
+                </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
+              {/* Bottom Action Bar (ย้ายมาไว้ข้างล่าง คล้ายการ์ดโปรเจก) */}
+              <div className="pt-2 border-t border-slate-100 grid grid-cols-3 gap-2">
                 <button
+                  type="button"
                   onClick={() => handleFlyToVenue(venue, idx)}
-                  className="text-indigo-600 font-bold flex items-center gap-1"
+                  className="flex items-center justify-center gap-1.5 py-2 px-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl transition-colors text-xs active:scale-95 cursor-pointer shadow-sm border border-indigo-100/60"
+                  title="ดูเส้นทางบนแผนที่"
                 >
-                  <Route className="w-3.5 h-3.5" />
-                  <span>ดูเส้นทาง</span>
+                  <Route className="w-3.5 h-3.5 shrink-0" />
+                  <span className="whitespace-nowrap">ดูเส้นทาง</span>
                 </button>
-                {(venue.loading_dock_map_link || venue.default_map_link) && (
+
+                {venue.loading_dock_map_link || venue.default_map_link ? (
                   <a
                     href={venue.loading_dock_map_link || venue.default_map_link}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl font-bold flex items-center gap-1 text-xs"
+                    className="flex items-center justify-center gap-1.5 py-2 px-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors text-xs active:scale-95 shadow-sm shadow-indigo-200"
+                    title="เปิด Google Maps นำทาง"
                   >
-                    <ExternalLink className="w-3 h-3" />
-                    <span>Google Maps</span>
+                    <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                    <span className="whitespace-nowrap">Google Maps</span>
                   </a>
+                ) : (
+                  <div className="flex items-center justify-center gap-1.5 py-2 px-2 bg-slate-100 text-slate-400 font-bold rounded-xl text-xs cursor-not-allowed">
+                    <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                    <span className="whitespace-nowrap">ไม่มีพิกัด</span>
+                  </div>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenCreateModal(venue)}
+                  className="flex items-center justify-center gap-1.5 py-2 px-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold rounded-xl transition-colors text-xs active:scale-95 cursor-pointer shadow-sm"
+                  title="แก้ไขสถานที่"
+                >
+                  <Edit className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span className="whitespace-nowrap">แก้ไข</span>
+                </button>
               </div>
             </div>
           ))
@@ -1343,7 +1457,7 @@ function VenuesView({
                       {editingVenue ? 'แก้ไขข้อมูลสถานที่' : 'เพิ่มสถานที่จัดส่งใหม่'}
                     </h3>
                     {editingVenue?.name && (
-                      <span className="bg-indigo-50 text-indigo-600 text-[10px] sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 w-fit">
+                      <span className="bg-indigo-50 text-indigo-600 text-xs sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 w-fit">
                         {editingVenue.name}
                       </span>
                     )}
@@ -1362,7 +1476,7 @@ function VenuesView({
               </button>
             </div>
 
-            <form onSubmit={handleSaveVenue} className="flex flex-col flex-1 overflow-hidden">
+            <form onSubmit={handleSubmit(onSubmitVenue)} className="flex flex-col flex-1 overflow-hidden">
               {/* Scrollable Form Body */}
               <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-5 overscroll-contain">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
@@ -1370,20 +1484,22 @@ function VenuesView({
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">ชื่อสถานที่จัดงาน *</label>
                     <input
                       type="text"
-                      required
                       placeholder="เช่น เซ็นทรัลเวิลด์ (CentralWorld)"
-                      value={newVenue.name}
-                      onChange={(e) => setNewVenue({ ...newVenue, name: e.target.value })}
-                      className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                      {...register('name')}
+                      className={`w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border rounded-xl sm:rounded-2xl text-sm font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 transition-all ${
+                        errors.name ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
+                      }`}
                     />
+                    {errors.name && (
+                      <p className="text-xs text-rose-500 font-bold mt-1">{errors.name.message}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">โซนพื้นที่</label>
                     <input
                       type="text"
                       placeholder="เช่น พระราม 1, เมืองทอง"
-                      value={newVenue.zone}
-                      onChange={(e) => setNewVenue({ ...newVenue, zone: e.target.value })}
+                      {...register('zone')}
                       className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                     />
                   </div>
@@ -1394,8 +1510,7 @@ function VenuesView({
                   <input
                     type="text"
                     placeholder="เช่น ประตู 2 ด้านหลังฝั่ง Groove ชั้น B1"
-                    value={newVenue.gate_info}
-                    onChange={(e) => setNewVenue({ ...newVenue, gate_info: e.target.value })}
+                    {...register('gate_info')}
                     className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                   />
                 </div>
@@ -1406,8 +1521,7 @@ function VenuesView({
                     <input
                       type="text"
                       placeholder="เช่น ไม่เกิน 2.10 เมตร"
-                      value={newVenue.parking_height_limit}
-                      onChange={(e) => setNewVenue({ ...newVenue, parking_height_limit: e.target.value })}
+                      {...register('parking_height_limit')}
                       className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                     />
                   </div>
@@ -1416,8 +1530,7 @@ function VenuesView({
                     <input
                       type="tel"
                       placeholder="02-xxx-xxxx หรือ 081-xxx-xxxx"
-                      value={newVenue.dock_contact_phone}
-                      onChange={(e) => setNewVenue({ ...newVenue, dock_contact_phone: e.target.value })}
+                      {...register('dock_contact_phone')}
                       className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                     />
                   </div>
@@ -1428,8 +1541,7 @@ function VenuesView({
                   <input
                     type="url"
                     placeholder="https://maps.google.com/..."
-                    value={newVenue.loading_dock_map_link}
-                    onChange={(e) => setNewVenue({ ...newVenue, loading_dock_map_link: e.target.value })}
+                    {...register('loading_dock_map_link')}
                     className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-mono text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                   />
                 </div>
@@ -1439,8 +1551,7 @@ function VenuesView({
                   <input
                     type="url"
                     placeholder="https://maps.google.com/..."
-                    value={newVenue.default_map_link}
-                    onChange={(e) => setNewVenue({ ...newVenue, default_map_link: e.target.value })}
+                    {...register('default_map_link')}
                     className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-mono text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                   />
                 </div>
@@ -1450,8 +1561,7 @@ function VenuesView({
                   <textarea
                     rows="3"
                     placeholder="เช่น ต้องแลกบัตร ปชช. ที่ป้อม 3, ห้ามนำรถเข้าช่วง 11.00-13.00 น."
-                    value={newVenue.delivery_tips}
-                    onChange={(e) => setNewVenue({ ...newVenue, delivery_tips: e.target.value })}
+                    {...register('delivery_tips')}
                     className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
                   ></textarea>
                 </div>
@@ -1574,7 +1684,7 @@ function VenuesView({
                           );
                         }
                       }}
-                      className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 cursor-pointer hover:underline"
+                      className="text-xs font-bold text-indigo-600 hover:text-indigo-700 cursor-pointer hover:underline"
                     >
                       📍 ใช้ GPS ปัจจุบัน
                     </button>
@@ -1587,7 +1697,7 @@ function VenuesView({
                     placeholder="เช่น 13.736717, 100.523186 หรือวางลิงก์ Google Maps"
                     className="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm font-mono text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                   />
-                  <p className="text-[11px] text-slate-400 mt-1">
+                  <p className="text-xs text-slate-400 mt-1">
                     รองรับทั้งรูปแบบตัวเลข <code>13.736717, 100.523186</code> หรือก๊อปปี้ URL จาก Google Maps มาวางได้ทันที
                   </p>
                 </div>
@@ -1660,4 +1770,4 @@ function VenuesView({
   );
 }
 
-export default React.memo(VenuesView);
+export default React.memo(Locations);
