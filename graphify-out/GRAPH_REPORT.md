@@ -1,17 +1,17 @@
 # Graph Report - Flower2U  (2026-11-10)
 
 ## Corpus Check
-- 86 files · ~179,189 words
+- 86 files · ~179,344 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 4 file(s) not represented in the graph (top: .css 2, .example 1, (none) 1)
 
 ## Summary
-- 541 nodes · 1227 edges · 30 communities (22 shown, 8 thin omitted)
-- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 45 edges (avg confidence: 0.93)
+- 541 nodes · 1228 edges · 31 communities (23 shown, 8 thin omitted)
+- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 46 edges (avg confidence: 0.93)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `b775bf84`
+- Built from commit: `5d56c03a`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -42,6 +42,7 @@
 - @supabase/supabase-js
 - scripts
 - vite.config.js
+- Active Skills & Engineering Directives
 
 ## God Nodes (most connected - your core abstractions)
 1. `getActiveClient()` - 64 edges
@@ -58,19 +59,19 @@
 ## Surprising Connections (you probably didn't know these)
 - `1. วิเคราะห์โครงสร้างข้อมูลเดิม (Google Sheets Legacy Analysis)` --references--> `Settings()`  [INFERRED]
   F2U_DATABASE_SCHEMA_AND_EXPANSION_PLAN.md → src/Settings.jsx
-- `[2026-11-10 - รอบดึก (Missing Numbers Bug Fix, Filter Clean-up & Mobile Multi-Item Card UX Overhaul)]` --references--> `ShopFooter()`  [INFERRED]
-  .agents/memory/SESSION_LOG.md → src/components/common/ShopFooter.jsx
 - `[2026-11-06 - กะค่ำ (Global Real-time Theme Synchronization & Icon Fix)]` --references--> `StoreIcon()`  [INFERRED]
   .agents/memory/SESSION_LOG.md → src/components/icons/SocialIcons.jsx
 - `[2026-11-05 - กะเช้า/บ่าย]` --references--> `formatDate()`  [INFERRED]
   .agents/memory/SESSION_LOG.md → src/utils/formatters.jsx
 - `[2026-11-05 - อัปเกรดระบบสิทธิ์ Roles & Permissions, แยกหมวดหมู่หน้า Settings, ปรับแต่งรหัสผ่าน และ Profile Popup สไตล์ Facebook]` --references--> `getProjectStatementRows()`  [INFERRED]
   .agents/memory/SESSION_LOG.md → src/Finance.jsx
+- `[2026-11-05 - อัปเกรดระบบสิทธิ์ Roles & Permissions, แยกหมวดหมู่หน้า Settings, ปรับแต่งรหัสผ่าน และ Profile Popup สไตล์ Facebook]` --references--> `getProjectFinancialItems()`  [INFERRED]
+  .agents/memory/SESSION_LOG.md → src/Finance.jsx
 
 ## Import Cycles
 - None detected.
 
-## Communities (30 total, 8 thin omitted)
+## Communities (31 total, 8 thin omitted)
 
 ### Community 0 - "package.json"
 Cohesion: 0.13
@@ -98,15 +99,15 @@ Nodes (15): devDependencies, autoprefixer, eslint, @eslint/js, eslint-plugin-rea
 
 ### Community 6 - "Active Skills & Engineering Directives"
 Cohesion: 0.05
-Nodes (41): 10. Native Memory & Session Continuity, 11. Strict Custom UI Directive (Banned Native Browser Dialogs & Date Pickers), 1. Ponytail (Lazy Senior Dev Mode), 2. OmniRoute (Provider & Model Fallback), 3. Graphify (Codebase Knowledge Graph), 4. Agent Skills (Engineering Best Practices), 5. Karpathy Skills (The 4 Golden Rules), 6. ECC (Explore → Plan → Execute → Check / Self-Verify) (+33 more)
+Nodes (35): 1. ข้อมูลสถาปัตยกรรมโปรเจกต์ (Project Snapshot), 2.1 ลำดับการ์ดสรุปยอดด้านบน (Top KPI Cards in FinanceView):, 2.2 ลำดับการ์ดสรุปยอดหน้าวิเคราะห์ (AnalyticsView Summary Cards):, 2.3 ลำดับแถบตัวเลขในบัตรงานและตาราง (Cards, Strips & Modals):, 2.4 โครงสร้างสีที่ผ่านการปรับแต่งแล้ว:, 2. โครงสร้างและลำดับข้อมูลที่ตกลงล่าสุด (Agreed Data Flow & Order), 4. ข้อตกลงและกฎเหล็กประจำตัว (Non-Negotiable Directives), Flower2U - Native Session Memory & Context Ledger (+27 more)
 
 ### Community 7 - "4. กลไกอัตโนมัติข้ามระบบ (Automated Cross-Module Pipelines)"
 Cohesion: 0.07
 Nodes (28): 1. วิเคราะห์โครงสร้างข้อมูลเดิม (Google Sheets Legacy Analysis), 2. แผนผังความสัมพันธ์เอนทิตี (Unified Entity-Relationship Diagram), 3. ตารางฐานข้อมูล 8 โดเมนหลัก (8 Core Database Domains), 4.10 ทำไมการแยกคอลัมน์และตารางลูกจึงช่วยประหยัด Egress สู่จุดขีดสุด (Maximum Zero-Egress Proof), 4.1 ท่อส่งข้อมูล: บันทึกรายจ่าย ➔ ดันเข้าคลังสินค้าอัตโนมัติ (Expense-to-Inventory Flow), 4.2 ระบบควบคุมอุปกรณ์ยืม-คืน & วัสดุสิ้นเปลือง (Tool Lending & Consumables Engine), 4.3 วงจรนำวัสดุกลับมาใช้ซ้ำ (Reusable Materials & Salvage Cycle: ดอกไม้พลาสติก), 4.4 ระบบอัจฉริยะประวัติการจัดซื้อและแจ้งเตือนคู่ค้า (Vendor Intelligence & Defect Shield) (+20 more)
 
 ### Community 8 - "3. ประวัติการทำงานและข้อตกลงล่าสุด (Session History)"
-Cohesion: 0.06
-Nodes (30): 1. ข้อมูลสถาปัตยกรรมโปรเจกต์ (Project Snapshot), [2026-10-21], [2026-10-22], [2026-11-05 - กะดึก], [2026-11-05 - กะบ่าย/เย็น (Table Black Line Glitch Elimination & Financial Ledger Overhaul)], [2026-11-05 - กะเช้า/บ่าย], [2026-11-05 - ยกระดับ UX/UI Modal ทุกหน้าให้เป็นดีไซน์เดียวกับหน้าแผนงาน (Unified Modal Design System)], [2026-11-06 - กะค่ำ (Brand Logo Dynamic Theme Sync)] (+22 more)
+Cohesion: 0.09
+Nodes (23): [2026-10-21], [2026-10-22], [2026-11-05 - กะดึก], [2026-11-05 - กะบ่าย/เย็น (Table Black Line Glitch Elimination & Financial Ledger Overhaul)], [2026-11-05 - กะเช้า/บ่าย], [2026-11-05 - ยกระดับ UX/UI Modal ทุกหน้าให้เป็นดีไซน์เดียวกับหน้าแผนงาน (Unified Modal Design System)], [2026-11-06 - กะค่ำ (Brand Logo Dynamic Theme Sync)], [2026-11-06 - กะค่ำ (Brand Logo & Settings Reversion to Original)] (+15 more)
 
 ### Community 9 - "index.js"
 Cohesion: 0.13
@@ -160,9 +161,13 @@ Nodes (3): envPath, fs, path
 Cohesion: 0.33
 Nodes (6): scripts, build, deploy, dev, predeploy, preview
 
+### Community 30 - "Active Skills & Engineering Directives"
+Cohesion: 0.13
+Nodes (14): 10. Native Memory & Session Continuity, 11. Strict Custom UI Directive (Banned Native Browser Dialogs & Date Pickers), 1. Ponytail (Lazy Senior Dev Mode), 2. OmniRoute (Provider & Model Fallback), 3. Graphify (Codebase Knowledge Graph), 4. Agent Skills (Engineering Best Practices), 5. Karpathy Skills (The 4 Golden Rules), 6. ECC (Explore → Plan → Execute → Check / Self-Verify) (+6 more)
+
 ## Knowledge Gaps
 - **7 isolated node(s):** `@tailwindcss/postcss`, `@types/react`, `@types/react-dom`, `autoprefixer`, `gh-pages` (+2 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 252 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 251 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **8 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions

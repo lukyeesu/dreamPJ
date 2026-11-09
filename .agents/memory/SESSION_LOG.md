@@ -107,8 +107,20 @@
     - ตรวจสอบผ่าน DevTools: ปุ่ม "บันทึก" กลับมามีสีพื้นหลังเป็นสีม่วงสด `rgb(139, 92, 246)` ตรงกับธีม Violet ที่ผู้ใช้ใช้งาน 100%
     - ปุ่ม "+ เพิ่มรูปภาพ" และไอคอนกระเป๋าเงินมีสีตามธีมตรงเป๊ะทุกจุด
     - `npm run build` ผ่านฉลุย 100%
-- **7. การตรวจสอบความสมบูรณ์ (Verification)**:
-  - Build ผ่านฉลุย 100% ด้วย `npm run build` ปราศจาก Error หรือ Warning
+- **7. แก้ไขข้อผิดพลาด Runtime Error: Cannot access 'Y' before initialization (Circular Chunk Fix in Vite)**:
+  - **วิเคราะห์สาเหตุ (Root Cause)**:
+    - ใน `vite.config.js` มีการกำหนด `manualChunks` แยกกลุ่ม React Core ออกไปเป็น `vendor-react` (`react`, `react-dom`) ในขณะที่ `scheduler` (ซึ่ง `react-dom` เรียกใช้) และ `react-hook-form` ถูกปล่อยให้อยู่ใน `vendor`
+    - ส่งผลให้เกิด Circular Chunk Dependency: `vendor` -> `vendor-react` -> `vendor`
+    - Rollup ส่งคำเตือน `Circular chunk: vendor -> vendor-react -> vendor. Please adjust the manual chunk logic for these chunks.`
+    - เมื่อรันในบราวเซอร์ ตัวแปร `Y` (React) ใน `react-hook-form` โดนประเมินผลก่อนที่ `vendor-react` จะ Initialize สำเร็จ เกิดข้อผิดพลาด TDZ (Temporal Dead Zone): `Uncaught ReferenceError: Cannot access 'Y' before initialization at vendor-CYXWokaW.js:57:180970`
+  - **แนวทางแก้ไข**:
+    - ปรับปรุง `manualChunks` ใน `vite.config.js` ให้รวมกลุ่ม `vendor` และ `vendor-react` อยู่ใน Chunk เดียวกัน
+    - แยกเฉพาะโมดูลอิสระที่ไม่สร้าง Cycle เช่น `icons` (`lucide-react`) และ `vendor-db` (`@supabase`, `dexie`)
+  - **การตรวจสอบผลลัพธ์**:
+    - รัน `npm run build`: การแจ้งเตือน `Circular chunk` หายไป 100%
+    - รัน `vite preview` และตรวจสอบด้วย Chrome DevTools บน `http://127.0.0.1:4173/`: หน้าเว็บโหลดสมบูรณ์ ไร้ Console Error ใดๆ และหน้าติดตามงานโหลดข้อมูล Realtime สำเร็จ 100%
+- **8. การตรวจสอบความสมบูรณ์ (Verification)**:
+  - Build ผ่านฉลุย 100% ด้วย `npm run build` ปราศจาก Circular Chunk Warning หรือ Error
   - ตรวจสอบผ่าน Chrome DevTools ทั้ง Mobile Viewport (390x844) และ Desktop Viewport (1440x900)
   - อัปเดตผัง Codebase Knowledge Graph ด้วย `python -m graphify update .` สำเร็จ เรียบร้อย 100%
 

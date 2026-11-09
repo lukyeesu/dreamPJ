@@ -22,24 +22,19 @@ export default defineConfig({
     
     rollupOptions: {
       output: {
-        // ฟังก์ชันจัดการแยกไฟล์ (Manual Chunking)
+        // ฟังก์ชันจัดการแยกไฟล์ (Manual Chunking) โดยไม่ทำให้เกิด Circular Chunk
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            // แยก Library ตัวใหญ่ๆ ออกมาเป็นไฟล์เฉพาะ
-            if (id.includes('framer-motion')) {
-              return 'framer-motion';
-            }
+            // แยกชุด Icons ออกมาเพื่อแคชแยก
             if (id.includes('lucide-react')) {
               return 'icons';
             }
-            // แยกกลุ่ม React Core (ช่วยเรื่องความเร็วในการโหลดซ้ำ/Caching)
-            if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('\\react\\') || id.includes('\\react-dom\\')) {
-              return 'vendor-react';
-            }
+            // แยกชุด Database / Backend API (Supabase & Dexie)
             if (id.includes('@supabase') || id.includes('dexie')) {
               return 'vendor-db';
             }
-            // Library อื่นๆ ใน node_modules ให้รวมกันในชื่อ vendor
+            // รวม React Core, React-DOM, Scheduler, Hook-Form และ Vendor อื่นๆ
+            // ให้อยู่ใน Chunk เดียวกันเพื่อป้องกัน Circular Dependency / TDZ error (Cannot access before initialization)
             return 'vendor';
           }
         },
