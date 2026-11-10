@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --experimental-vm-modules --test tests/*.test.cjs",
     "build": "vite build",
     "preview": "vite preview",
     "predeploy": "npm run build",

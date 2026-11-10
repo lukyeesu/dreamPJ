@@ -50,6 +50,36 @@
 
 ## 3. ประวัติการทำงานและข้อตกลงล่าสุด (Session History)
 
+### [2026-11-10 - ออกแบบคลังใหม่: รอผู้ใช้เลือกโครงหน้า]
+- ผู้ใช้รายงานว่ารัน `save_project_with_items.sql` แล้ว; ยังไม่ได้ตรวจฐานจริงซ้ำ
+- คลังต้องมี 3 กลุ่มหลัก: วัสดุสิ้นเปลือง, วัสดุใช้ซ้ำแยกสีและรับคืนดี/ชำรุด, เครื่องมือ QR รายชิ้นยืม–คืน
+- ผู้ใช้ย้ำว่าหมวดหมู่จำเป็น เช่น ดอกไม้พลาสติก/กรรไกร สำหรับ filter; แยกจากประเภทการจัดการ สี/ขนาด และรหัส QR รายชิ้น กรรไกรสีเดียวกันหลายด้ามยังมีสถานะ/ผู้ถือแยก
+- ตรวจ source แล้วมี inventory_categories ใน SQL/Dexie และ category_id ใน schema SQL แต่ Inventory.jsx ยังไม่กรองหมวดจริง และ projection/payload ของ inventory ยังไม่ส่ง category_id; เพิ่มเป็นข้อกำหนดและเกณฑ์ตรวจรับในสเปก ยังไม่ได้เชื่อมหน้าคลังจริง
+- ขั้นตอนเพิ่มเติมจากผู้ใช้: งานผลิตหนึ่งงานเบิกของให้ผู้ช่วยหลายคน เช่น เพื่อน/ญาติที่ไม่ใช่พนักงานประจำ ต้องมีทะเบียนผู้รับของแยกจากบัญชีพนักงาน; ทีมส่ง/ติดตั้งเบิกชุดสำรองอีกชุดหลังผลิตเสร็จ
+- เงินสดสำรองเป็นเงินจริงสำหรับชิ้นงาน ต้องนับแยกตามชนิดธนบัตร (ตัวอย่างผู้ใช้ แบงค์ 500 × 20 ใบ) มีเกณฑ์เตือนและจำนวนเตรียมเพิ่ม; เสนอแยกจากต้นทุนวัสดุและจำกัดสิทธิ์ดู/จ่ายเงิน
+- ผู้ใช้ยืนยันเพิ่มเติม: จ่ายธนบัตรจริงให้ผู้ช่วยพับ/ใส่ซองก่อนทำของขวัญ เช่น 50 × 20 ใบ งานเดียวแบ่งให้ 5–10 คนหรือมากกว่า; เพิ่มชุดเงินเตรียมงานแยกผู้รับและการรับงานบางส่วน/หลายรอบในสเปก
+- ธนบัตรที่ทำเป็นชุดงานกลับมาร้านยังเป็นเงินในชุดงานที่จองไว้ ไม่ใช่เงินสดสำรองพร้อมเบิก; เงินสดไม่ได้ใช้คืนต้องตรวจจำนวนและการปล่อยจองแยกกัน พร้อมประวัติส่งต่อ/ส่งมอบลูกค้า
+- คำแนะนำล่าสุด: ใช้ C เป็นหน้าหลัก ผสานใบเบิกผลิตหลายผู้รับและรอบติดตั้งในหน้าเบิก–คืน เพิ่มหน้าเงินสดสำรอง; เป็นคำแนะนำจากข้อมูลใหม่ ยังไม่ถือว่าผู้ใช้เลือก C แล้ว
+- ข้อมูลเพิ่มจากผู้ใช้: ผลิตงานเสร็จในโกดังแล้วไปส่ง/ติดตั้ง; เบิกเครื่องมือครั้งเดียวใช้ร่วมได้ 15 งานในรอบออกงาน; รองรับรายบุคคลและหลายทีม พร้อมผู้รับของหลักและสมาชิก ณ รอบนั้น
+- วัสดุเช่นดอกไม้พลาสติกมักส่งไปกับงานและอาจไม่ได้เก็บกลับ การกู้คืนของที่ยังใช้ได้เป็นรับวัสดุกลับ ไม่สร้างหนี้ค้างคืนหรือความเสียหายของพนักงานโดยอัตโนมัติ
+- ต้องมีหน้าพิมพ์ฉลาก QR รายชิ้น/หลายชิ้น ปรับขนาดมิลลิเมตรและขนาดเล็กสำหรับด้ามกรรไกร มีรหัสอ่านด้วยตาและทดสอบฉลากจริงก่อนใช้
+- ผู้ใช้ถามเรื่องเฉลี่ยหักเงินทีมเมื่อของหาย: ยังไม่ใช่ฟีเจอร์ที่อนุมัติ ระบบออกแบบให้เก็บเหตุการณ์/หลักฐานและตรวจสอบแยกจาก payroll ไม่มีการหักเงินทีมอัตโนมัติ; ตรวจหลักเกณฑ์ ม.76/77 จากกระทรวงแรงงานแล้ว
+- สร้างแบบหน้าจอ 3 ทิศทางที่ `.impeccable/mocks/decision/`; ผู้ใช้แจ้งว่าการเลือก B ในรอบ `499f4ce2` เป็นการกดผิด จึงยังไม่มีแบบที่ยืนยัน
+- เปิดตัวเลือก A/B/C ใหม่ในรอบ `7f7a0026`; รอเลือกใหม่ก่อนยึดโครงหน้าใดเป็นแบบหลัก
+- สเปก UX และกติกาที่เสนออยู่ใน `docs/inventory-redesign.md`; ข้อเท็จจริงที่ยืนยันอยู่ใน `PRODUCT.md`; ยังไม่ได้แก้ `src/Inventory.jsx` หรือฐานข้อมูลคลัง
+- คำถามที่ยังรอ: ใครยืนยันเบิก–คืน, อนุญาตเศษหน่วยไหม, ต้องคัดแยกวัสดุรับกลับก่อนพร้อมใช้ไหม, มีวัสดุบางชนิดที่บังคับคืนหรือไม่, ผู้ช่วยรับของไปทำที่บ้านด้วยไหม และมีธนบัตรที่ลูกค้านำมาให้หรือไม่
+- ไม่มี browser/native computer bridge ในรอบออกแบบ จึงยังไม่ได้ตรวจภาพ rendered/mobile; แบบที่เลือกเป็น static desktop sketch และไม่ใช่หน้าทำรายการจริง
+- แก้ปัญหาหน้าตัวอย่าง `???` และหน้าขาว: ซ่อม UTF-8 ใน metadata/A/C และอัปเดตการให้บริการ sketch จนลิงก์ขยายทั้ง 3 คืน HTTP 200 แทน 404; เพิ่ม viewer สำรองแบบ self-contained ที่ `.impeccable/mocks/decision/inventory-preview.html` สร้างด้วย `node .impeccable/build-inventory-preview.cjs` และเปิดผ่าน dev server 5174 ได้
+- Viewer สำรองฝัง HTML ทั้งสาม ไม่พึ่งรูปภาพที่ยังไม่ได้สร้าง สลับดูโดยไม่อนุมัติเลือกแบบ; ตรวจ JavaScript ของปุ่ม A/B/C ด้วย VM และตรวจ HTTP/UTF-8 ผ่านแล้ว ยังไม่มี browser bridge สำหรับตรวจภาพจริง
+
+### [2026-11-10 - Supabase request deduplication และความถูกต้องของการซิงก์]
+- รวม scoped project loaders ให้แชร์ request ระหว่างผู้เรียก รองรับผลว่างและส่ง deleted IDs ครบทุก callback; ไม่ถือว่า request ที่ล้มเหลวโหลดสำเร็จ
+- โหลด Finance/Analytics/Plans เฉพาะแท็บที่เปิด, แยกการโหลดใบเสนอราคาจาก activities, ตัดการ sync รายการลบซ้ำบน focus และกันผล Analytics เก่าทับตัวกรองใหม่
+- คงรายละเอียดโปรเจกต์ในแคชเมื่อโหลดแบบย่อ; reconcile เฉพาะเมื่อโหลดครบทุกหน้าและมี session; Realtime DELETE ส่ง IDs ให้ App ลบ state
+- ย้ายการบันทึกไป RPC transaction `save_project_with_items`; ฟอร์มแสดง error และคงเปิดไว้เมื่อเซฟล้มเหลว; เขียนแคชหลัง server สำเร็จ
+- **Deployment prerequisite:** รัน `database_scripts/save_project_with_items.sql` ใน Supabase SQL Editor ก่อน deploy frontend ใหม่ สคริปต์ใช้ SECURITY INVOKER และให้เฉพาะ authenticated เรียก; ยังไม่ได้รันบนฐาน production
+- Verification: regression tests `npm test` ผ่าน 25/25; ทดสอบ SQL ด้วย PGlite/PostgreSQL จาก schema จริงผ่าน 7 checks รวม rollback และ RLS; build ผ่าน; lint ในไฟล์ที่ตรวจยังมีปัญหาเดิม ไม่มีการ stage/commit/push
+
 ### [2026-11-10 - รอบดึก (Missing Numbers Bug Fix, Filter Clean-up & Mobile Multi-Item Card UX Overhaul)]
 - **1. แก้บั๊กตัวเลขรายจ่ายจริงไม่ขึ้นบนตาราง (Missing Financial Numbers Root-Cause Fix)**:
   - สาเหตุที่แท้จริง: โปรเจกต์ในฐานข้อมูลจำนวน 309 รายการมีคีย์ `expenses: []` (array ว่าง) ทำให้โค้ดเดิมรัน `[].reduce(...)` แล้วได้ 0 แทนที่จะดึงยอดสรุปจาก `project.totalExpenses` ที่บันทึกไว้
@@ -119,7 +149,26 @@
   - **การตรวจสอบผลลัพธ์**:
     - รัน `npm run build`: การแจ้งเตือน `Circular chunk` หายไป 100%
     - รัน `vite preview` และตรวจสอบด้วย Chrome DevTools บน `http://127.0.0.1:4173/`: หน้าเว็บโหลดสมบูรณ์ ไร้ Console Error ใดๆ และหน้าติดตามงานโหลดข้อมูล Realtime สำเร็จ 100%
-- **8. การตรวจสอบความสมบูรณ์ (Verification)**:
+- **8. แก้ไขปัญหา Infinite Fetch Loop & net::ERR_INSUFFICIENT_RESOURCES ใน Calendar & SyncService**:
+  - **วิเคราะห์สาเหตุ (Root Cause)**:
+    - ใน `Calendar.jsx` มี `useEffect` คอยดักฟัง `[viewDate.getFullYear(), viewDate.getMonth(), onMonthChange]` เพื่อเรียก `onMonthChange(ym)` เมื่อผู้ใช้เปลี่ยนเดือน
+    - แต่ใน `App.jsx` บรรทัดส่ง Props `<Calendar onMonthChange={(ym) => { ... }} />` ถูกเขียนเป็น Inline Anonymous Arrow Function ทำให้เกิดฟังก์ชัน Instance ใหม่ทุกรอบที่ `App` Render
+    - เมื่อ `Calendar` ทำงาน `onMonthChange` เปลี่ยน Reference จึง Trigger ให้ `useEffect` ใน `Calendar` รันซ้ำทันที
+    - `onMonthChange` ยิง `loadProjectsScoped` -> `applyProjectsData` -> `setAllActivities` ใน `App`
+    - เมื่อ `allActivities` เปลี่ยน `App` ก็ Re-render ส่ง `onMonthChange` ใหม่เข้ามาอีกครั้ง ทำให้เกิด **Infinite Re-render / Fetch Loop** วนลูปยิง Supabase วินาทีละหลายสิบครั้ง จนเบราว์เซอร์ Connection Pool เต็มและแจ้งเตือน `net::ERR_INSUFFICIENT_RESOURCES` และ `TypeError: Failed to fetch`
+  - **แนวทางแก้ไข 3 ชั้น (3-Layer Robust Fix)**:
+    1. **`Calendar.jsx`**:
+       - เก็บ `onMonthChange` ไว้ใน `useRef` ป้องกัน Effect รันใหม่เมื่อ Reference ฟังก์ชันภายนอกเปลี่ยน
+       - เพิ่ม `lastNotifiedMonthRef` ดักจับเดือนที่เพิ่งเรียกไป หากเดือนเดิม (`currentYm`) จะไม่ยิงซ้ำเด็ดขาด
+    2. **`App.jsx`**:
+       - ใช้ `useCallback` ครอบฟังก์ชัน `handleCalendarMonthChange` ไม่ให้สร้างฟังก์ชันใหม่ในทุกรอบ Render
+    3. **`syncService.js`**:
+       - ติดตั้ง **Single-Flight In-Flight Request Deduplication** (`inFlightMonthLoads` Map) หากมี Request ของเดือนเดียวกันกำลังดาวน์โหลดอยู่ ตัวอื่นจะแชร์ Promise ร่วมกัน ไม่ยิงเน็ตเวิร์กซ้ำ
+       - ติดตั้ง **Throttle Cache** (`lastFetchedMonthTime`) หากเพิ่งดึงข้อมูลสำเร็จภายใน 3 วินาที จะดึงจาก IndexedDB ทันทีโดยไม่ต้องยิงซ้ำ
+  - **การตรวจสอบผลลัพธ์**:
+    - `npm run build` ผ่าน 100%
+    - ทดสอบผ่าน Preview และ Dev Server ด้วย Chrome DevTools: Loop หายสนิท 100%, Console สะอาด ปราศจาก `ERR_INSUFFICIENT_RESOURCES` หรือ Failed to fetch
+- **9. การตรวจสอบความสมบูรณ์ (Verification)**:
   - Build ผ่านฉลุย 100% ด้วย `npm run build` ปราศจาก Circular Chunk Warning หรือ Error
   - ตรวจสอบผ่าน Chrome DevTools ทั้ง Mobile Viewport (390x844) และ Desktop Viewport (1440x900)
   - อัปเดตผัง Codebase Knowledge Graph ด้วย `python -m graphify update .` สำเร็จ เรียบร้อย 100%

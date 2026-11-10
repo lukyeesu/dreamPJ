@@ -89,7 +89,7 @@ export const DEFAULT_MATERIAL_RATES = [
 export const isValidUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 
 // Helper แปลงแถวจาก Supabase เป็นโครงสร้าง Activity ที่หน้าบ้านใช้งาน
-export function transformSupabaseProjectToUi(row, childItems = {}) {
+export function transformSupabaseProjectToUi(row, childItems = {}, existing = {}) {
   if (!row) return null;
 
   const quotationItems = (childItems.quotationItems || []).map(q => ({
@@ -135,12 +135,12 @@ export function transformSupabaseProjectToUi(row, childItems = {}) {
     customer: row.customer_name || '',
     customerId: row.customer_id || null,
     customerInfo: {
-      social: row.customer_social || '',
-      line: row.customer_line || '',
-      phone: row.customer_phone || '',
-      email: row.customer_email || '',
-      taxId: row.customer_tax_id || '',
-      address: row.customer_address || ''
+      social: row.customer_social === undefined ? (existing.customerInfo?.social || '') : (row.customer_social || ''),
+      line: row.customer_line === undefined ? (existing.customerInfo?.line || '') : (row.customer_line || ''),
+      phone: row.customer_phone === undefined ? (existing.customerInfo?.phone || '') : (row.customer_phone || ''),
+      email: row.customer_email === undefined ? (existing.customerInfo?.email || '') : (row.customer_email || ''),
+      taxId: row.customer_tax_id === undefined ? (existing.customerInfo?.taxId || '') : (row.customer_tax_id || ''),
+      address: row.customer_address === undefined ? (existing.customerInfo?.address || '') : (row.customer_address || '')
     },
     rawDateTime: (row.raw_delivery_start || row.project_datetime || '').substring(0, 16),
     date: row.raw_delivery_start 
@@ -167,11 +167,11 @@ export function transformSupabaseProjectToUi(row, childItems = {}) {
     locationId: row.location_id || null,
     mapLink: row.map_link || '',
     image: row.primary_image_url || images[0] || null,
-    images: images,
-    slips: slips,
-    quotationItems: quotationItems,
-    customerSupport: customerSupport,
-    expenses: expenses,
+    images: row.images === undefined ? (existing.images || images) : images,
+    slips: row.slips === undefined ? (existing.slips || slips) : slips,
+    quotationItems: childItems.quotationItems === undefined ? (existing.quotationItems || quotationItems) : quotationItems,
+    customerSupport: childItems.customerSupport === undefined ? (existing.customerSupport || customerSupport) : customerSupport,
+    expenses: childItems.expenses === undefined ? (existing.expenses || expenses) : expenses,
     version: row.version || 1,
     updated_at: row.updated_at
   };
@@ -308,363 +308,182 @@ export function getMonthDateBounds(yearMonth) {
 }
 
 async function fetchChildItemsForProjects(client, projects) {
-  const qMap = new Map();
-  const csMap = new Map();
-  const exMap = new Map();
-  if (!Array.isArray(projects) || projects.length === 0) {
-    return { qMap, csMap, exMap };
-  }
   const projectIds = projects.map(p => p.id);
-  try {
-    const [qRes, csRes, exRes] = await Promise.all([
-      client.from('project_quotation_items').select(QUOTATION_COLUMNS).in('project_id', projectIds),
-      client.from('project_customer_support').select(SUPPORT_COLUMNS).in('project_id', projectIds),
-      client.from('project_expenses').select(EXPENSE_COLUMNS).in('project_id', projectIds)
-    ]);
-    (qRes.data || []).forEach(item => {
-      if (!qMap.has(item.project_id)) qMap.set(item.project_id, []);
-      qMap.get(item.project_id).push(item);
-    });
-    (csRes.data || []).forEach(item => {
-      if (!csMap.has(item.project_id)) csMap.set(item.project_id, []);
-      csMap.get(item.project_id).push(item);
-    });
-    (exRes.data || []).forEach(item => {
-      if (!exMap.has(item.project_id)) exMap.set(item.project_id, []);
-      exMap.get(item.project_id).push(item);
-    });
-  } catch (err) {
-    console.warn('Error fetching child items for scoped projects:', err);
+  const [qRes, csRes, exRes] = await Promise.all([
+    client.from('project_quotation_items').select(QUOTATION_COLUMNS).in('project_id', projectIds),
+    client.from('project_customer_support').select(SUPPORT_COLUMNS).in('project_id', projectIds),
+    client.from('project_expenses').select(EXPENSE_COLUMNS).in('project_id', projectIds)
+  ]);
+  for (const result of [qRes, csRes, exRes]) {
+    if (result.error) throw result.error;
   }
-  return { qMap, csMap, exMap };
+  const group = items => {
+    const map = new Map();
+    for (const item of items || []) {
+      if (!map.has(item.project_id)) map.set(item.project_id, []);
+      map.get(item.project_id).push(item);
+    }
+    return map;
+  };
+  return { qMap: group(qRes.data), csMap: group(csRes.data), exMap: group(exRes.data) };
 }
 
-/**
- * 🎯 ดึงโปรเจกต์งานแบบระบุเดือนเจาะจง (Zero-Egress Scoped Loader)
- * ดึงเฉพาะแถวของเดือนที่เลือก (เช่น 2026-11)
- * พร้อมแคชลง IndexedDB และส่งข้อมูลกลับไปยัง UI ทันที
- */
+async function cacheProjectRows(rows, childData, isCurrent = () => true) {
+  // Keep summary and detail responses from overwriting each other's cached fields.
+  return db.transaction('rw', db.projects, async () => {
+    const existing = await db.projects.bulkGet(rows.map(row => row.id));
+    if (!isCurrent()) return [];
+    const projects = rows.map((row, index) => transformSupabaseProjectToUi(row, childData ? {
+      quotationItems: childData.qMap.get(row.id) || [],
+      customerSupport: childData.csMap.get(row.id) || [],
+      expenses: childData.exMap.get(row.id) || []
+    } : {}, existing[index]));
+    await db.projects.bulkPut(projects);
+    return projects;
+  });
+}
+
+const inFlightProjectLoads = new Map();
+const recentProjectLoads = new Map();
+let projectLoadEpoch = 0;
+
+export function resetProjectLoadCache() {
+  projectLoadEpoch++;
+  inFlightProjectLoads.clear();
+  recentProjectLoads.clear();
+}
+
 export async function loadProjectsByMonth(yearMonth, onSyncUpdate, options = {}) {
-  const client = getActiveClient();
   if (!yearMonth) return [];
-
-  try {
-    // 1. อ่านจาก IndexedDB ในเครื่องก่อนทันที (0 Latency, 0 Egress)
-    const allLocal = await db.projects.toArray();
-    const localInMonth = allLocal.filter(p => {
-      const candidates = [p.rawDeliveryStart, p.rawDateTime, p.date, p.paymentDate, p.deliveryDate];
-      for (const val of candidates) {
-        if (!val) continue;
-        if (typeof val === 'string') {
-          if (val.startsWith(yearMonth)) return true;
-          if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(val)) {
-            const parts = val.split(' ')[0].split('/');
-            let y = parseInt(parts[2], 10);
-            if (y > 2500) y -= 543;
-            const ym = `${y}-${String(parts[1]).padStart(2, '0')}`;
-            if (ym === yearMonth) return true;
-          }
-        }
-      }
-      return false;
-    });
-
-    if (localInMonth.length > 0 && onSyncUpdate) {
-      onSyncUpdate(localInMonth);
-    }
-
-    // 2. ดึงตรงจาก Supabase เฉพาะของเดือนนี้ (Strict Zero-Egress Explicit Projections)
-    // 🚀 Progressive Loading: ดึง 50 แถวล่าสุดของเดือนนั้นก่อนทันที (Fast First Paint ~50ms)
-    const bounds = getMonthDateBounds(yearMonth);
-    const startStr = bounds.start;
-    const endStr = bounds.end;
-    const CHUNK_SIZE = 50;
-
-    const { data: firstBatch, error, count } = await client
-      .from('projects')
-      .select(PROJECT_LIST_COLUMNS, { count: 'exact' })
-      .gte('raw_delivery_start', startStr)
-      .lte('raw_delivery_start', endStr)
-      .order('raw_delivery_start', { ascending: false })
-      .range(0, CHUNK_SIZE - 1);
-
-    if (error) throw error;
-
-    if (!firstBatch || firstBatch.length === 0) {
-      // 🛡️ ป้องกันการล้างแคชท้องถิ่นหากเกิดปัญหา Auth Session / RLS
-      const session = (await client.auth.getSession())?.data?.session;
-      if (session && localInMonth.length > 0) {
-        await db.projects.bulkDelete(localInMonth.map(p => p.id));
-        if (onSyncUpdate) onSyncUpdate([], localInMonth.map(p => p.id));
-      }
-      return [];
-    }
-
-    let childData = { qMap: new Map(), csMap: new Map(), exMap: new Map() };
-    if (options.includeDetails && firstBatch.length > 0) {
-      childData = await fetchChildItemsForProjects(client, firstBatch);
-    }
-
-    const transformed1 = firstBatch.map(p => transformSupabaseProjectToUi(p, {
-      quotationItems: childData.qMap.get(p.id) || [],
-      customerSupport: childData.csMap.get(p.id) || [],
-      expenses: childData.exMap.get(p.id) || []
-    }));
-
-    // บันทึก 50 แถวแรกทันทีลง IndexedDB และส่งอัปเดตหน้าบ้านทันที ให้เห็นข้อมูลในเสี้ยววินาที
-    await db.projects.bulkPut(transformed1);
-    if (onSyncUpdate) {
-      onSyncUpdate(transformed1);
-    }
-
-    let allRemoteProjects = [...firstBatch];
-    let allTransformed = transformed1;
-
-    // ถ้าเดือนนั้นมีข้อมูลมากกว่า 50 แถว ให้แอบดึงส่วนที่เหลือแบบ Background ทันที
-    if (count && count > CHUNK_SIZE) {
-      console.log(`📡 Background Fetch: Month ${yearMonth} has ${count} records. Fetching remaining ${count - CHUNK_SIZE}...`);
-      const { data: remainingBatch, error: remErr } = await client
-        .from('projects')
-        .select(PROJECT_LIST_COLUMNS)
-        .gte('raw_delivery_start', startStr)
-        .lte('raw_delivery_start', endStr)
-        .order('raw_delivery_start', { ascending: false })
-        .range(CHUNK_SIZE, count - 1);
-
-      if (!remErr && remainingBatch && remainingBatch.length > 0) {
-        let childData2 = { qMap: new Map(), csMap: new Map(), exMap: new Map() };
-        if (options.includeDetails && remainingBatch.length > 0) {
-          childData2 = await fetchChildItemsForProjects(client, remainingBatch);
-        }
-
-        const transformed2 = remainingBatch.map(p => transformSupabaseProjectToUi(p, {
-          quotationItems: childData2.qMap.get(p.id) || [],
-          customerSupport: childData2.csMap.get(p.id) || [],
-          expenses: childData2.exMap.get(p.id) || []
-        }));
-
-        allRemoteProjects = [...firstBatch, ...remainingBatch];
-        allTransformed = [...transformed1, ...transformed2];
-
-        await db.projects.bulkPut(transformed2);
-        if (onSyncUpdate) {
-          onSyncUpdate(allTransformed);
-        }
-      }
-    }
-
-    // 🛡️ RECONCILE: กวาดล้างโปรเจกต์ที่ถูกลบออกจาก Supabase แล้ว ออกจาก IndexedDB ของเดือนนี้ทันที (0 Egress)
-    const session = (await client.auth.getSession())?.data?.session;
-    if (session) {
-      const remoteIdSet = new Set(allRemoteProjects.map(p => p.id));
-      const ghosts = localInMonth.filter(p => !remoteIdSet.has(p.id));
-      if (ghosts.length > 0) {
-        await db.projects.bulkDelete(ghosts.map(p => p.id));
-        console.log(`🧹 Reconciled: purged ${ghosts.length} stale/deleted projects from IndexedDB for ${yearMonth}`);
-        if (onSyncUpdate) {
-          onSyncUpdate(allTransformed, ghosts.map(p => p.id));
-        }
-      }
-    }
-
-    return allTransformed;
-  } catch (err) {
-    console.error(`Error loading projects for month ${yearMonth}:`, err);
-    return [];
-  }
+  return loadProjectsScoped({ mode: 'month', date: yearMonth, includeDetails: !!options.includeDetails }, onSyncUpdate);
 }
 
-/**
- * 🎯 ZERO-EGRESS SCOPED LOADER: ดึงเฉพาะข้อมูลตามเงื่อนไขที่ผู้ใช้กำลังดูอยู่เท่านั้น
- * 1. ถ้า mode === 'date' (เช่น 2026-11-30): ดึงเฉพาะวันที่ 30 พ.ย. 2026
- * 2. ถ้า mode === 'month' (เช่น 2026-11): ดึงเฉพาะเดือน พ.ย. 2026
- * 3. ถ้า mode === 'range' (เช่น start - end): ดึงเฉพาะช่วงวันที่ระบุ
- * 4. เมื่อ includeDetails = true จะดึงเฉพาะตารางลูกของโปรเจกต์ใน Scope นั้นอย่างแม่นยำ
- */
 export async function loadProjectsScoped({ mode = 'month', date = '', range = { start: '', end: '' }, includeDetails = false } = {}, onSyncUpdate) {
   const client = getActiveClient();
+  const epoch = projectLoadEpoch;
+  const isCurrent = () => epoch === projectLoadEpoch;
+  let localScoped = [];
   try {
     let startStr = null;
     let endStr = null;
-    let localFilterFn = null;
-
     if (mode === 'all') {
-      // ดึงข้อมูลทั้งหมดทุกปีทุกเดือน (Zero-Filter)
-      startStr = null;
-      endStr = null;
-      localFilterFn = null;
+      // No delivery date bounds for the all-projects scope.
     } else if (mode === 'date' && date) {
-      // ดึงเจาะจงเฉพาะวัน (เช่น 2026-11-30)
-      startStr = `${date}T00:00:00`;
-      endStr = `${date}T23:59:59`;
-      localFilterFn = (p) => {
-        const c = [p.rawDeliveryStart, p.rawDateTime, p.date, p.paymentDate];
-        return c.some(v => v && String(v).startsWith(date));
-      };
-    } else if (mode === 'month' && date) {
-      // ดึงเจาะจงเฉพาะเดือน (เช่น 2026-11)
-      return await loadProjectsByMonth(date, onSyncUpdate, { includeDetails });
+      startStr = date + 'T00:00:00';
+      endStr = date + 'T23:59:59';
     } else if (mode === 'year' && date) {
-      // ดึงเจาะจงเฉพาะปี (เช่น 2026)
-      const yr = String(date).slice(0, 4);
-      startStr = `${yr}-01-01T00:00:00`;
-      endStr = `${yr}-12-31T23:59:59`;
-      localFilterFn = (p) => {
-        const c = [p.rawDeliveryStart, p.rawDateTime, p.date, p.paymentDate];
-        return c.some(v => v && String(v).startsWith(yr));
-      };
+      const year = String(date).slice(0, 4);
+      startStr = year + '-01-01T00:00:00';
+      endStr = year + '-12-31T23:59:59';
     } else if (mode === 'week' && date) {
-      // ดึงเจาะจงเฉพาะสัปดาห์ (จันทร์ - อาทิตย์)
-      const d = new Date(date);
-      const day = d.getDay();
-      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-      const monday = new Date(d.setDate(diff));
+      const monday = new Date(date + 'T00:00:00');
+      const day = monday.getDay();
+      monday.setDate(monday.getDate() - (day === 0 ? 6 : day - 1));
       const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 6);
-      const startDay = monday.toISOString().slice(0, 10);
-      const endDay = sunday.toISOString().slice(0, 10);
-      startStr = `${startDay}T00:00:00`;
-      endStr = `${endDay}T23:59:59`;
-      localFilterFn = (p) => {
-        const c = [p.rawDeliveryStart, p.rawDateTime, p.date, p.paymentDate];
-        return c.some(v => {
-          if (!v) return false;
-          const s = String(v).slice(0, 10);
-          return s >= startDay && s <= endDay;
-        });
-      };
+      sunday.setDate(sunday.getDate() + 6);
+      const dayString = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      startStr = dayString(monday) + 'T00:00:00';
+      endStr = dayString(sunday) + 'T23:59:59';
     } else if (mode === 'range' && range?.start && range?.end) {
-      // ดึงเจาะจงเฉพาะช่วงวันที่
-      startStr = `${range.start}T00:00:00`;
-      endStr = `${range.end}T23:59:59`;
-      localFilterFn = (p) => {
-        const c = [p.rawDeliveryStart, p.rawDateTime, p.date, p.paymentDate];
-        return c.some(v => {
-          if (!v) return false;
-          const s = String(v).substring(0, 10);
-          return s >= range.start && s <= range.end;
-        });
-      };
+      startStr = range.start + 'T00:00:00';
+      endStr = range.end + 'T23:59:59';
     } else {
-      // ค่าเริ่มต้น: ดึงเฉพาะเดือนปัจจุบัน (ไม่ดึงทั้งก้อนของทุกปี)
       const now = new Date();
-      const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      return await loadProjectsByMonth(curMonth, onSyncUpdate, { includeDetails });
+      const month = mode === 'month' && date ? date : now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+      const bounds = getMonthDateBounds(month);
+      startStr = bounds.start;
+      endStr = bounds.end;
     }
 
-    // 1. อ่านจาก IndexedDB สำหรับ Scope นี้ก่อนทันที (0 Latency, 0 Egress)
+    // Use the same delivery date as the remote query when reconciling deletions.
+    const inScope = p => !startStr || (p.rawDeliveryStart && p.rawDeliveryStart >= startStr && p.rawDeliveryStart <= endStr);
     const allLocal = await db.projects.toArray();
-    const localScoped = localFilterFn ? allLocal.filter(localFilterFn) : allLocal;
-    if (localScoped.length > 0 && onSyncUpdate) {
-      console.log(`⚡ Loaded ${localScoped.length} projects from local IndexedDB for scope (${mode}: ${date || range?.start || 'all'}).`);
-      onSyncUpdate(localScoped);
-    }
+    if (!isCurrent()) return [];
+    localScoped = allLocal.filter(inScope);
+    if (localScoped.length && onSyncUpdate) onSyncUpdate(localScoped);
 
-    // 2. ดึงตรงจาก Supabase เฉพาะช่วงวันที่กำหนดด้วย Explicit Projections
-    // 🚀 Progressive Loading: 50 แถวล่าสุดก่อนทันที
-    const CHUNK_SIZE = 50;
-    let query = client
-      .from('projects')
-      .select(PROJECT_LIST_COLUMNS, { count: 'exact' });
-
-    if (startStr && endStr) {
-      query = query.gte('raw_delivery_start', startStr).lte('raw_delivery_start', endStr);
-    }
-    query = query.order('raw_delivery_start', { ascending: false }).range(0, CHUNK_SIZE - 1);
-
-    const { data: firstBatch, error, count } = await query;
-    if (error) throw error;
-
-    if (!firstBatch || firstBatch.length === 0) {
-      // 🛡️ ป้องกันการล้างแคชท้องถิ่นหากเกิดปัญหา Auth Session / RLS
-      const session = (await client.auth.getSession())?.data?.session;
-      if (session && localScoped.length > 0) {
-        await db.projects.bulkDelete(localScoped.map(p => p.id));
-        if (onSyncUpdate) onSyncUpdate([]);
+    const cacheKey = JSON.stringify([startStr, endStr, includeDetails]);
+    const inFlight = inFlightProjectLoads.get(cacheKey);
+    if (inFlight) {
+      if (onSyncUpdate) {
+        inFlight.listeners.add(onSyncUpdate);
+        if (inFlight.latest) onSyncUpdate(inFlight.latest.projects, inFlight.latest.deletedIds);
       }
-      return [];
+      return await inFlight.promise;
+    }
+    const recent = recentProjectLoads.get(cacheKey);
+    if (recent && Date.now() - recent.fetchedAt < 3000) {
+      if (onSyncUpdate) onSyncUpdate(localScoped, recent.deletedIds);
+      return localScoped;
     }
 
-    let childData = { qMap: new Map(), csMap: new Map(), exMap: new Map() };
-    if (includeDetails && firstBatch.length > 0) {
-      childData = await fetchChildItemsForProjects(client, firstBatch);
-    }
-
-    const transformed1 = firstBatch.map(p => transformSupabaseProjectToUi(p, {
-      quotationItems: childData.qMap.get(p.id) || [],
-      customerSupport: childData.csMap.get(p.id) || [],
-      expenses: childData.exMap.get(p.id) || []
-    }));
-
-    await db.projects.bulkPut(transformed1);
-    if (onSyncUpdate) {
-      onSyncUpdate(transformed1);
-    }
-
-    let allRemoteProjects = [...firstBatch];
-    let allTransformed = transformed1;
-
-    // ถ้าข้อมูลมีมากกว่า CHUNK_SIZE ให้โหลดส่วนที่เหลือแบบ Background เป็น Chunks
-    if (count && count > CHUNK_SIZE) {
-      let currentOffset = CHUNK_SIZE;
-      const BATCH_STEP = 500;
-      while (currentOffset < count) {
-        const nextOffset = Math.min(currentOffset + BATCH_STEP - 1, count - 1);
-        const expectedCount = nextOffset - currentOffset + 1;
-        let remQuery = client
-          .from('projects')
-          .select(PROJECT_LIST_COLUMNS);
-        if (startStr && endStr) {
-          remQuery = remQuery.gte('raw_delivery_start', startStr).lte('raw_delivery_start', endStr);
-        }
-        remQuery = remQuery.order('raw_delivery_start', { ascending: false }).range(currentOffset, nextOffset);
-
-        const { data: remBatch, error: remErr } = await remQuery;
-        if (remErr || !remBatch || remBatch.length === 0) break;
-
-        let childData2 = { qMap: new Map(), csMap: new Map(), exMap: new Map() };
-        if (includeDetails && remBatch.length > 0) {
-          childData2 = await fetchChildItemsForProjects(client, remBatch);
-        }
-
-        const transformed2 = remBatch.map(p => transformSupabaseProjectToUi(p, {
-          quotationItems: childData2.qMap.get(p.id) || [],
-          customerSupport: childData2.csMap.get(p.id) || [],
-          expenses: childData2.exMap.get(p.id) || []
-        }));
-
-        allRemoteProjects = [...allRemoteProjects, ...remBatch];
-        allTransformed = [...allTransformed, ...transformed2];
-
-        await db.projects.bulkPut(transformed2);
-        if (onSyncUpdate) {
-          onSyncUpdate(allTransformed);
-        }
-
-        currentOffset += remBatch.length;
-        if (remBatch.length < expectedCount) break;
+    const entry = { listeners: new Set(onSyncUpdate ? [onSyncUpdate] : []), latest: null, promise: null };
+    const publish = (projects, deletedIds = []) => {
+      if (!isCurrent()) return;
+      entry.latest = { projects, deletedIds };
+      for (const listener of entry.listeners) {
+        try { listener(projects, deletedIds); } catch (err) { console.warn('Project update callback failed:', err); }
       }
-    }
-
-    // Reconcile ลบรายการที่ถูกลบออกจาก Server ออกจาก IndexedDB เฉพาะของ Scope นี้
-    // ทำเฉพาะเมื่อดึงข้อมูลครบทุก Batch แล้วเท่านั้น (ป้องกันลบแคชผิดพลาด)
-    const session = (await client.auth.getSession())?.data?.session;
-    if (session && allRemoteProjects.length >= (count || 0)) {
-      const remoteIdSet = new Set(allRemoteProjects.map(p => p.id));
-      const ghosts = localScoped.filter(p => !remoteIdSet.has(p.id));
-      if (ghosts.length > 0) {
-        await db.projects.bulkDelete(ghosts.map(p => p.id));
-        console.log(`🧹 Reconciled: purged ${ghosts.length} stale projects from IndexedDB for scope.`);
-        if (onSyncUpdate) {
-          onSyncUpdate(allTransformed, ghosts.map(p => p.id));
+    };
+    entry.promise = (async () => {
+      try {
+        let allProjects = [];
+        let totalCount = null;
+        let offset = 0;
+        let complete = false;
+        while (!complete) {
+          const batchSize = offset === 0 ? 50 : 500;
+          let query = client.from('projects').select(PROJECT_LIST_COLUMNS, offset === 0 ? { count: 'exact' } : undefined);
+          if (startStr && endStr) query = query.gte('raw_delivery_start', startStr).lte('raw_delivery_start', endStr);
+          const { data, error, count } = await query
+            .order('raw_delivery_start', { ascending: false }).order('id', { ascending: false })
+            .range(offset, offset + batchSize - 1);
+          if (error) throw error;
+          if (!isCurrent()) return [];
+          if (offset === 0 && Number.isInteger(count)) totalCount = count;
+          const rows = data || [];
+          if (rows.length === 0) {
+            complete = totalCount !== null && offset >= totalCount;
+            break;
+          }
+          const childData = includeDetails ? await fetchChildItemsForProjects(client, rows) : undefined;
+          if (!isCurrent()) return [];
+          const projects = await cacheProjectRows(rows, childData, isCurrent);
+          if (!isCurrent()) return [];
+          allProjects = allProjects.concat(projects);
+          publish(allProjects);
+          offset += rows.length;
+          complete = totalCount !== null ? offset >= totalCount : rows.length < batchSize;
         }
-      }
-    }
 
-    return allTransformed;
+        const deletedIds = [];
+        const remoteIds = new Set(allProjects.map(p => p.id));
+        complete = complete && (totalCount === null || remoteIds.size >= totalCount);
+        const session = (await client.auth.getSession())?.data?.session;
+        if (!isCurrent()) return [];
+        if (complete && session) {
+          const currentLocal = await db.projects.toArray();
+          if (!isCurrent()) return [];
+          const initialIds = new Set(localScoped.map(p => p.id));
+          deletedIds.push(...currentLocal.filter(p => initialIds.has(p.id) && inScope(p) && !remoteIds.has(p.id)).map(p => p.id));
+          if (deletedIds.length) await db.projects.bulkDelete(deletedIds);
+        }
+        publish(allProjects, deletedIds);
+        // Failed or incomplete downloads must remain retryable, including empty scopes.
+        if (complete && session && isCurrent()) recentProjectLoads.set(cacheKey, { fetchedAt: Date.now(), deletedIds });
+        return allProjects;
+      } catch (err) {
+        console.error('Error loading project scope:', mode, date, err);
+        return localScoped;
+      } finally {
+        if (inFlightProjectLoads.get(cacheKey) === entry) inFlightProjectLoads.delete(cacheKey);
+      }
+    })();
+    inFlightProjectLoads.set(cacheKey, entry);
+    return await entry.promise;
   } catch (err) {
-    console.error(`Error in loadProjectsScoped (${mode}: ${date}):`, err);
-    return [];
+    console.error('Error reading project scope:', err);
+    return localScoped;
   }
 }
 
@@ -677,42 +496,27 @@ export async function saveProjectSync(activityData) {
   const validated = validatePayload(projectPayloadSchema, activityData, 'Project');
   const client = getActiveClient();
   const { projectRow, quotationItems, customerSupport, expenses } = transformUiToSupabase(validated);
-
-  // ก. บันทึกลง IndexedDB ในเครื่องทันที (Optimistic Write - หน้าจอไม่ค้าง)
-  await db.projects.put(validated);
-
-  // ข. ส่งขึ้น Supabase
-  try {
-    const { error: projErr } = await client
-      .from('projects')
-      .upsert(projectRow, { onConflict: 'id' });
-
-    if (projErr) throw projErr;
-
-    // อัปเดตตารางลูก (ลบของเก่าแล้วใส่ชุดใหม่)
-    await Promise.all([
-      client.from('project_quotation_items').delete().eq('project_id', activityData.id),
-      client.from('project_customer_support').delete().eq('project_id', activityData.id),
-      client.from('project_expenses').delete().eq('project_id', activityData.id)
-    ]);
-
-    await Promise.all([
-      quotationItems.length > 0 ? client.from('project_quotation_items').insert(quotationItems) : Promise.resolve(),
-      customerSupport.length > 0 ? client.from('project_customer_support').insert(customerSupport) : Promise.resolve(),
-      expenses.length > 0 ? client.from('project_expenses').insert(expenses) : Promise.resolve()
-    ]);
-
-    console.log(`✅ Saved project ${activityData.id} to Supabase successfully.`);
-    return { success: true };
-  } catch (err) {
-    console.error(`❌ Failed to save project ${activityData.id} to Supabase:`, err);
-    throw err;
+  const { error } = await client.rpc('save_project_with_items', {
+    p_project: projectRow,
+    p_quotation_items: quotationItems,
+    p_customer_support: customerSupport,
+    p_expenses: expenses
+  });
+  if (error) {
+    if (error.code === 'PGRST202') {
+      throw new Error('ระบบบันทึกโปรเจกต์ยังไม่พร้อม กรุณาติดต่อผู้ดูแลระบบ');
+    }
+    throw error;
   }
+  resetProjectLoadCache();
+  await db.projects.put(validated);
+  return { success: true };
 }
 
-// 3. ลบโปรเจกต์งานจาก Supabase + IndexedDB
+// 3. ลบโปรเจกต์
 export async function deleteProjectSync(id) {
   const client = getActiveClient();
+  resetProjectLoadCache();
   // ก. ลบจาก IndexedDB ทันที
   await db.projects.delete(id);
 
@@ -753,29 +557,38 @@ export function subscribeToRealtimeProjects(onUpdate) {
       async (payload) => {
         console.log('⚡ Realtime Event from Supabase:', payload.eventType, payload.new?.id || payload.old?.id);
 
-        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          const row = payload.new;
-          const [qRes, csRes, exRes] = await Promise.all([
-            client.from('project_quotation_items').select(QUOTATION_COLUMNS).eq('project_id', row.id),
-            client.from('project_customer_support').select(SUPPORT_COLUMNS).eq('project_id', row.id),
-            client.from('project_expenses').select(EXPENSE_COLUMNS).eq('project_id', row.id)
-          ]);
-          const uiItem = transformSupabaseProjectToUi(row, {
-            quotationItems: qRes.data || [],
-            customerSupport: csRes.data || [],
-            expenses: exRes.data || []
-          });
+        try {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            resetProjectLoadCache();
+            const row = payload.new;
+            const [qRes, csRes, exRes] = await Promise.all([
+              client.from('project_quotation_items').select(QUOTATION_COLUMNS).eq('project_id', row.id),
+              client.from('project_customer_support').select(SUPPORT_COLUMNS).eq('project_id', row.id),
+              client.from('project_expenses').select(EXPENSE_COLUMNS).eq('project_id', row.id)
+            ]);
+            for (const result of [qRes, csRes, exRes]) {
+              if (result.error) throw result.error;
+            }
+            const existing = await db.projects.get(row.id);
+            const uiItem = transformSupabaseProjectToUi(row, {
+              quotationItems: qRes.data || [],
+              customerSupport: csRes.data || [],
+              expenses: exRes.data || []
+            }, existing);
 
-          await db.projects.put(uiItem);
-          const all = await db.projects.toArray();
-          if (onUpdate) onUpdate(all);
-        } else if (payload.eventType === 'DELETE') {
-          const deletedId = payload.old?.id;
-          if (deletedId) {
-            await db.projects.delete(deletedId);
+            await db.projects.put(uiItem);
             const all = await db.projects.toArray();
             if (onUpdate) onUpdate(all);
+          } else if (payload.eventType === 'DELETE') {
+            const deletedId = payload.old?.id;
+            if (deletedId) {
+              resetProjectLoadCache();
+              await db.projects.delete(deletedId);
+              if (onUpdate) onUpdate([], [deletedId]);
+            }
           }
+        } catch (err) {
+          console.warn('Realtime project update failed:', err);
         }
       }
     )

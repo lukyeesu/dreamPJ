@@ -140,7 +140,8 @@ import {
   loadProjectsPaginated,
   loadProjectsByMonth,
   subscribeToStaffRealtime,
-  syncDeletedRecords
+  syncDeletedRecords,
+  resetProjectLoadCache
 } from './services/syncService';
 import { db, clearAllLocalDatabase } from './services/db';
 
@@ -1230,7 +1231,7 @@ const App = () => {
   }, [activeTab]);
 
   // ฟังก์ชันกระจายข้อมูลโปรเจกต์ไปยัง State ที่เกี่ยวข้อง (รวมข้อมูลอย่างฉลาด และกวาดล้างไอดีที่ถูกลบ)
-  const applyProjectsData = (projects, deletedIds = []) => {
+  const applyProjectsData = useCallback((projects, deletedIds = []) => {
     if (!Array.isArray(projects)) return;
 
     const deletedSet = new Set(Array.isArray(deletedIds) ? deletedIds : []);
@@ -1249,41 +1250,45 @@ const App = () => {
       });
       const uniqueItems = Array.from(map.values());
 
-      const artists = [...new Set(uniqueItems.map(item => item.artist).filter(Boolean))].sort();
-      setSavedArtists(artists);
-
-      const customersMap = new Map();
-      uniqueItems.forEach(item => {
-        if (item.customer) {
-          const existing = customersMap.get(item.customer) || {};
-          const info = item.customerInfo || {};
-          customersMap.set(item.customer, {
-            name: item.customer,
-            social: info.social || existing.social || '',
-            line: info.line || existing.line || '',
-            phone: info.phone || existing.phone || '',
-            email: info.email || existing.email || '',
-            taxId: info.taxId || existing.taxId || '',
-            address: info.address || existing.address || ''
-          });
-        }
-      });
-      setSavedCustomers(Array.from(customersMap.values()));
-
-      const recipientsMap = new Map();
-      uniqueItems.forEach(item => {
-        if (item.recipient && !recipientsMap.has(item.recipient)) {
-          recipientsMap.set(item.recipient, {
-            name: item.recipient,
-            phone: item.recipientPhone || ''
-          });
-        }
-      });
-      setSavedRecipients(Array.from(recipientsMap.values()));
-
+      if (uniqueItems.length === prev.length && uniqueItems.every((item, i) => JSON.stringify(item) === JSON.stringify(prev[i]))) return prev;
       return uniqueItems;
     });
-  };
+  }, []);
+
+  useEffect(() => {
+    const artists = [...new Set(allActivities.map(item => item.artist).filter(Boolean))].sort();
+    setSavedArtists(artists);
+
+    const customersMap = new Map();
+    allActivities.forEach(item => {
+      if (item.customer) {
+        const existing = customersMap.get(item.customer) || {};
+        const info = item.customerInfo || {};
+        customersMap.set(item.customer, {
+          name: item.customer,
+          social: info.social || existing.social || '',
+          line: info.line || existing.line || '',
+          phone: info.phone || existing.phone || '',
+          email: info.email || existing.email || '',
+          taxId: info.taxId || existing.taxId || '',
+          address: info.address || existing.address || ''
+        });
+      }
+    });
+    setSavedCustomers(Array.from(customersMap.values()));
+
+    const recipientsMap = new Map();
+    allActivities.forEach(item => {
+      if (item.recipient && !recipientsMap.has(item.recipient)) {
+        recipientsMap.set(item.recipient, {
+          name: item.recipient,
+          phone: item.recipientPhone || ''
+        });
+      }
+    });
+    setSavedRecipients(Array.from(recipientsMap.values()));
+
+  }, [allActivities]);
 
   // ดึงข้อมูลผ่านระบบ Local-First (อ่านจาก IndexedDB 0ms ทันที แล้วแอบซิงก์ส่วนต่างจาก Supabase)
   const fetchProjects = async (isSilent = false) => {
@@ -1335,9 +1340,9 @@ const App = () => {
         fetchProjects();
 
         // เปิดรับ Realtime Live Sync จาก Supabase สำหรับโปรเจกต์
-        const unsubscribe = subscribeToRealtimeProjects((updatedProjects) => {
+        const unsubscribe = subscribeToRealtimeProjects((updatedProjects, deletedIds) => {
           console.log('⚡ Realtime projects received in App:', updatedProjects?.length);
-          applyProjectsData(updatedProjects);
+          applyProjectsData(updatedProjects, deletedIds);
         });
 
         // เปิดรับ Realtime Live Sync สำหรับการตั้งค่าร้านและธีม (ข้ามเครื่อง/ข้ามหน้าจอ)
@@ -1434,9 +1439,6 @@ const App = () => {
         const onFocus = () => {
             fetchProjects(true); // Silent fetch เช็คส่วนต่างเบื้องหลัง
             fetchSettings(false); // เช็คการตั้งค่าเบื้องหลัง
-            syncDeletedRecords((deletedIds) => {
-              applyProjectsData([], deletedIds);
-            }).catch(() => {});
         };
 
         window.addEventListener('focus', onFocus);
@@ -1456,6 +1458,7 @@ const App = () => {
   // 🛡️ SECURITY DIRECTIVE: เมื่อไม่อยู่ในสถานะ Login ให้ล้าง IndexedDB ในเครื่องทันที
   useEffect(() => {
     if (!isLoggedIn && !trackingId && !quotationId) {
+      resetProjectLoadCache();
       clearAllLocalDatabase().catch(() => {});
     }
   }, [isLoggedIn, trackingId, quotationId]);
@@ -1497,69 +1500,85 @@ const App = () => {
     };
   }, [isLoggedIn]);
 
+  // จัดการการเปลี่ยนเดือนในหน้าปฏิทินแบบ Memoized (ป้องกัน Infinite Fetch Loop)
+  const handleCalendarMonthChange = useCallback((ym) => {
+    if (isLoggedIn && ym) {
+      loadProjectsScoped({ mode: 'month', date: ym }, (projects, deletedIds) => {
+        applyProjectsData(projects, deletedIds);
+      });
+    }
+  }, [isLoggedIn, applyProjectsData]);
+
   // 🎯 ZERO-EGRESS SCOPED LOADERS แยกอิสระตามแต่ละแท็บ (Plans, Finance, Analytics)
   // 1. แท็บแผนงาน (Plans): ดึงเฉพาะข้อมูลของเดือน/วันที่หน้า Plans เลือก (เฉพาะเมื่อ Login แล้ว)
   useEffect(() => {
-    if (!isLoggedIn) return;
+    if (!isLoggedIn || activeTab !== 'Plans') return;
+    let cancelled = false;
     setIsScopeLoading(true);
     loadProjectsScoped({
       mode: plansFilter.dateMode,
       date: plansFilter.date,
-      range: plansFilter.dateRange
+      range: { start: plansFilter.dateRange?.start, end: plansFilter.dateRange?.end }
     }, (projects, deletedIds) => {
+      if (cancelled) return;
       applyProjectsData(projects, deletedIds);
       setIsScopeLoading(false);
     }).finally(() => {
-      setIsScopeLoading(false);
+      if (!cancelled) setIsScopeLoading(false);
     });
-  }, [isLoggedIn, plansFilter.dateMode, plansFilter.date, plansFilter.dateRange?.start, plansFilter.dateRange?.end]);
+    return () => { cancelled = true; };
+  }, [isLoggedIn, activeTab, plansFilter.dateMode, plansFilter.date, plansFilter.dateRange?.start, plansFilter.dateRange?.end, applyProjectsData]);
 
   // 2. แท็บการเงิน (Finance): ดึงเฉพาะข้อมูลของเดือน/วันที่หน้า Finance เลือกพร้อมรายละเอียดตารางลูก
   useEffect(() => {
     if (!isLoggedIn) return;
-    if (activeTab === 'Finance' || visitedTabs.has('Finance')) {
+    if (activeTab === 'Finance') {
+      let cancelled = false;
       loadProjectsScoped({
         mode: financeFilter.dateMode,
         date: financeFilter.date,
-        range: financeFilter.dateRange,
+        range: { start: financeFilter.dateRange?.start, end: financeFilter.dateRange?.end },
         includeDetails: true
-      }, (projects) => {
-        applyProjectsData(projects);
+      }, (projects, deletedIds) => {
+        if (!cancelled) applyProjectsData(projects, deletedIds);
       });
+      return () => { cancelled = true; };
     }
-  }, [isLoggedIn, activeTab, visitedTabs, financeFilter.dateMode, financeFilter.date, financeFilter.dateRange?.start, financeFilter.dateRange?.end]);
+  }, [isLoggedIn, activeTab, financeFilter.dateMode, financeFilter.date, financeFilter.dateRange?.start, financeFilter.dateRange?.end, applyProjectsData]);
 
   // 3. แท็บวิเคราะห์ (Analytics): ดึงเฉพาะข้อมูลเดือนที่หน้า Analytics เลือก + ยิง Server Pushdown RPC
   useEffect(() => {
     if (!isLoggedIn) return;
-    if (activeTab === 'Analytics' || visitedTabs.has('Analytics')) {
+    if (activeTab === 'Analytics') {
+      let cancelled = false;
       setIsAnalyticsLoading(true);
       setServerAnalytics(null);
 
       const scopedPromise = loadProjectsScoped({
         mode: analyticsFilter.dateMode,
         date: analyticsFilter.date,
-        range: analyticsFilter.dateRange,
+        range: { start: analyticsFilter.dateRange?.start, end: analyticsFilter.dateRange?.end },
         includeDetails: true
-      }, (projects) => {
-        applyProjectsData(projects);
+      }, (projects, deletedIds) => {
+        if (!cancelled) applyProjectsData(projects, deletedIds);
       });
 
       const serverPromise = fetchServerAnalytics({
         mode: analyticsFilter.dateMode,
         date: analyticsFilter.date,
-        range: analyticsFilter.dateRange,
+        range: { start: analyticsFilter.dateRange?.start, end: analyticsFilter.dateRange?.end },
         category: analyticsFilter.category !== 'all' ? analyticsFilter.category : null,
         dealStatus: analyticsFilter.status !== 'all' ? analyticsFilter.status : null
       }).then(res => {
-        if (res) setServerAnalytics(res);
+        if (!cancelled && res) setServerAnalytics(res);
       }).catch(err => console.warn('Server analytics RPC notice:', err));
 
       Promise.allSettled([scopedPromise, serverPromise]).finally(() => {
-        setIsAnalyticsLoading(false);
+        if (!cancelled) setIsAnalyticsLoading(false);
       });
+      return () => { cancelled = true; };
     }
-  }, [isLoggedIn, activeTab, visitedTabs, analyticsFilter.dateMode, analyticsFilter.date, analyticsFilter.dateRange?.start, analyticsFilter.dateRange?.end, analyticsFilter.category, analyticsFilter.status]);
+  }, [isLoggedIn, activeTab, analyticsFilter.dateMode, analyticsFilter.date, analyticsFilter.dateRange?.start, analyticsFilter.dateRange?.end, analyticsFilter.category, analyticsFilter.status, applyProjectsData]);
   useEffect(() => {
       if ((trackingId || quotationId) && allActivities.length > 0) {
           const targetToken = trackingId || quotationId;
@@ -1786,6 +1805,7 @@ const App = () => {
 
       if (foundUser) {
           // 🛡️ SECURITY DIRECTIVE: ล้างแคชเก่าใน IndexedDB ก่อนเริ่มเซสชันใหม่
+          resetProjectLoadCache();
           await clearAllLocalDatabase();
           await db.open().catch(() => {});
 
@@ -1845,6 +1865,7 @@ const App = () => {
   };
 
   const handleLogout = async (kickReason = "ออกจากระบบแล้ว") => {
+      resetProjectLoadCache();
       try {
         await supabase.auth.signOut();
       } catch (e) {}
@@ -3349,11 +3370,7 @@ const App = () => {
         }
 
         // 1. บันทึกลง Supabase และ IndexedDB แบบ Realtime
-        try {
-          await saveProjectSync(activityData);
-        } catch (supaErr) {
-          console.warn("Supabase save note:", supaErr);
-        }
+        await saveProjectSync(activityData);
 
         setAllActivities(prev => {
            const exists = prev.some(item => item.id === activityData.id);
@@ -4484,13 +4501,7 @@ const App = () => {
               onEventClick={(item) => openModal(item, true)} 
               dealStatuses={dealStatuses}
               transportStatuses={transportStatuses}
-              onMonthChange={(ym) => {
-                if (isLoggedIn) {
-                  loadProjectsScoped({ mode: 'month', date: ym }, (projects, deletedIds) => {
-                    applyProjectsData(projects, deletedIds);
-                  });
-                }
-              }}
+              onMonthChange={handleCalendarMonthChange}
             />
           </div>
         )}

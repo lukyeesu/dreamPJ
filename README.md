@@ -53,7 +53,12 @@ npm run dev
 
 # ทดสอบบิลด์ Production
 npm run build
+
+# ทดสอบการโหลดซ้ำ แคช Realtime และการบันทึกโปรเจกต์ด้วยข้อมูลจำลอง
+npm test
 ```
+
+ก่อน deploy โค้ดที่ใช้ `saveProjectSync` เวอร์ชันใหม่ ให้รัน [`database_scripts/save_project_with_items.sql`](./database_scripts/save_project_with_items.sql) ใน Supabase SQL Editor ก่อนหนึ่งครั้ง เพื่อสร้าง RPC บันทึกโปรเจกต์และรายการเงินใน transaction เดียว หากยังไม่ได้รัน แอปจะแจ้งข้อผิดพลาดและไม่รายงานว่าบันทึกสำเร็จ
 
 > [!CAUTION]
 > **Git Deployment Policy**: นักพัฒนาและ AI Agent ห้ามรันคำสั่ง `git add`, `git commit`, `git push` เป็นอันขาด การ Staging และ Deploy จะดำเนินการโดยผู้ดูแลระบบด้วยตนเอง

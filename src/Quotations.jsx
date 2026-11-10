@@ -76,6 +76,7 @@ function Quotations({
   const [quotationDocs, setQuotationDocs] = useState([]);
   const [materialRates, setMaterialRates] = useState(DEFAULT_MATERIAL_RATES);
   const [isLoading, setIsLoading] = useState(true);
+  const initializedQuotationsRef = useRef(false);
 
   // Master Rates Modal
   const [isRatesModalOpen, setIsRatesModalOpen] = useState(false);
@@ -144,74 +145,81 @@ function Quotations({
 
   // Load Quotations and Material Rates from Local-First DB on mount
   useEffect(() => {
+    let cancelled = false;
     loadMaterialRatesLocalFirst((rates) => {
-      if (Array.isArray(rates) && rates.length > 0) {
-        setMaterialRates(rates);
-      }
+      if (!cancelled && Array.isArray(rates)) setMaterialRates(rates);
     });
-
     loadQuotationsLocalFirst((docs) => {
-      if (Array.isArray(docs) && docs.length > 0) {
-        setQuotationDocs(docs);
-      } else if (activities.length > 0) {
-        // Seed initial quotations from activities so user has existing history to view, edit and clone
-        const seeded = activities.slice(0, 40).map((act, i) => {
-          const qItems = act.quotationItems || [];
-          const quotedAmount = qItems.length > 0
-            ? qItems.reduce((sum, q) => sum + (parseFloat(q.price) || 0), 0)
-            : (parseFloat(act.wage) || 0);
-
-          const cogs = Math.round(quotedAmount * 0.7);
-
-          return {
-            id: `qt-seed-${act.id}`,
-            quote_no: `QT-2026-${String(i + 1).padStart(3, '0')}`,
-            title: act.name || 'งานจัดดอกไม้',
-            client_name: act.customer || '',
-            project_code: act.id,
-            backdrop_items: [
-              {
-                id: `bd-${act.id}-1`,
-                materialId: 'mat-fb-5mm',
-                materialName: 'ฟิวเจอร์บอร์ด 5 มม. พร้อมไดคัท',
-                detail: act.name || 'ฉากหลัก',
-                width: 2.4,
-                height: 2.4,
-                qty: 1,
-                totalSqm: 5.76,
-                basePriceSqm: 450,
-                unitPriceSqm: 450,
-                isOverridden: false,
-                lineTotal: 2592
-              }
-            ],
-            floral_items: [
-              {
-                id: `fl-${act.id}-1`,
-                name: 'ซุ้มดอกไม้ประดับหน้างาน + โฟมโอเอซิส',
-                unit: 'เซ็ต',
-                qty: 1,
-                unitPrice: Math.max(1000, cogs - 2592),
-                lineTotal: Math.max(1000, cogs - 2592)
-              }
-            ],
-            backdrop_cost: 2592,
-            floral_cost: Math.max(1000, cogs - 2592),
-            total_cost: cogs,
-            markup_percent: 30,
-            final_price: quotedAmount,
-            note: '',
-            created_at: act.deliveryDate || act.date || new Date().toISOString(),
-            updated_at: act.deliveryDate || act.date || new Date().toISOString()
-          };
-        });
-
-        setQuotationDocs(seeded);
-        db.quotations.bulkPut(seeded).catch(() => {});
-      }
-      setIsLoading(false);
+      if (!cancelled && Array.isArray(docs)) setQuotationDocs(docs);
+    }).finally(() => {
+      if (!cancelled) setIsLoading(false);
     });
-  }, [activities]);
+    return () => { cancelled = true; };
+  }, []);
+
+  // Project changes may fill an empty local list without refetching both remote tables.
+  useEffect(() => {
+    if (isLoading || initializedQuotationsRef.current) return;
+    if (quotationDocs.length > 0) {
+      initializedQuotationsRef.current = true;
+      return;
+    }
+    if (activities.length === 0) return;
+    initializedQuotationsRef.current = true;
+    const seeded = activities.slice(0, 40).map((act, i) => {
+      const qItems = act.quotationItems || [];
+      const quotedAmount = qItems.length > 0
+        ? qItems.reduce((sum, q) => sum + (parseFloat(q.price) || 0), 0)
+        : (parseFloat(act.wage) || 0);
+
+      const cogs = Math.round(quotedAmount * 0.7);
+
+      return {
+        id: `qt-seed-${act.id}`,
+        quote_no: `QT-2026-${String(i + 1).padStart(3, '0')}`,
+        title: act.name || 'งานจัดดอกไม้',
+        client_name: act.customer || '',
+        project_code: act.id,
+        backdrop_items: [
+          {
+            id: `bd-${act.id}-1`,
+            materialId: 'mat-fb-5mm',
+            materialName: 'ฟิวเจอร์บอร์ด 5 มม. พร้อมไดคัท',
+            detail: act.name || 'ฉากหลัก',
+            width: 2.4,
+            height: 2.4,
+            qty: 1,
+            totalSqm: 5.76,
+            basePriceSqm: 450,
+            unitPriceSqm: 450,
+            isOverridden: false,
+            lineTotal: 2592
+          }
+        ],
+        floral_items: [
+          {
+            id: `fl-${act.id}-1`,
+            name: 'ซุ้มดอกไม้ประดับหน้างาน + โฟมโอเอซิส',
+            unit: 'เซ็ต',
+            qty: 1,
+            unitPrice: Math.max(1000, cogs - 2592),
+            lineTotal: Math.max(1000, cogs - 2592)
+          }
+        ],
+        backdrop_cost: 2592,
+        floral_cost: Math.max(1000, cogs - 2592),
+        total_cost: cogs,
+        markup_percent: 30,
+        final_price: quotedAmount,
+        note: '',
+        created_at: act.deliveryDate || act.date || new Date().toISOString(),
+        updated_at: act.deliveryDate || act.date || new Date().toISOString()
+      };
+    });
+
+    setQuotationDocs(seeded);
+    db.quotations.bulkPut(seeded).catch(() => {});
+  }, [activities, isLoading, quotationDocs.length]);
 
   // Listen to single header button from App.jsx
   useEffect(() => {

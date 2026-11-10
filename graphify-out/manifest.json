@@ -18,9 +18,9 @@
     "semantic_hash": ""
   },
   "src/App.jsx": {
-    "mtime": 1794246858.490148,
-    "seen": 1794246958.6607757,
-    "ast_hash": "2b71ee8029e34d7694a7ec7eee443860",
+    "mtime": 1794259861.388715,
+    "seen": 1794260139.7879992,
+    "ast_hash": "5ef9e4c9dc1fac9526366b3c95af4243",
     "semantic_hash": ""
   },
   "src/components/auth/LoginScreen.jsx": {
@@ -198,9 +198,9 @@
     "semantic_hash": ""
   },
   ".agents/memory/SESSION_LOG.md": {
-    "mtime": 1794258020.320568,
-    "seen": 1794258041.9090662,
-    "ast_hash": "e41a52df719fbda4c501e715f3397396",
+    "mtime": 1794260033.4079833,
+    "seen": 1794260139.8057864,
+    "ast_hash": "de9e1bc66edb091d9a402525ea7e8a99",
     "semantic_hash": ""
   },
   "scripts/audit_database_and_api.cjs": {
@@ -258,9 +258,9 @@
     "semantic_hash": ""
   },
   "src/Calendar.jsx": {
-    "mtime": 1794241219.7355938,
-    "seen": 1794241528.8525214,
-    "ast_hash": "28a242e02524b4dc248babad7221eee8",
+    "mtime": 1794259822.0714023,
+    "seen": 1794260139.7883418,
+    "ast_hash": "19743f8d245972e4bc5033bd58f79758",
     "semantic_hash": ""
   },
   "src/Customers.jsx": {
@@ -420,9 +420,9 @@
     "semantic_hash": ""
   },
   "src/services/syncService.js": {
-    "mtime": 1794244648.8989837,
-    "seen": 1794245023.3169062,
-    "ast_hash": "625015bec6963a4b5aa1d02b02866d70",
+    "mtime": 1794259921.040166,
+    "seen": 1794260139.8037906,
+    "ast_hash": "07cc312d8f4fb0f8e941ef17b8b5b877",
     "semantic_hash": ""
   },
   "src/utils/themeManager.js": {

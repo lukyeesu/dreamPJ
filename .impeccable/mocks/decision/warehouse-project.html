@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flower2you — จัดของตามรอบออกงาน</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f8fafc;color:#243247;font-family:"Leelawadee UI",Tahoma,sans-serif;font-size:14px;line-height:1.5}button{font:inherit;cursor:default}svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}.app{width:1440px;height:900px;display:flex;overflow:hidden}
+.sidebar{width:205px;flex:none;padding:27px 18px;background:#f1f4f7;border-right:1px solid #dfe5ed;display:flex;flex-direction:column}.brand{font-size:21px;color:#763b4b;font-weight:750;letter-spacing:-.6px;margin:0 9px 28px}.brand small{display:block;font-size:12px;letter-spacing:0;font-weight:400;color:#5e6d80;margin-top:2px}.navitem{display:flex;align-items:center;gap:10px;padding:11px 12px;margin:3px 0;color:#53647b;border-radius:7px;font-size:14px;font-weight:550}.navitem.active{color:#8a3c50;background:#f4e5ea;font-weight:700}.navlabel{font-size:12px;color:#68778a;margin:24px 12px 8px}.sidebarfooter{margin-top:auto;border-top:1px solid #dce3ec;padding:17px 9px 0;display:flex;gap:10px;align-items:center}.avatar{width:32px;height:32px;display:grid;place-items:center;background:#e2e8ef;border-radius:50%;font-size:13px;font-weight:650}.sidebarfooter small{display:block;color:#607087;font-size:12px}
+.workspace{width:1235px;min-width:0;background:#fff}.topbar{height:52px;border-bottom:1px solid #e2e8ef;padding:0 27px;display:flex;justify-content:space-between;align-items:center;color:#5a6a7f;font-size:13px}.topbar strong{font-weight:600;color:#33435b}.topbar .right{display:flex;gap:22px;align-items:center}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#24734f;margin-right:6px}.demo{height:29px;background:#fbf5e9;padding:5px 27px;font-size:12px;color:#775827}.main{padding:22px 27px 16px}.heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:17px}h1{font-size:26px;line-height:1.3;margin:0 0 5px;letter-spacing:-.4px;font-weight:750}.subtitle{font-size:13px;color:#5b6b80}.btn{padding:10px 13px;border:1px solid #d5dde8;border-radius:7px;background:#fff;color:#3f5068;display:inline-flex;justify-content:center;align-items:center;gap:8px;font-size:13px;font-weight:600}.btn.primary{background:#9f455a;border-color:#9f455a;color:#fff}.btn.small{font-size:12px;padding:7px 10px}.tabs{display:flex;gap:27px;height:40px;border-bottom:1px solid #dfe5ed;margin-bottom:19px;color:#607088;font-size:13px}.tabs span{display:flex;align-items:center;height:40px}.tabs .selected{border-bottom:2px solid #9f455a;color:#913d52;font-weight:700}.tabs .fill{flex:1}
+.board{display:grid;grid-template-columns:215px minmax(0,1fr) 242px;gap:21px;align-items:start}.rounds{height:617px;padding-right:16px;border-right:1px solid #e1e6ed}.search{display:flex;align-items:center;gap:7px;border:1px solid #d7dfe9;border-radius:7px;height:37px;padding:0 9px;font-size:12px;color:#637389}.search svg{width:15px;height:15px}.day{font-size:12px;font-weight:650;color:#5d6e84;margin:18px 0 10px}.round{padding:11px 10px;margin:6px 0;border-radius:7px}.round.active{background:#f9eef1;outline:1px solid #ead5dd}.code{font-size:12px;color:#6c6473}.round .name{font-size:14px;font-weight:650;margin:4px 0;color:#35445c}.round .meta{font-size:12px;color:#5f6f84;margin:4px 0 9px}.tag{display:inline-flex;padding:3px 7px;border-radius:4px;background:#eef2f6;color:#53657d;font-size:12px;line-height:1.4;font-weight:550}.tag.green{background:#eaf5ee;color:#286b49}.tag.amber{background:#fff2de;color:#875e14}.tag.rose{background:#f5e7ec;color:#8f4055}.addround{color:#944157;font-size:13px;margin:18px 10px}
+.roundhead{display:flex;justify-content:space-between;align-items:start;padding-bottom:12px;border-bottom:1px solid #e1e7ef}.roundhead h2{margin:2px 0 3px;font-size:18px;letter-spacing:-.2px}.roundhead p{margin:0;font-size:12px;color:#5c6c82}.route{padding:12px 0 13px;border-bottom:1px solid #e2e8ef}.route .title{display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:650;margin-bottom:8px}.route .title span{font-size:12px;color:#5d6d83;font-weight:400}.stops{display:flex;align-items:center;gap:7px;font-size:12px;color:#52637b}.stop{border:1px solid #dce3ec;padding:7px 8px;border-radius:5px;white-space:nowrap}.stop b{display:block;color:#34465e;font-weight:600}.stop small{font-size:12px;color:#5f6f84}.more{font-size:12px;color:#8c4054;white-space:nowrap;margin-left:auto}.sectiontitle{margin:15px 0 7px;display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:700}.sectiontitle span{font-size:12px;color:#5e6f85;font-weight:400}.listhead,.item{display:grid;grid-template-columns:minmax(0,1fr) 64px 94px;gap:10px;align-items:center}.listhead{height:29px;color:#607189;font-size:12px;border-bottom:1px solid #e0e7ef}.listhead span:not(:first-child){text-align:right}.item{min-height:53px;border-bottom:1px solid #e8edf3}.item .name{font-size:14px;font-weight:600}.item .detail{font-size:12px;color:#5c6c82;margin-top:3px}.qty{text-align:right;font-size:13px;font-variant-numeric:tabular-nums;color:#33465f}.state{text-align:right;color:#286c49;font-size:12px}.installnote{font-size:12px;color:#566980;margin:8px 0 0;line-height:1.65}.production{padding:11px 0;border-bottom:1px solid #e0e7ef;display:flex;justify-content:space-between;gap:15px;align-items:center;margin-top:5px}.production strong{font-size:13px;display:block}.production p{font-size:12px;color:#5b6d83;margin:3px 0 0}.recover{margin-top:14px;padding:13px 14px;background:#f6f8fa;border-radius:7px}.recoverhead{display:flex;align-items:center;justify-content:space-between;font-size:14px;font-weight:650}.recover p{font-size:12px;color:#53667e;line-height:1.65;margin:7px 0 0}.recoverfoot{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;color:#5a6c83}
+.summary{background:#f6f8fb;padding:18px 16px;border-radius:8px}.summary h3{font-size:16px;line-height:1.4;margin:0 0 5px}.summary .desc{font-size:12px;color:#5d6f86;margin-bottom:19px}.summaryline{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:#566980;margin:12px 0}.summaryline b{color:#33465f;font-weight:650;font-variant-numeric:tabular-nums}.rule{height:1px;background:#dce4ee;margin:16px 0}.person{display:flex;align-items:center;gap:9px;margin:12px 0}.person .avatar{background:#e9dce1;color:#87465a;flex:none}.person strong{display:block;font-size:13px}.person small{display:block;font-size:12px;color:#5e7087}.label{font-size:12px;color:#5f7086}.deadline{font-size:14px;font-weight:650;color:#374c67;margin:5px 0 15px}.summary .btn{width:100%;margin:4px 0}.summary .hint{font-size:12px;color:#586c85;margin-top:11px;line-height:1.65}.recoveryaside{padding:18px 1px 0}.recoveryaside h4{font-size:13px;margin:0 0 7px}.recoveryaside p{font-size:12px;color:#596e85;line-height:1.7;margin:0}.bottom{margin-top:16px;padding-top:11px;border-top:1px solid #e3e9f0;display:flex;justify-content:space-between;font-size:12px;color:#5f7188}
+.borrower-switch{display:flex;gap:3px;padding:3px;background:#e9eef4;border-radius:6px;margin:5px 0 11px}.borrower-switch span{flex:1;text-align:center;padding:5px 7px;color:#566980;font-size:12px}.borrower-switch .chosen{background:#fff;border-radius:4px;color:#8f4055;font-weight:700}.teamname{font-size:14px;font-weight:650;color:#354b65;margin-bottom:9px}</style>
+</head>
+<body>
+<div class="app">
+<aside class="sidebar">
+<div class="brand">Flower2you<small>พื้นที่ทำงานของร้าน</small></div>
+<div class="navitem"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4m8-4v4M4 10h16"/></svg>ปฏิทินงาน</div>
+<div class="navitem"><svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>แผนงาน</div>
+<div class="navitem"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M3 10h18m-5 5h2M6 6V4h12v2"/></svg>การเงิน</div>
+<div class="navitem"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 9h6m-6 4h6m-6 4h3"/></svg>ใบเสนอราคา</div>
+<div class="navitem active"><svg viewBox="0 0 24 24"><path d="m3 8 9-5 9 5v11H3zM7 19v-7h10v7M3 8h18"/></svg>คลังสินค้า</div>
+<div class="navlabel">ข้อมูลร้าน</div>
+<div class="navitem"><svg viewBox="0 0 24 24"><path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2"/></svg>สถานที่จัดส่ง</div>
+<div class="navitem"><svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M4 21v-3a8 8 0 0 1 16 0v3"/></svg>พนักงาน</div>
+<div class="navitem"><svg viewBox="0 0 24 24"><path d="M4 21V11m8 10V3m8 18V7"/></svg>วิเคราะห์ธุรกิจ</div>
+<div class="sidebarfooter"><div class="avatar">น</div><div>นุ่น<small>ผู้ดูแลคลัง</small></div></div>
+</aside>
+<div class="workspace">
+<header class="topbar"><div>พื้นที่ทำงาน <span style="margin:0 10px;color:#7e8ba0">/</span><strong>คลังสินค้า</strong></div><div class="right"><span><i class="dot"></i>คลังหลัก</span><span>10 พฤศจิกายน 2569</span></div></header>
+<div class="demo">ข้อมูลตัวอย่างสำหรับเลือกแบบ — ไม่มีการเบิก คืน หรือเปลี่ยนยอดคลังจริง</div>
+<main class="main">
+<div class="heading"><div><h1>จัดของตามรอบออกงาน</h1><div class="subtitle">ยืมเครื่องมือหนึ่งครั้ง ใช้ร่วมกันตลอดรอบ และคืนตามผู้ถือของ</div></div><button class="btn primary"><svg viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M8 8h3v3H8zm6 0h3v3h-3zm-6 6h3v3H8zm6 0h3v3h-3z"/></svg>สแกนเบิก / คืนเครื่องมือ</button></div>
+<nav class="tabs"><span>ภาพรวมคลัง</span><span class="selected">รอบออกงาน</span><span>เครื่องมือค้างคืน</span><span>ประวัติการเคลื่อนไหว</span><span class="fill"></span><span>ค้นหารหัสเครื่องมือ</span></nav>
+<div class="board">
+<section class="rounds">
+<div class="search"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>ค้นหารอบ / ทีม / ผู้ถือ</div>
+<div class="day">วันนี้ · 10 พ.ย.</div>
+<div class="round active"><div class="code">RN-1011-01</div><div class="name">รอบส่งและติดตั้ง บ่าย</div><div class="meta">15 งาน · ทีมติดตั้ง A · รถตู้ 1</div><span class="tag green">ออกงานแล้ว</span></div>
+<div class="round"><div class="code">RN-1011-02</div><div class="name">รอบส่ง ช่วงเย็น</div><div class="meta">8 งาน · ทีมต้น · รถตู้ 2</div><span class="tag amber">รอเบิกเครื่องมือ</span></div>
+<div class="day">พรุ่งนี้ · 11 พ.ย.</div>
+<div class="round"><div class="code">RN-1111-01</div><div class="name">รอบติดตั้ง ช่วงเช้า</div><div class="meta">6 งาน · ทีมแนน</div><span class="tag">กำลังจัดรอบ</span></div>
+<div class="addround">+ สร้างรอบออกงาน</div>
+</section>
+<section class="dispatch">
+<div class="roundhead"><div><div class="code">RN-1011-01</div><h2>รอบส่งและติดตั้ง ช่วงบ่าย</h2><p>ทีมติดตั้ง A · 3 คน · ออกจากคลัง 13:00 น.</p></div><span class="tag green">ออกงานแล้ว</span></div>
+<div class="route"><div class="title">จุดส่งและติดตั้ง 15 งาน <span>ใช้เครื่องมือชุดเดียวตลอดรอบ</span></div><div class="stops"><div class="stop"><b>P-0350</b><small>อิมแพ็ค · 14:00</small></div><span>→</span><div class="stop"><b>P-0351</b><small>สยาม · 15:30</small></div><span>→</span><div class="stop"><b>P-0352</b><small>สามย่าน · 16:00</small></div><span class="more">ดูอีก 12 งาน</span></div></div>
+<div class="sectiontitle">เครื่องมือติดตั้งที่ต้องคืน <span>ยืมครั้งเดียวต่อรอบ</span></div>
+<div class="listhead"><span>เครื่องมือและรหัสประจำชิ้น</span><span>จำนวน</span><span>สถานะรอบนี้</span></div>
+<div class="item"><div><div class="name">สว่านไร้สาย</div><div class="detail">DR-001 · พร้อมแบตเตอรี่ · ผู้ถือ เมย์</div></div><div class="qty">1 ชุด</div><div class="state">ยืมแล้ว</div></div>
+<div class="item"><div><div class="name">กรรไกรตัดกระดาษ</div><div class="detail">SC-003 · สีน้ำเงิน · ผู้ถือ เมย์</div></div><div class="qty">1 อัน</div><div class="state">ยืมแล้ว</div></div>
+<div class="sectiontitle">วัสดุสิ้นเปลืองสำหรับติดตั้ง <span>เบิกเพิ่มสำหรับหน้างาน</span></div>
+<div class="item"><div><div class="name">เทปกาวใส</div><div class="detail">หน้ากว้าง 2 นิ้ว · ใช้ติดตั้งในรอบนี้</div></div><div class="qty">2 ม้วน</div><div class="state">เบิกแล้ว</div></div>
+<div class="production"><div><strong>งานผลิตและเครื่องมือประจำคลัง</strong><p>เครื่องมือโต๊ะผลิตอยู่ในคลัง วัสดุเบิกตามใบผลิตแล้ว<br>ไม่ตัดยอดวัสดุผลิตซ้ำเมื่อส่งออก</p></div><span class="tag">ดูใบผลิต 15 งาน</span></div>
+<div class="recover"><div class="recoverhead"><span>วัสดุที่อาจนำกลับมาใช้ได้</span><span class="tag">รับกลับตามจริง</span></div><p>ดอกไม้ที่ส่งมอบพร้อมงานไม่ใช่ของค้างคืน หากมีของนำกลับมา ให้รับเข้า “รอคัดแยก” ก่อนเพิ่มยอดพร้อมใช้</p><div class="recoverfoot"><span>รอคัดแยก 0 รายการ</span><button class="btn small">รับวัสดุกลับ</button></div></div>
+</section>
+<aside>
+<div class="summary"><h3>เครื่องมือของรอบนี้</h3><div class="desc">RN-1011-01 · ครอบคลุม 15 งาน</div>
+<div class="summaryline"><span>เครื่องมือที่ยืม</span><b>2 ชิ้น</b></div><div class="summaryline"><span>คืนแล้ว</span><b>0 ชิ้น</b></div><div class="summaryline"><span>ยังอยู่กับทีม</span><b>2 ชิ้น</b></div><div class="rule"></div>
+<div class="label">ผู้ยืม</div><div class="borrower-switch"><span>รายบุคคล</span><span class="chosen">ทีม</span></div><div class="teamname">ทีมติดตั้ง A · 3 คน</div><div class="person"><div class="avatar">ม</div><div><strong>ผู้รับของหลัก: เมย์</strong><small>เมย์ · ต้น · ปอ ในรอบนี้</small></div></div><div class="label" style="margin-top:16px">กำหนดคืนเครื่องมือ</div><div class="deadline">11 พ.ย. 2569 · 18:00 น.</div>
+<button class="btn primary">รับคืนเครื่องมือ 2 ชิ้น</button><button class="btn">ดูรายการเบิกรอบนี้</button><div class="hint">คืนบางชิ้นก่อนได้ ติดตามตามรอบและผู้ยืม ไม่ยืมซ้ำทุกจุดส่ง</div></div>
+<div class="recoveryaside"><h4>รับวัสดุกลับ แยกจากคืนเครื่องมือ</h4><p>วัสดุที่ไม่ได้นำกลับมาไม่ถูกนับว่าค้างคืน ชำรุด หรือสูญหายโดยอัตโนมัติ</p></div>
+</aside>
+</div>
+<div class="bottom"><span>เครื่องมือร่วม 1 ชุดการเบิก สำหรับทั้งรอบ 15 งาน</span><span>ข้อมูลตัวอย่าง ไม่มีผลต่อคลังจริง</span></div>
+</main>
+</div>
+</div>
+</body>
+</html>

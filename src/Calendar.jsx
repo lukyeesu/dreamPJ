@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { systemStatusTypes } from './constants/appConstants';
 import {
@@ -33,15 +33,21 @@ const Calendar = ({ activities = [], onEventClick, onDayClick, dealStatuses = []
   const [selectedDayDetails, setSelectedDayDetails] = useState(null); // Data for modal
   const [isDayModalClosing, setIsDayModalClosing] = useState(false); // [ADDED] State for modal closing animation
   
-  // แจ้งเตือน Parent ทันทีที่ผู้ใช้เลื่อนเปลี่ยนเดือน เพื่อดึงข้อมูลเข้าสู่ IndexedDB อัตโนมัติ 0-Click
+  const onMonthChangeRef = useRef(onMonthChange);
   useEffect(() => {
-    const y = viewDate.getFullYear();
-    const m = String(viewDate.getMonth() + 1).padStart(2, '0');
-    const ym = `${y}-${m}`;
-    if (onMonthChange) {
-      onMonthChange(ym);
+    onMonthChangeRef.current = onMonthChange;
+  });
+
+  const lastNotifiedMonthRef = useRef('');
+  // แจ้งเตือน Parent ทันทีที่ผู้ใช้เลื่อนเปลี่ยนเดือน เพื่อดึงข้อมูลเข้าสู่ IndexedDB อัตโนมัติ 0-Click (ป้องกัน Re-trigger Loop)
+  const currentYm = `${viewDate.getFullYear()}-${String(viewDate.getMonth() + 1).padStart(2, '0')}`;
+  useEffect(() => {
+    if (lastNotifiedMonthRef.current === currentYm) return;
+    lastNotifiedMonthRef.current = currentYm;
+    if (typeof onMonthChangeRef.current === 'function') {
+      onMonthChangeRef.current(currentYm);
     }
-  }, [viewDate.getFullYear(), viewDate.getMonth(), onMonthChange]);
+  }, [currentYm]);
   
   const monthsTH = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
   // [FIX] Added missing monthsShortTH definition
