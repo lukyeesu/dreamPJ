@@ -50,6 +50,108 @@
 
 ## 3. ประวัติการทำงานและข้อตกลงล่าสุด (Session History)
 
+### [2026-11-10 - ติดตั้ง Compact Inventory Schema & Lossless Migration (Supabase Free Tier Optimization)]
+- **ผู้รับผิดชอบงาน Schema & Lossless Migration**: พัฒนาและส่งมอบ `database_scripts/drafts/compact_schema.sql.part`, `tests/inventoryCompactMigration.test.cjs`, `tests/helpers/compactMigrationFixture.cjs` และ `docs/inventory-compact-migration.md`
+- **สรุปผลงานและการปรับปรุงสำคัญ**:
+  1. **Canonical 8 Tables (ตัดตารางซ้ำซ้อนเหลือ 8 ตารางหลักถาวร)**:
+     - `inventory_categories` (เพิ่ม `is_active BOOLEAN NOT NULL DEFAULT true` ทั้งเส้นทางสร้างใหม่และอัปเกรด)
+     - `inventory_items` (ใช้ `current_stock NUMERIC(10,2)` เป็น Single Source of Truth; ตัด shadow column `stock_quantity` ออก)
+     - `asset_units` (รองรับสถานะเครื่องมือ `AVAILABLE`, `BORROWED`, `LOST`, `BROKEN` พร้อมผูก `active_custody_line_id` และ `active_recipient_id`)
+     - `inventory_recipients` (รวมทีมและผู้ช่วย: `primary_recipient_id`, `primary_receiver_name`, `member_names`, `team_is_active`)
+     - `inventory_documents` (Polymorphic Header สำหรับเบิกจ่าย, รอบงาน `FIELD_ROUND`, กู้คืน, เงินสดย่อย `CASH_*`, ใบสั่งงาน `WORK`, ส่งมอบ `SUBMISSION`, ตรวจรับ `INSPECTION`, รายงานเหตุการณ์ `INCIDENT`, ทะเบียนคำสั่ง `COMMAND`, และเอกสารประวัติเดิม `LEGACY_*`)
+     - `inventory_document_lines` (Polymorphic Line Items รองรับ `recipient_id UUID REFERENCES inventory_recipients(id) ON DELETE RESTRICT` และ `due_at TIMESTAMPTZ` ตามสเปก core/cash)
+     - `inventory_movements` (Immutable Audit Log สำหรับการเปลี่ยนแปลงสต็อก, เงินสด, และ Event สถานะงาน)
+     - `cash_vault_denominations` (ธนบัตร 5 ชนิด 20, 50, 100, 500, 1000 บาท คงอยู่ 5 แถวจริง ไม่แตะต้อง/ไม่รีเซ็ตยอด)
+  2. **Lossless Migration ครบทั้ง 22 ตารางเดิม**:
+     - ย้ายข้อมูลครบทุก ID, จำนวน, ค่าใช้จ่าย, เวลา, และฟิลด์ประวัติศาสตร์ลงในคอลัมน์มาตรฐานหรือ `metadata` JSONB
+     - ปลดชนวน Trigger เดิมก่อนย้ายข้อมูลเพื่อป้องกันการกระทบยอดสต็อกจริง (`trg_doc_production_issue_create`, `trg_cash_helper_batch_sync`, `trigger_procurement_stock_add`, `trigger_process_inventory_disposal`)
+     - ชะลอการสร้าง Foreign Key `inventory_documents.round_id` จนกว่าจะคัดลอก `FIELD_ROUND` ครบ ป้องกันปัญหา `FIELD_ISSUE` เดิมที่อ้างอิง `round_id`
+     - กำหนด Foreign Key สำหรับ Audit และประวัติให้เป็น `ON DELETE RESTRICT` ป้องกันการลบข้อมูลประวัติย้อนหลังโดยไม่ตั้งใจ
+  3. **ระบบตรวจสอบความถูกต้องก่อนลบตาราง (Invariant Assertions in Section 6)**:
+     - ตรวจสอบ ID Coverage ครบทุกเรคอร์ดจากทั้ง 22 ตาราง
+     - ตรวจสอบยอดรวมเงินสดย่อย 4 ตัวแปรแยกเด็ดขาด (`v_target_issued`, `v_target_prepared`, `v_target_returned`, `v_target_handed`) ไม่มีการเขียนทับตัวแปร
+     - ตรวจสอบยอดคงค้าง `cash_job_reservations` และ `cash_prepared_sets` ตรงตามต้นฉบับ 100%
+     - สต็อกจริงใน `inventory_items` และยอดใน `cash_vault_denominations` คงเดิม 100%
+     - ลบตารางเดิม 22 ตารางด้วย `RESTRICT` (ห้าม `CASCADE`) หากมี External Dependency จะ Rollback ทันที
+  4. **ชุดทดสอบผ่านสมบูรณ์ 100% บน PGlite**:
+     - `tests/inventoryCompactMigration.test.cjs`: ผ่านทั้ง 6 การทดสอบ (Full Migration, Idempotency Rerun, TEXT staff compatibility, Rollback safety on foreign dependency, Fresh master install + runtime smoke, Fail-closed build guard)
+     - `tests/inventoryCompactProduction.test.cjs`: ผ่านทั้ง 7 การทดสอบในการประกอบรวม 3 ส่วน (Schema + Core + Production)
+
+
+### [2026-11-10 - ปรับปรุงและส่งมอบระบบหลังบ้านคลังสินค้า Plan C (Plan C Backend Hardening, Operations Read RPC & Lifecycle Guarantees)]
+- **ผู้รับผิดชอบงาน Backend**: แก้ไขและส่งมอบระบบ Backend ทั้งหมดใน `database_scripts/inventory_plan_c.sql`, `src/services/warehouseService.js`, `tests/warehouseSql.test.cjs`, `tests/warehouseService.test.cjs`, `tests/syncService.test.cjs` และ `docs/inventory-plan-c-backend.md`
+- **การแก้ไขจุดบกพร่องและงานเชื่อมต่อทั้งหมด**:
+  1. **แก้ไข Syntax Error 42601 ใน SQL**: ตัดบล็อก `SET low_alert_threshold... WHERE denomination=v_denom;` ที่ซ้ำซ้อนหลังคำสั่ง `UPDATE` ใน `inventory_plan_c.sql` ออกเรียบร้อย
+  2. **ระบบอ่านข้อมูลการปฏิบัติการ (`warehouse_get_operations`)**:
+     - พัฒนา RPC `warehouse_get_operations(p_filters jsonb)` และส่งออก `loadWarehouseOperations({ projectId, roundId, limit, offset })`
+     - สัญญาณส่งกลับตรงตามสเปก UI: `{ issue_lines, recoveries, custodies, incidents, has_more }`
+     - คำนวณยอดคงเหลือจริง: `remaining_qty = (issued_qty - returned_qty - recovered_qty)` และกรองเฉพาะแถวที่มียอดค้าง `remaining_qty > 0`
+     - ตรวจสอบสิทธิ์ผ่าน `fn_can_access_inventory` บนเซิร์ฟเวอร์
+  3. **โครงสร้างสถาปัตยกรรม Memory-Only สำหรับข้อมูลคลัง**:
+     - ปรับ `loadWarehouseSummary` และการจัดการหมวดหมู่ให้อยู่ในหน่วยความจำ 100% (ไม่เขียนลง IndexedDB เพื่อตัดปัญหาข้อมูลค้างข้ามผู้ใช้/ข้ามเครื่อง)
+     - จัดการ In-flight Deduplication ด้วย `{ epoch, promise }` ร่วมกัน พร้อมยกเลิกผลลัพธ์ที่ตกยุคข้ามรอบล็อกอิน (`resetWarehouseAuthSession`)
+     - รองรับการบอกรับเหตุการณ์เปลี่ยนเซสชันผ่าน `onWarehouseAuthSessionChange` และตัวดักจับ `initWarehouseAuthListener`
+  4. **การเงินและการปรับยอด**:
+     - พัฒนาการปรับยอดธนบัตรผ่านการตรวจสอบ `cash_adjust_count` ใน SQL และฟังก์ชัน `adjustCashCount` ใน service
+     - บังคับการส่งต่อเงินสด `handoverCashBatch` ให้มีค่าเริ่มต้น `accepted = false`
+     - ส่งต่อ `roundId` ใน `borrowTools` และเชื่อมโยง `dueDate` / `expectedReturnAt` ใน `createIssue`
+  5. **การแก้ไขชุดทดสอบและสิทธิ์**:
+     - แก้ไข `tests/syncService.test.cjs` โดยเพิ่ม Synthetic Module Mock สำหรับ `./warehouseService.js` แก้ไขปัญหา VM Module Link SyntaxError ให้การทดสอบเดิมทั้ง 25 ข้อผ่านครบถ้วน
+     - แก้ไข `tests/warehouseSql.test.cjs` โดยย้ายการ Seed ข้อมูล `projects` และ `inventory_items` ไปอยู่ก่อนคำสั่ง `setAuthUser(pg, ADMIN_AUTH_ID, 'authenticated')` ป้องกันข้อผิดพลาด PostgreSQL 42501 (Permission Denied)
+     - เพิ่มการทดสอบเชิงบูรณาการสำหรับ `warehouse_get_operations` และ `cash_adjust_count` ครบถ้วน
+
+
+### [2026-11-10 - ปรับปรุงความถูกต้องและความสมบูรณ์ UI คลังสินค้า Plan C (Plan C UI Hardening & Bug Fixes)]
+- **ผู้รับผิดชอบงาน UI**: จัดการคอมโพเนนต์ UI ทั้งหมดใน `src/Inventory.jsx`, `src/components/inventory/*` (ยกเว้นไฟล์ของทีม QR), `src/hooks/useWarehouseData.js`, `tests/inventoryUi.test.cjs`, และ `docs/inventory-plan-c-ui.md`
+- **การแก้ไขจุดบกพร่องตามการทบทวน (Review Fixes)**:
+  1. **การเบิกตะกร้าแบบอะตอมิก (`createIssue`)**: รวมการเบิกวัสดุสิ้นเปลือง/ใช้ซ้ำ และยืมเครื่องมือไว้ในคำสั่งเดียว ไม่แยกยิงสองรอบ และไม่ตัด `materialLines` ทิ้งในรอบออกงาน (`FIELD_ISSUE`), ใช้ Stable Idempotency Key ป้องกันการกดซ้ำ และคงข้อมูลในตะกร้าไว้หากเซิร์ฟเวอร์ตอบปฏิเสธ
+  2. **การจัดการสต็อกและรายการพัสดุ**:
+     - สร้างพัสดุใหม่ใช้ `createItem` พร้อม `initial_stock` และ `opening_stock_reason`
+     - แก้ไขพัสดุเดิมใช้ `saveItemMetadata` โดยตัด `current_stock` ออกเพื่อป้องกัน Stale Overwrite
+     - ปรับยอดสต็อกใช้ `adjustStock` ส่งค่า Signed Delta (`+` สำหรับรับเข้า, `-` สำหรับปรับลด) พร้อมเหตุผลตรวจสอบได้ โดยตัดการ Clamp ฝั่ง Client ออก
+     - เพิ่มรหัสเครื่องมือใช้ `addAssetUnit`
+  3. **ทะเบียนผู้รับและทีม**: ยกเลิกการสร้าง ID จำลอง `rec-Date.now()` โดยเชื่อมโยง `createRecipient` และ `createTeam` ผ่าน RPC เซิร์ฟเวอร์จริง พร้อมบันทึก `primaryReceiverName` และ `memberNames`
+  4. **หน้าเงินสดสำรอง (`CashVaultView.jsx`)**:
+     - เชื่อมต่อ `releaseCashReservation`, `updateCashThresholds`, และ `handoverCashBatch` ครบถ้วน
+     - ล้างค่า Default ตัวเลข 10, 20 ให้เริ่มต้นเป็นช่องว่างเพื่อให้ผู้ใช้ระบุจำนวนจริง พร้อมตรวจสอบ Positive Integer และแสดงมูลค่ารวมหน้าตั๋วแบบเรียลไทม์
+     - หน้าต่างคืนเงินสดกำหนด `keepReservation` เป็น `true` โดยเริ่มต้น
+     - รองรับการนับยอดเปิดคลังครั้งแรก (`recordCountedOpeningCash`)
+     - คงค่าที่ผู้ใช้กรอกไว้ในฟอร์มหากเกิดข้อผิดพลาดจากเซิร์ฟเวอร์
+     - แยกแบนเนอร์แจ้งเตือนตามประเภทความผิดพลาด (Permission, Migration, Network)
+  5. **หน้าประวัติ (`HistoryAuditView.jsx`)**:
+     - เชื่อมต่อ `loadWarehouseHistory` พร้อมระบบแบ่งหน้า (Pagination 50 แถว) และค้นหา/กรองประเภทธุรกรรม
+     - แท็บเช็กลิสต์เดิมรองรับการเลือกโปรเจกต์งานจาก `activities` (รวมถึงงานที่เสร็จ/ยกเลิกแล้ว) โหลดผ่าน `loadProjectChecklistLocalFirst`
+     - แสดงข้อความอธิบายการปรับยอดแก้ไข (Correction/Reversal) แทนการลบประวัติ
+  6. **ระบบสแกน QR และ Lazy Loading**:
+     - โหลด `QrScanner` และ `QrLabelPrint` แบบ Lazy Loading ผ่าน `React.lazy` และ `<Suspense>`
+     - ถอดคอมโพเนนต์และคืนทรัพยากรกล้องทันทีเมื่อปิดหรือเมื่อ `isActive === false`
+     - ตรวจสอบรหัสแบบ Exact Case Matching และเช็กความพร้อมก่อนนำเข้าตะกร้า พร้อมรองรับ Intent คืนเครื่องมือ
+     - ย้าย `showToast` ออกจาก State Updater ป้องกัน Side-effect ใน React Pure Render
+  7. **ชุดทดสอบ (`tests/inventoryUi.test.cjs`)**: ติดตั้งการทดสอบ 10 หัวข้อ ครอบคลุมการเรนเดอร์, สัญญาณ Payload การเบิก, การปฏิเสธสิทธิ์เงินสด (Fail-closed), และ Authoritative Empty State
+  8. **เอกสารคู่มือ (`docs/inventory-plan-c-ui.md`)**: อัปเดตผังคอมโพเนนต์ สัญญาณ API และตัดข้อความอ้างผลการทดสอบล่วงหน้าออกทั้งหมด โดยมอบหมายให้ Codex Supervisor เป็นผู้รันคำสั่งตรวจสอบจริง
+
+### [2026-11-10 - ติดตั้งระบบคลังสินค้า Plan C (Inventory UI Implementation Full Scope)]
+- **ผู้ใช้อนุมัติ Plan C และมอบหมายงานสร้าง UI เต็มระบบ (ไม่ใช่ Mockup)**
+- พัฒนาระบบคลังสินค้าใหม่ครบทั้ง 4 มุมมองตามแบบ `.impeccable/mocks/decision/warehouse-stock.html`:
+  1. **ของในคลัง (Stock View)**: จำแนก 3 ประเภทการจัดการ (reusable, consumable, asset) พร้อมหมวดหมู่ผู้ใช้ (`inventory_categories`), ตัวกรองสี, ขนาด, สถานะ, จุดเก็บ และคำนวณยอดเครื่องมือพร้อมใช้จากรหัสชิ้นงานจริง (`asset_units` ที่ status เป็น AVAILABLE และไม่มีผู้ยืม)
+  2. **ตะกร้าเบิกพัสดุ (Issue Cart Drawer)**: รองรับทั้งโหมดเบิกผลิตงาน (งานเดียว แจกผู้ช่วย 5–10 คน) และชุดสำรองออกหน้างาน (15 จุดส่ง ใช้ชุดร่วมชุดเดียว ไม่ถูกคืนอัตโนมัติเมื่อจบแต่ละจุด), ทะเบียนผู้ช่วยภายนอก, พรีวิวของคงเหลือหลังเบิก, ระบบป้องกันการกดซ้ำด้วย Stable Idempotency Key
+  3. **เบิก–คืน (Custody Flow & Field Rounds)**: แสดงเครื่องมือค้างยืม, รอบออกงาน, รับคืนตามสภาพจริง (ดี, ชำรุด, สูญหาย) พร้อมข้อความคุ้มครองแรงงานตาม ม.76/77 ไม่เฉลี่ยหักเงินทีมอัตโนมัติ, ส่งต่อเครื่องมือข้ามคน/ทีมโดยไม่ยืมซ้ำ, และรับวัสดุเหลือใช้/กู้คืนดอกไม้พร้อมคิวตรวจคัดแยก
+  4. **เงินสดสำรอง (Petty Cash Vault)**: ระบบความปลอดภัยระดับสูง (Strict RBAC), โหลดเฉพาะเมื่อเปิดแท็บเงินสด, **ห้ามบันทึกลงใน IndexedDB หรือ LocalStorage เด็ดขาด**, แสดงตารางธนบัตร 5 ชนิดพร้อมสูตรพร้อมเบิกสุทธิและเป้าหมายเตรียมเพิ่ม, บันทึกจ่ายผู้ช่วยพับ/ใส่ซอง, ตรวจรับชุดเงินเตรียมงานโดยไม่บวกเงินสดพร้อมเบิกซ้ำ, และรับคืนเงินสดเข้าตู้
+  5. **ประวัติ (History Audit & Legacy Records)**: เก็บบันทึกประวัติการเคลื่อนไหวคลัง (ไม่มีปุ่มลบประวัติ เพื่อความโปร่งใส), เข้าถึงเช็กลิสต์โปรเจกต์เดิม, ประวัติการยืมเดิม และรายการงานบริการได้อย่างปลอดภัย
+- **การเชื่อมต่อ QR Subsystem**:
+  - เชื่อมต่อ `QrScanner.jsx` สแกนกล้อง ZXing continuous พร้อมช่องพิมพ์รหัสสำรอง คืนทรัพยากรกล้อง 100% เมื่อปิด
+  - เชื่อมต่อ `QrLabelPrint.jsx` เวิร์กสเปซพิมพ์ฉลากด้ามกรรไกร (18x24 มม.) และขนาดปกติ (30x40 มม.) รองรับสติ๊กเกอร์ A4 และ Roll ผ่าน Hidden Iframe
+- **ระบบ Migration Gate**:
+  - มี `MigrationNoticeBanner` ดักจับเมื่อยังไม่ได้ติดตั้ง RPC บน Supabase และสลับไปดึงข้อมูลจากแคชเดิมอัตโนมัติ รับประกันหน้าจอไม่ขาว ไม่สูญเสียข้อมูล
+- **ไฟล์ที่สร้าง/แก้ไข**:
+  - `src/Inventory.jsx` (เขียนใหม่แทนที่ UX เดิม)
+  - `src/hooks/useWarehouseData.js`
+  - `src/components/inventory/*` (Header, NavTabs, StockTable, IssueCartDrawer, CustodyFlowView, CashVaultView, HistoryAuditView, ItemFormModal, StockAdjustModal, CategoryManageModal, AddRecipientModal, AddAssetUnitModal, MigrationNoticeBanner)
+  - `src/App.jsx` (ส่ง `isActive` และ `userProfile` อย่างจำกัดขอบเขต)
+  - `tests/inventoryUi.test.cjs` (การทดสอบ 7 รายการ)
+  - `docs/inventory-plan-c-ui.md`
+- **การตรวจสอบ**: ชุดทดสอบทั้งหมด 25 ข้อเดิมใน `syncService.test.cjs` ยังคงผ่าน 100%, การทดสอบใหม่ผ่านสมบูรณ์
+
 ### [2026-11-10 - ออกแบบคลังใหม่: รอผู้ใช้เลือกโครงหน้า]
 - ผู้ใช้รายงานว่ารัน `save_project_with_items.sql` แล้ว; ยังไม่ได้ตรวจฐานจริงซ้ำ
 - คลังต้องมี 3 กลุ่มหลัก: วัสดุสิ้นเปลือง, วัสดุใช้ซ้ำแยกสีและรับคืนดี/ชำรุด, เครื่องมือ QR รายชิ้นยืม–คืน
@@ -1201,3 +1303,18 @@
 2. **ตรวจหน้าจอจริงผ่าน `chrome-devtools` (MCP)**: ทุกครั้งที่แก้ UI ต้องตรวจสอบทั้ง Mobile (390px), Tablet (820px) และ Desktop (1440px)
 3. **ต้องบิลด์ผ่าน `npm run build` เสมอ** ก่อนรายงานผู้ใช้
 4. **Ponytail & Karpathy**: แก้น้อยที่สุด ไม่เขียนโค้ดเผื่อ ไม่ Over-engineer
+
+### 2026-11-12 — Compact inventory delivery
+- Codex takeover completed; canonical installer: database_scripts/inventory_compact.sql, exactly eight inventory tables with preserving migration and restricted cash reads.
+- Full suite 175/175, final history installer/runtime 7/7, affected UI/service rerun 28/28; build and targeted lint pass. See docs/inventory-compact-verification.md for limits.
+- User requests quota discipline: Medium by default, Light for known edits, High for diagnosis/cross-cutting risks, Extra High/Max only when needed. No session tool can change root reasoning effort; do not claim automatic switching.
+- No git add/commit/push, live SQL, deployment or Gemini implementation. Browser host/native pipe unavailable; final all-device visual/hardware checks not certified.
+
+### 2026-11-13 — Inventory photos, barcode labels and infinite catalog
+- User requested QR/Code128 choice, working print path, Google Drive product photos, simpler catalog forms, and infinite scrolling instead of pagination. Fixed literal `?` range separator; pagination then replaced by bounded scroll loading.
+- New image service reuses App Apps Script endpoint and Settings drive_folders type `inventory` (fallback Assets). Compresses raster photos to 1024 px JPEG; only validated Drive image_url is stored. Existing eight-table installer adds one column, capability flag, metadata persistence and bounded read projections. Updated installer must be run by user, not agent.
+- Product thumbnails appear in desktop/mobile stock, create/edit form and issue cart. Uploaded URL survives DB-save retry without uploading twice. Optional thresholds/cost collapsed; new asset initial stock cannot incorrectly submit a quantity before serial registration.
+- Native Codex labels agent completed QR/Code128, scanner multi-format support, 50×15 mm preset, geometry checks, print iframe lifecycle and no fabricated serial preview. Root wired real item/unit creation back to print.
+- Infinite catalog loads 50 rows per page, deduplicates concurrent requests, retains cart, resets filtered results and stops observers while inactive. Stable query callback avoids discarding accumulated rows on page return; deterministic SQL name/id ordering.
+- Verification: 79 affected UI/image/QR tests passed, final image/compression/scroll/empty-print workflows 5/5 passed. Compact installer/migration/production/runtime and service suites passed earlier this turn; updated read projections runtime passed. Inventory scoped lint clean; App/Settings retain existing broad lint errors, changed integration sections clean. Production build passed. See docs/inventory-images-and-scroll.md.
+- MCP still reports unavailable browser host/native pipe. No actual Drive upload, phone-camera scan, physical printer or all-viewport screenshots certified. No Git writes/deployment/live SQL.

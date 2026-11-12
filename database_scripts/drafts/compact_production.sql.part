@@ -1,0 +1,2602 @@
+-- ==============================================================================
+-- COMPACT INVENTORY RUNTIME: PRODUCTION & PEOPLE MODULE
+-- File: database_scripts/drafts/compact_production.sql.part
+--
+-- Pure module piece: No BEGIN/COMMIT (assembled into single transaction).
+-- Unified storage: inventory_documents, inventory_document_lines, inventory_movements.
+-- Preserves existing public RPC signatures with exact parameter & return contracts.
+-- ==============================================================================
+
+-- 0. FAIL-CLOSED BUILD GUARD
+DO $$
+BEGIN
+    IF coalesce(current_setting('flower.compact_build', true), '') <> 'v2' THEN
+        RAISE EXCEPTION 'compact_production.sql.part must be executed within inventory_compact installer (flower.compact_build=v2 required)';
+    END IF;
+END $$;
+
+-- ------------------------------------------------------------------------------
+-- 1. PEOPLE REGISTRY RPCs (PII-FREE LISTING & CANONICAL RESOLUTION)
+-- ------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.warehouse_list_people(
+    p_query TEXT DEFAULT '',
+    p_limit INT DEFAULT 20
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_clean_limit INT;
+    v_q TEXT;
+    v_people JSONB;
+BEGIN
+    IF NOT (public.fn_can_access_inventory(auth.uid()) OR public.fn_can_manage_cash(auth.uid())) THEN
+        RAISE EXCEPTION 'Unauthorized to list warehouse people';
+    END IF;
+    v_clean_limit := LEAST(GREATEST(coalesce(p_limit, 20), 1), 50);
+    v_q := trim(coalesce(p_query, ''));
+
+    SELECT coalesce(jsonb_agg(to_jsonb(p)), '[]'::jsonb) INTO v_people
+    FROM (
+        -- 1. Active staff users (without PII, bridging TEXT/UUID IDs)
+        SELECT 
+            'staff:' || su.id::text AS key,
+            r.id AS recipient_id,
+            su.id::text AS staff_user_id,
+            coalesce(su.full_name, su.username) AS name,
+            'staff' AS kind,
+            su.id::text AS code,
+            coalesce(su.full_name, su.username) AS primary_receiver_name,
+            coalesce(r.member_names, ARRAY[]::text[]) AS member_names
+        FROM public.staff_users su
+        LEFT JOIN public.inventory_recipients r ON r.staff_user_id = su.id::text
+        WHERE su.is_active = TRUE
+          AND (
+            v_q = '' 
+            OR su.full_name ILIKE ('%' || v_q || '%')
+            OR su.username ILIKE ('%' || v_q || '%')
+            OR su.id::text ILIKE ('%' || v_q || '%')
+          )
+
+        UNION ALL
+
+        -- 2. Active casual helpers & teams (stored directly in inventory_recipients)
+        SELECT 
+            'recipient:' || r.id::text AS key,
+            r.id AS recipient_id,
+            NULL AS staff_user_id,
+            r.name AS name,
+            r.recipient_type AS kind,
+            substring(r.id::text, 1, 8) AS code,
+            coalesce(r.primary_receiver_name, r.name) AS primary_receiver_name,
+            coalesce(r.member_names, ARRAY[]::text[]) AS member_names
+        FROM public.inventory_recipients r
+        WHERE r.is_active = TRUE
+          AND r.staff_user_id IS NULL
+          AND r.recipient_type <> 'staff'
+          AND (
+            v_q = '' 
+            OR r.name ILIKE ('%' || v_q || '%')
+            OR coalesce(r.primary_receiver_name, '') ILIKE ('%' || v_q || '%')
+          )
+        ORDER BY name ASC
+        LIMIT v_clean_limit
+    ) p;
+
+    RETURN v_people;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+CREATE OR REPLACE FUNCTION public.warehouse_resolve_person(
+    p_person_key TEXT
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_ident TEXT;
+    v_rec_id UUID;
+    v_name TEXT;
+    v_kind TEXT;
+    v_primary TEXT;
+    v_members TEXT[];
+    v_staff RECORD;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required to resolve person';
+    END IF;
+
+    IF NOT (public.fn_can_access_inventory(v_auth_uid) OR public.fn_can_manage_cash(v_auth_uid)) THEN
+        RAISE EXCEPTION 'Unauthorized to resolve warehouse person';
+    END IF;
+
+    IF p_person_key LIKE 'staff:%' THEN
+        v_ident := substring(p_person_key FROM 7);
+
+        SELECT id::text AS staff_id, full_name, username INTO v_staff
+        FROM public.staff_users
+        WHERE id::text = v_ident AND is_active = TRUE
+        LIMIT 1;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Active staff user not found for key: %', p_person_key;
+        END IF;
+
+        -- Bridge into inventory_recipients with stable UUID
+        INSERT INTO public.inventory_recipients (name, recipient_type, staff_user_id, is_active)
+        VALUES (coalesce(v_staff.full_name, v_staff.username), 'staff', v_staff.staff_id, TRUE)
+        ON CONFLICT (staff_user_id) 
+        DO UPDATE SET name = EXCLUDED.name, is_active = TRUE
+        RETURNING id, name, recipient_type, primary_receiver_name, member_names 
+        INTO v_rec_id, v_name, v_kind, v_primary, v_members;
+
+        RETURN jsonb_build_object(
+            'recipient_id', v_rec_id,
+            'name', v_name,
+            'recipient_type', v_kind,
+            'primary_receiver_name', coalesce(v_primary, v_name),
+            'member_names', coalesce(v_members, ARRAY[]::text[])
+        );
+
+    ELSIF p_person_key LIKE 'recipient:%' THEN
+        BEGIN
+            v_rec_id := substring(p_person_key FROM 11)::UUID;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE EXCEPTION 'Invalid recipient UUID in key: %', p_person_key;
+        END;
+
+        SELECT id, name, recipient_type, coalesce(primary_receiver_name, name), coalesce(member_names, ARRAY[]::text[])
+        INTO v_rec_id, v_name, v_kind, v_primary, v_members
+        FROM public.inventory_recipients
+        WHERE id = v_rec_id AND is_active = TRUE
+        LIMIT 1;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Active recipient not found for key: %', p_person_key;
+        END IF;
+
+        RETURN jsonb_build_object(
+            'recipient_id', v_rec_id,
+            'name', v_name,
+            'recipient_type', v_kind,
+            'primary_receiver_name', v_primary,
+            'member_names', v_members
+        );
+    ELSE
+        RAISE EXCEPTION 'Unrecognized person key format. Expected staff:<id> or recipient:<uuid>';
+    END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- Alias preserving resolve_person
+
+-- ------------------------------------------------------------------------------
+-- 2. PRIVATE PRODUCTION INTEGRATION HELPERS
+-- ------------------------------------------------------------------------------
+
+-- Helper 2.1: Automatically ensure linked WORK document for PRODUCTION_ISSUE
+CREATE OR REPLACE FUNCTION public.warehouse_ensure_production_work(
+    p_issue_document_id UUID
+)
+RETURNS UUID AS $$
+DECLARE
+    v_work_id UUID;
+    v_issue RECORD;
+    v_doc_num TEXT;
+BEGIN
+    IF p_issue_document_id IS NULL THEN
+        RAISE EXCEPTION 'issue_document_id is strictly required';
+    END IF;
+
+    -- Return existing linked WORK document if already present
+    SELECT id INTO v_work_id
+    FROM public.inventory_documents
+    WHERE source_document_id = p_issue_document_id
+      AND doc_type = 'WORK'
+    LIMIT 1;
+
+    IF v_work_id IS NOT NULL THEN
+        RETURN v_work_id;
+    END IF;
+
+    -- Lock and verify issue document
+    SELECT * INTO v_issue
+    FROM public.inventory_documents
+    WHERE id = p_issue_document_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Issue document % not found', p_issue_document_id;
+    END IF;
+
+    IF v_issue.doc_type <> 'PRODUCTION_ISSUE' THEN
+        RAISE EXCEPTION 'Document % is not PRODUCTION_ISSUE (doc_type: %)', p_issue_document_id, v_issue.doc_type;
+    END IF;
+
+    v_doc_num := 'WRK-' || substring(v_issue.id::text, 1, 8);
+
+    -- Create WORK header in unified inventory_documents
+    INSERT INTO public.inventory_documents (
+        doc_number,
+        doc_type,
+        project_id,
+        recipient_id,
+        recipient_name_snapshot,
+        team_members_snapshot,
+        title,
+        status,
+        source_document_id,
+        is_cash,
+        version,
+        actor_auth_user_id,
+        actor_name_snapshot,
+        due_at,
+        created_at,
+        updated_at
+    ) VALUES (
+        v_doc_num,
+        'WORK',
+        v_issue.project_id,
+        v_issue.recipient_id,
+        v_issue.recipient_name_snapshot,
+        coalesce(v_issue.team_members_snapshot, '{}'),
+        'งานผลิตตามใบเบิก ' || coalesce(v_issue.doc_number, ''),
+        'in_progress',
+        v_issue.id,
+        false,
+        1,
+        v_issue.actor_auth_user_id,
+        coalesce(v_issue.actor_name_snapshot, 'System'),
+        v_issue.due_at,
+        timezone('utc'::text, now()),
+        timezone('utc'::text, now())
+    ) RETURNING id INTO v_work_id;
+
+    -- Default WORK deliverable line (quantity 1.00 set)
+    INSERT INTO public.inventory_document_lines (
+        document_id,
+        line_type,
+        description,
+        required_qty,
+        submitted_qty,
+        accepted_qty,
+        rejected_qty,
+        pending_qty,
+        unit,
+        is_active,
+        created_at,
+        updated_at
+    ) VALUES (
+        v_work_id,
+        'WORK_OUTPUT',
+        'งานผลิตตามใบเบิก',
+        1.00,
+        0.00,
+        0.00,
+        0.00,
+        0.00,
+        'ชุด',
+        true,
+        timezone('utc'::text, now()),
+        timezone('utc'::text, now())
+    );
+
+    -- Audit work movement event
+    INSERT INTO public.inventory_movements (
+        document_id,
+        movement_type,
+        quantity,
+        delta_stock,
+        project_id,
+        recipient_id,
+        recipient_name_snapshot,
+        actor_auth_user_id,
+        actor_name_snapshot,
+        notes,
+        metadata,
+        created_at
+    ) VALUES (
+        v_work_id,
+        'WORK_EVENT',
+        0,
+        0,
+        v_issue.project_id,
+        v_issue.recipient_id,
+        v_issue.recipient_name_snapshot,
+        v_issue.actor_auth_user_id,
+        coalesce(v_issue.actor_name_snapshot, 'System'),
+        'Auto-created from issue ' || coalesce(v_issue.doc_number, ''),
+        jsonb_build_object('event_type', 'created', 'source_document_id', v_issue.id),
+        timezone('utc'::text, now())
+    );
+
+    RETURN v_work_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- Helper 2.2: Synchronize cash batch state with linked cash WORK assignment
+CREATE OR REPLACE FUNCTION public.warehouse_sync_cash_work(
+    p_batch_document_id UUID
+)
+RETURNS VOID AS $$
+DECLARE
+    v_batch RECORD;
+    v_batch_line RECORD;
+    v_work_doc RECORD;
+    v_work_line RECORD;
+    v_work_id UUID;
+    v_exp_qty NUMERIC(12,2);
+    v_prep_qty NUMERIC(12,2);
+    v_issued_count NUMERIC(12,2);
+    v_ret_raw_count NUMERIC(12,2);
+    v_handed_count NUMERIC(12,2);
+    v_diff NUMERIC(12,2);
+    v_sub_id UUID;
+    v_sub_line_id UUID;
+    v_insp_id UUID;
+    v_actor_name TEXT;
+    v_denom INT;
+    v_code TEXT;
+    v_proj_id TEXT;
+    v_rec_id UUID;
+    v_rec_name TEXT;
+    v_status TEXT;
+BEGIN
+    IF p_batch_document_id IS NULL THEN
+        RAISE EXCEPTION 'batch_document_id is strictly required';
+    END IF;
+
+    -- Look up batch header in inventory_documents (or legacy cash_helper_batches if present)
+    SELECT * INTO v_batch
+    FROM public.inventory_documents
+    WHERE id = p_batch_document_id;
+
+    IF FOUND THEN
+        v_code := v_batch.doc_number;
+        v_proj_id := v_batch.project_id;
+        v_rec_id := v_batch.recipient_id;
+        v_rec_name := v_batch.recipient_name_snapshot;
+        v_denom := v_batch.denomination;
+        v_status := v_batch.status;
+
+        -- Extract quantities from batch line
+        SELECT * INTO v_batch_line
+        FROM public.inventory_document_lines
+        WHERE document_id = p_batch_document_id
+          AND line_type IN ('CASH_BATCH', 'ITEM')
+        LIMIT 1;
+
+        IF FOUND THEN
+            v_exp_qty := GREATEST(0, coalesce(v_batch_line.quantity, 0) - coalesce(v_batch_line.returned_qty, 0) - coalesce(v_batch_line.handed_over_qty, 0))::NUMERIC(12,2);
+            v_prep_qty := coalesce(v_batch_line.accepted_qty, 0)::NUMERIC(12,2);
+        ELSE
+            v_exp_qty := 0;
+            v_prep_qty := 0;
+        END IF;
+    ELSE
+        -- Fallback check on legacy cash_helper_batches if table exists during transition
+        BEGIN
+            EXECUTE 'SELECT batch_code, project_id, recipient_id, recipient_name_snapshot, denomination, status, issued_count, returned_raw_count, handed_over_count, prepared_count FROM public.cash_helper_batches WHERE id = $1'
+            INTO v_code, v_proj_id, v_rec_id, v_rec_name, v_denom, v_status, v_issued_count, v_ret_raw_count, v_handed_count, v_prep_qty
+            USING p_batch_document_id;
+            
+            IF v_code IS NOT NULL THEN
+                v_exp_qty := GREATEST(0, coalesce(v_issued_count, 0) - coalesce(v_ret_raw_count, 0) - coalesce(v_handed_count, 0))::NUMERIC(12,2);
+                v_prep_qty := coalesce(v_prep_qty, 0)::NUMERIC(12,2);
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            v_code := NULL;
+        END;
+
+        IF v_code IS NULL THEN
+            RAISE EXCEPTION 'Cash batch % not found', p_batch_document_id;
+        END IF;
+    END IF;
+
+    -- Look up linked cash WORK document
+    SELECT * INTO v_work_doc
+    FROM public.inventory_documents
+    WHERE source_document_id = p_batch_document_id
+      AND doc_type = 'WORK'
+      AND is_cash = TRUE
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        -- Create new cash WORK document
+        INSERT INTO public.inventory_documents (
+            doc_number,
+            doc_type,
+            project_id,
+            recipient_id,
+            recipient_name_snapshot,
+            title,
+            status,
+            source_document_id,
+            is_cash,
+            denomination,
+            version,
+            actor_auth_user_id,
+            actor_name_snapshot,
+            created_at,
+            updated_at
+        ) VALUES (
+            'WRK-CASH-' || substring(p_batch_document_id::text, 1, 8),
+            'WORK',
+            v_proj_id,
+            v_rec_id,
+            v_rec_name,
+            'งานเตรียมชุดเงินสด ' || coalesce(v_code, ''),
+            CASE 
+                WHEN v_status = 'CANCELLED' THEN 'cancelled'
+                WHEN v_status = 'FULLY_PREPARED' OR (v_exp_qty > 0 AND v_prep_qty >= v_exp_qty) THEN 'completed'
+                ELSE 'in_progress'
+            END,
+            p_batch_document_id,
+            true,
+            v_denom,
+            1,
+            auth.uid(),
+            'Cash System',
+            timezone('utc'::text, now()),
+            timezone('utc'::text, now())
+        ) RETURNING id INTO v_work_id;
+
+        INSERT INTO public.inventory_document_lines (
+            document_id,
+            line_type,
+            description,
+            required_qty,
+            accepted_qty,
+            submitted_qty,
+            pending_qty,
+            rejected_qty,
+            unit,
+            denomination,
+            is_active,
+            created_at,
+            updated_at
+        ) VALUES (
+            v_work_id,
+            'WORK_OUTPUT',
+            'ธนบัตร ' || v_denom || ' บาท',
+            v_exp_qty,
+            v_prep_qty,
+            v_prep_qty,
+            0.00,
+            0.00,
+            'ใบ',
+            v_denom,
+            true,
+            timezone('utc'::text, now()),
+            timezone('utc'::text, now())
+        );
+
+        INSERT INTO public.inventory_movements (
+            document_id,
+            movement_type,
+            quantity,
+            delta_stock,
+            project_id,
+            recipient_id,
+            recipient_name_snapshot,
+            actor_auth_user_id,
+            actor_name_snapshot,
+            is_cash,
+            denomination,
+            notes,
+            metadata,
+            created_at
+        ) VALUES (
+            v_work_id,
+            'WORK_EVENT',
+            0,
+            0,
+            v_proj_id,
+            v_rec_id,
+            v_rec_name,
+            auth.uid(),
+            'Cash System',
+            true,
+            v_denom,
+            'Cash work initialized for batch ' || coalesce(v_code, ''),
+            jsonb_build_object('event_type', 'created', 'source_batch_id', p_batch_document_id),
+            timezone('utc'::text, now())
+        );
+    ELSE
+        v_work_id := v_work_doc.id;
+
+        SELECT * INTO v_work_line
+        FROM public.inventory_document_lines
+        WHERE document_id = v_work_id
+          AND line_type = 'WORK_OUTPUT'
+        FOR UPDATE
+        LIMIT 1;
+
+        -- If prepared count increased, record audit receipt (SUBMISSION + INSPECTION)
+        IF v_prep_qty > coalesce(v_work_line.accepted_qty, 0) THEN
+            v_diff := v_prep_qty - coalesce(v_work_line.accepted_qty, 0);
+
+            SELECT coalesce(full_name, username) INTO v_actor_name
+            FROM public.staff_users
+            WHERE auth_user_id = auth.uid()
+            LIMIT 1;
+
+            -- SUBMISSION header
+            INSERT INTO public.inventory_documents (
+                doc_number,
+                doc_type,
+                project_id,
+                parent_document_id,
+                recipient_id,
+                recipient_name_snapshot,
+                status,
+                notes,
+                actor_auth_user_id,
+                actor_name_snapshot,
+                is_cash,
+                denomination,
+                created_at,
+                updated_at
+            ) VALUES (
+                'SUB-CASH-' || substring(gen_random_uuid()::text, 1, 8),
+                'SUBMISSION',
+                v_work_doc.project_id,
+                v_work_id,
+                v_work_doc.recipient_id,
+                v_work_doc.recipient_name_snapshot,
+                'inspected',
+                'Prepared banknotes verified from cash vault flow',
+                auth.uid(),
+                coalesce(v_actor_name, v_work_doc.recipient_name_snapshot),
+                true,
+                v_denom,
+                timezone('utc'::text, now()),
+                timezone('utc'::text, now())
+            ) RETURNING id INTO v_sub_id;
+
+            -- SUBMISSION line
+            INSERT INTO public.inventory_document_lines (
+                document_id,
+                line_type,
+                source_line_id,
+                quantity,
+                accepted_qty,
+                rejected_qty,
+                pending_qty,
+                unit,
+                denomination,
+                created_at,
+                updated_at
+            ) VALUES (
+                v_sub_id,
+                'SUBMISSION',
+                v_work_line.id,
+                v_diff,
+                v_diff,
+                0,
+                0,
+                'ใบ',
+                v_denom,
+                timezone('utc'::text, now()),
+                timezone('utc'::text, now())
+            ) RETURNING id INTO v_sub_line_id;
+
+            -- INSPECTION header
+            INSERT INTO public.inventory_documents (
+                doc_number,
+                doc_type,
+                project_id,
+                parent_document_id,
+                source_document_id,
+                status,
+                notes,
+                actor_auth_user_id,
+                actor_name_snapshot,
+                is_cash,
+                denomination,
+                created_at,
+                updated_at
+            ) VALUES (
+                'INS-CASH-' || substring(gen_random_uuid()::text, 1, 8),
+                'INSPECTION',
+                v_work_doc.project_id,
+                v_sub_id,
+                v_work_id,
+                'completed',
+                'Received prepared set into cash vault',
+                auth.uid(),
+                coalesce(v_actor_name, 'Cashier'),
+                true,
+                v_denom,
+                timezone('utc'::text, now()),
+                timezone('utc'::text, now())
+            ) RETURNING id INTO v_insp_id;
+
+            -- INSPECTION line
+            INSERT INTO public.inventory_document_lines (
+                document_id,
+                line_type,
+                source_line_id,
+                accepted_qty,
+                rejected_qty,
+                notes,
+                unit,
+                denomination,
+                created_at,
+                updated_at
+            ) VALUES (
+                v_insp_id,
+                'INSPECTION',
+                v_sub_line_id,
+                v_diff,
+                0,
+                'Verified by cash receive transaction',
+                'ใบ',
+                v_denom,
+                timezone('utc'::text, now()),
+                timezone('utc'::text, now())
+            );
+        END IF;
+
+        -- Update WORK line counts
+        IF v_work_line.id IS NOT NULL THEN
+            UPDATE public.inventory_document_lines
+            SET required_qty = v_exp_qty,
+                accepted_qty = v_prep_qty,
+                submitted_qty = GREATEST(submitted_qty, v_prep_qty),
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_work_line.id;
+        END IF;
+
+        -- Update WORK header status & version
+        UPDATE public.inventory_documents
+        SET recipient_id = v_rec_id,
+            recipient_name_snapshot = v_rec_name,
+            status = CASE 
+                WHEN v_status = 'CANCELLED' THEN 'cancelled'
+                WHEN v_status = 'FULLY_PREPARED' OR (v_exp_qty > 0 AND v_prep_qty >= v_exp_qty) THEN 'completed'
+                ELSE 'in_progress'
+            END,
+            version = version + 1,
+            updated_at = timezone('utc'::text, now())
+        WHERE id = v_work_id;
+    END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- ------------------------------------------------------------------------------
+-- 3. UNIFIED PRODUCTION ISSUE + WORK RPC (warehouse_create_production_issue)
+-- ------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.warehouse_create_production_issue(
+    p_issue JSONB,
+    p_work JSONB,
+    p_idempotency_key UUID
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_payload_hash TEXT;
+    v_cached JSONB;
+    v_core_issue JSONB;
+    v_core_result JSONB;
+    v_doc_id UUID;
+    v_work_id UUID;
+    v_work_lines JSONB;
+    v_elem JSONB;
+    v_line_desc TEXT;
+    v_line_qty NUMERIC(12,2);
+    v_line_unit TEXT;
+    v_due_at TIMESTAMPTZ;
+    v_assign_doc RECORD;
+    v_result JSONB;
+BEGIN
+    IF p_idempotency_key IS NULL THEN
+        RAISE EXCEPTION 'Idempotency key (UUID) strictly required';
+    END IF;
+
+    -- Historical production issue payload hash format
+    v_payload_hash := md5('production_issue_create:' || p_issue::text || ':' || coalesce(p_work::text, '{}'));
+
+    -- Check cached idempotent response via core command helper
+    v_cached := public.warehouse_command_lookup('production_issue_create', v_payload_hash, p_idempotency_key, false);
+    IF v_cached IS NOT NULL THEN
+        RETURN v_cached;
+    END IF;
+
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required';
+    END IF;
+
+    IF NOT public.fn_can_access_inventory(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized to create production issue';
+    END IF;
+
+    IF (p_issue->>'issue_type') <> 'PRODUCTION_ISSUE' THEN
+        RAISE EXCEPTION 'issue_type must be PRODUCTION_ISSUE';
+    END IF;
+
+    -- Validate work lines upfront so any invalid line rolls back before dispatch
+    IF p_work IS NOT NULL AND p_work ? 'lines' THEN
+        v_work_lines := p_work->'lines';
+        FOR v_elem IN SELECT * FROM jsonb_array_elements(v_work_lines) LOOP
+            v_line_qty := (v_elem->>'required_qty')::NUMERIC(12,2);
+            IF v_line_qty IS NULL OR v_line_qty < 0 THEN
+                RAISE EXCEPTION 'Invalid work output quantity: %', v_elem->>'required_qty';
+            END IF;
+            IF trim(coalesce(v_elem->>'description', '')) = '' THEN
+                RAISE EXCEPTION 'Work output description cannot be empty';
+            END IF;
+        END LOOP;
+    END IF;
+
+    -- Call core dispatcher for issue_create inside SAME transaction
+    v_core_issue := p_issue || jsonb_build_object('_production_work_hash', v_payload_hash);
+    v_core_result := public.warehouse_dispatch('issue_create', v_core_issue, p_idempotency_key);
+
+    IF NOT coalesce((v_core_result->>'success')::BOOLEAN, false) THEN
+        RETURN v_core_result;
+    END IF;
+
+    v_doc_id := coalesce((v_core_result->'data'->>'document_id')::UUID, (v_core_result->'data'->>'id')::UUID);
+
+    -- Find or ensure the linked WORK document created by core issue trigger/helper
+    SELECT id INTO v_work_id
+    FROM public.inventory_documents
+    WHERE source_document_id = v_doc_id AND doc_type = 'WORK'
+    FOR UPDATE;
+
+    IF v_work_id IS NULL THEN
+        v_work_id := public.warehouse_ensure_production_work(v_doc_id);
+    END IF;
+
+    -- Apply customized work title, due date, and output lines
+    IF p_work IS NOT NULL THEN
+        IF p_work ? 'due_at' AND p_work->>'due_at' IS NOT NULL THEN
+            v_due_at := (p_work->>'due_at')::TIMESTAMPTZ;
+        ELSIF p_work ? 'dueAt' AND p_work->>'dueAt' IS NOT NULL THEN
+            v_due_at := (p_work->>'dueAt')::TIMESTAMPTZ;
+        END IF;
+
+        IF p_work ? 'title' AND trim(coalesce(p_work->>'title', '')) <> '' THEN
+            UPDATE public.inventory_documents
+            SET title = p_work->>'title',
+                due_at = coalesce(v_due_at, due_at),
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_work_id;
+        ELSIF v_due_at IS NOT NULL THEN
+            UPDATE public.inventory_documents
+            SET due_at = v_due_at,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_work_id;
+        END IF;
+
+        IF p_work ? 'lines' AND jsonb_array_length(v_work_lines) > 0 THEN
+            -- Replace default line with custom deliverables
+            DELETE FROM public.inventory_document_lines 
+            WHERE document_id = v_work_id AND line_type = 'WORK_OUTPUT';
+
+            FOR v_elem IN SELECT * FROM jsonb_array_elements(v_work_lines) LOOP
+                v_line_desc := v_elem->>'description';
+                v_line_qty := (v_elem->>'required_qty')::NUMERIC(12,2);
+                v_line_unit := coalesce(v_elem->>'unit', 'ชุด');
+
+                INSERT INTO public.inventory_document_lines (
+                    document_id,
+                    line_type,
+                    description,
+                    required_qty,
+                    unit,
+                    is_active,
+                    submitted_qty,
+                    accepted_qty,
+                    rejected_qty,
+                    pending_qty,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    v_work_id,
+                    'WORK_OUTPUT',
+                    v_line_desc,
+                    v_line_qty,
+                    v_line_unit,
+                    true,
+                    0.00,
+                    0.00,
+                    0.00,
+                    0.00,
+                    timezone('utc'::text, now()),
+                    timezone('utc'::text, now())
+                );
+            END LOOP;
+        END IF;
+    END IF;
+
+    -- Build return assignment representation
+    SELECT * INTO v_assign_doc FROM public.inventory_documents WHERE id = v_work_id;
+
+    v_result := jsonb_build_object(
+        'success', true,
+        'data', jsonb_build_object(
+            'issue', v_core_result->'data',
+            'assignment', jsonb_build_object(
+                'id', v_assign_doc.id,
+                'project_id', v_assign_doc.project_id,
+                'title', v_assign_doc.title,
+                'status', v_assign_doc.status,
+                'version', v_assign_doc.version,
+                'recipient_id', v_assign_doc.recipient_id,
+                'responsible_name', v_assign_doc.recipient_name_snapshot,
+                'team_members_snapshot', v_assign_doc.team_members_snapshot,
+                'due_at', v_assign_doc.due_at,
+                'source_document_id', v_assign_doc.source_document_id,
+                'lines', (
+                    SELECT coalesce(jsonb_agg(jsonb_build_object(
+                        'id', id,
+                        'description', description,
+                        'required_qty', required_qty,
+                        'unit', unit,
+                        'submitted_qty', submitted_qty,
+                        'accepted_qty', accepted_qty,
+                        'rejected_qty', rejected_qty,
+                        'pending_qty', pending_qty
+                    )), '[]'::jsonb)
+                    FROM public.inventory_document_lines
+                    WHERE document_id = v_work_id AND line_type = 'WORK_OUTPUT'
+                )
+            )
+        )
+    );
+
+    -- Atomically override SAME request key on issue doc with unified wrapper result
+    UPDATE public.inventory_documents
+    SET action_name = 'production_issue_create',
+        idempotency_payload_hash = v_payload_hash,
+        response_payload = v_result,
+        updated_at = timezone('utc'::text, now())
+    WHERE id = v_doc_id;
+
+    -- Register with core command finish helper
+    PERFORM public.warehouse_command_finish('production_issue_create', v_payload_hash, p_idempotency_key, v_result, v_doc_id, false);
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- Alias preserving create_production_issue
+
+-- ------------------------------------------------------------------------------
+-- 4. PRODUCTION ASSIGNMENT LIFECYCLE RPCs
+-- ------------------------------------------------------------------------------
+
+-- 4.1 Create Standalone Assignment
+CREATE OR REPLACE FUNCTION public.warehouse_create_assignment(
+    p_payload JSONB,
+    p_idempotency_key UUID
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_actor_name TEXT;
+    v_payload_hash TEXT;
+    v_cached JSONB;
+    v_project_id TEXT;
+    v_title TEXT;
+    v_rec_id UUID;
+    v_rec_name TEXT;
+    v_due_at TIMESTAMPTZ;
+    v_work_id UUID;
+    v_doc_num TEXT;
+    v_elem JSONB;
+    v_lines JSONB;
+    v_line_qty NUMERIC(12,2);
+    v_result JSONB;
+    v_person_key TEXT;
+    v_resolved JSONB;
+BEGIN
+    IF p_idempotency_key IS NULL THEN
+        RAISE EXCEPTION 'Idempotency key (UUID) strictly required';
+    END IF;
+
+    v_payload_hash := md5('assignment_create:' || p_payload::text);
+
+    v_cached := public.warehouse_command_lookup('assignment_create', v_payload_hash, p_idempotency_key, false);
+    IF v_cached IS NOT NULL THEN
+        RETURN v_cached;
+    END IF;
+
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required';
+    END IF;
+
+    SELECT coalesce(full_name, username) INTO v_actor_name
+    FROM public.staff_users
+    WHERE auth_user_id = v_auth_uid AND is_active = TRUE
+    LIMIT 1;
+
+    IF v_actor_name IS NULL THEN
+        RAISE EXCEPTION 'Active staff mapping not found';
+    END IF;
+
+    IF NOT public.fn_can_access_inventory(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized to create assignment';
+    END IF;
+
+    v_project_id := p_payload->>'project_id';
+    IF v_project_id IS NULL OR trim(v_project_id) = '' THEN
+        RAISE EXCEPTION 'project_id is required';
+    END IF;
+
+    v_title := trim(coalesce(p_payload->>'title', ''));
+    IF v_title = '' THEN
+        RAISE EXCEPTION 'Title is required';
+    END IF;
+
+    IF p_payload ? 'person_key' AND trim(coalesce(p_payload->>'person_key', '')) <> '' THEN
+        v_person_key := p_payload->>'person_key';
+        v_resolved := public.warehouse_resolve_person(v_person_key);
+        v_rec_id := (v_resolved->>'recipient_id')::UUID;
+        v_rec_name := v_resolved->>'name';
+    ELSE
+        IF p_payload ? 'recipient_id' AND p_payload->>'recipient_id' IS NOT NULL THEN
+            v_rec_id := (p_payload->>'recipient_id')::UUID;
+        END IF;
+        v_rec_name := coalesce(p_payload->>'recipient_name', 'General Helper');
+    END IF;
+
+    IF p_payload ? 'due_at' AND p_payload->>'due_at' IS NOT NULL THEN
+        v_due_at := (p_payload->>'due_at')::TIMESTAMPTZ;
+    END IF;
+
+    v_doc_num := 'WRK-' || substring(gen_random_uuid()::text, 1, 8);
+
+    -- Create WORK document header
+    INSERT INTO public.inventory_documents (
+        doc_number,
+        doc_type,
+        project_id,
+        recipient_id,
+        recipient_name_snapshot,
+        title,
+        due_at,
+        status,
+        is_cash,
+        version,
+        actor_auth_user_id,
+        actor_name_snapshot,
+        action_name,
+        idempotency_key,
+        idempotency_payload_hash,
+        created_at,
+        updated_at
+    ) VALUES (
+        v_doc_num,
+        'WORK',
+        v_project_id,
+        v_rec_id,
+        v_rec_name,
+        v_title,
+        v_due_at,
+        'in_progress',
+        false,
+        1,
+        v_auth_uid,
+        v_actor_name,
+        'assignment_create',
+        p_idempotency_key,
+        v_payload_hash,
+        timezone('utc'::text, now()),
+        timezone('utc'::text, now())
+    ) RETURNING id INTO v_work_id;
+
+    -- Create output lines
+    v_lines := coalesce(p_payload->'lines', '[]'::jsonb);
+    IF jsonb_array_length(v_lines) = 0 THEN
+        INSERT INTO public.inventory_document_lines (
+            document_id, line_type, description, required_qty, unit, is_active,
+            submitted_qty, accepted_qty, rejected_qty, pending_qty, created_at, updated_at
+        ) VALUES (
+            v_work_id, 'WORK_OUTPUT', 'งานผลิตตามมอบหมาย', 1.00, 'ชุด', true,
+            0.00, 0.00, 0.00, 0.00, timezone('utc'::text, now()), timezone('utc'::text, now())
+        );
+    ELSE
+        FOR v_elem IN SELECT * FROM jsonb_array_elements(v_lines) LOOP
+            v_line_qty := (v_elem->>'required_qty')::NUMERIC(12,2);
+            IF v_line_qty IS NULL OR v_line_qty < 0 THEN
+                RAISE EXCEPTION 'Line required quantity must be non-negative';
+            END IF;
+            INSERT INTO public.inventory_document_lines (
+                document_id, line_type, description, required_qty, unit, is_active,
+                submitted_qty, accepted_qty, rejected_qty, pending_qty, created_at, updated_at
+            ) VALUES (
+                v_work_id,
+                'WORK_OUTPUT',
+                coalesce(v_elem->>'description', 'งานผลิต'),
+                v_line_qty,
+                coalesce(v_elem->>'unit', 'ชุด'),
+                true,
+                0.00, 0.00, 0.00, 0.00,
+                timezone('utc'::text, now()), timezone('utc'::text, now())
+            );
+        END LOOP;
+    END IF;
+
+    -- Audit movement event
+    INSERT INTO public.inventory_movements (
+        document_id, movement_type, quantity, delta_stock, project_id,
+        recipient_id, recipient_name_snapshot, actor_auth_user_id, actor_name_snapshot,
+        notes, metadata, created_at
+    ) VALUES (
+        v_work_id, 'WORK_EVENT', 0, 0, v_project_id,
+        v_rec_id, v_rec_name, v_auth_uid, v_actor_name,
+        'Created assignment ' || v_title,
+        jsonb_build_object('event_type', 'created', 'details', p_payload),
+        timezone('utc'::text, now())
+    );
+
+    v_result := jsonb_build_object(
+        'success', true,
+        'data', jsonb_build_object('id', v_work_id, 'project_id', v_project_id, 'title', v_title)
+    );
+
+    UPDATE public.inventory_documents
+    SET response_payload = v_result
+    WHERE id = v_work_id;
+
+    PERFORM public.warehouse_command_finish('assignment_create', v_payload_hash, p_idempotency_key, v_result, v_work_id, false);
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- Alias preserving create_assignment
+
+-- 4.2 Update Assignment (Title, Due Date, or Remaining Quantities)
+CREATE OR REPLACE FUNCTION public.warehouse_update_assignment(
+    p_payload JSONB,
+    p_idempotency_key UUID
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_actor_name TEXT;
+    v_payload_hash TEXT;
+    v_cached JSONB;
+    v_assign_id UUID;
+    v_expected_ver INT;
+    v_assign RECORD;
+    v_elem JSONB;
+    v_line_id UUID;
+    v_new_qty NUMERIC(12,2);
+    v_existing_line RECORD;
+    v_seen_line_ids UUID[] := '{}';
+    v_result JSONB;
+BEGIN
+    IF p_idempotency_key IS NULL THEN
+        RAISE EXCEPTION 'Idempotency key (UUID) strictly required';
+    END IF;
+
+    v_payload_hash := md5('assignment_update:' || p_payload::text);
+
+    v_cached := public.warehouse_command_lookup('assignment_update', v_payload_hash, p_idempotency_key, false);
+    IF v_cached IS NOT NULL THEN
+        RETURN v_cached;
+    END IF;
+
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required';
+    END IF;
+
+    SELECT coalesce(full_name, username) INTO v_actor_name
+    FROM public.staff_users
+    WHERE auth_user_id = v_auth_uid AND is_active = TRUE
+    LIMIT 1;
+
+    IF v_actor_name IS NULL THEN
+        RAISE EXCEPTION 'Active staff mapping not found';
+    END IF;
+
+    IF NOT public.fn_can_access_inventory(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: Inventory access required to update assignment';
+    END IF;
+
+    v_assign_id := (p_payload->>'assignment_id')::UUID;
+    v_expected_ver := (p_payload->>'expected_version')::INT;
+
+    IF v_expected_ver IS NULL OR v_expected_ver < 1 THEN
+        RAISE EXCEPTION 'expected_version must be a positive integer';
+    END IF;
+
+    -- Lock parent WORK document
+    SELECT * INTO v_assign
+    FROM public.inventory_documents
+    WHERE id = v_assign_id AND doc_type = 'WORK'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Assignment % not found', v_assign_id;
+    END IF;
+
+    IF v_assign.version <> v_expected_ver THEN
+        RAISE EXCEPTION 'Version conflict: Expected version % but found % (stale overwrite rejected)', v_expected_ver, v_assign.version;
+    END IF;
+
+    IF v_assign.is_cash THEN
+        IF NOT public.fn_can_manage_cash(v_auth_uid) THEN
+            RAISE EXCEPTION 'Unauthorized: Cash management permissions required for cash assignment';
+        END IF;
+        RAISE EXCEPTION 'Generic edit of cash assignment lines is prohibited; canonical cash batch counts govern lines';
+    END IF;
+
+    IF p_payload ? 'title' AND trim(coalesce(p_payload->>'title', '')) <> '' THEN
+        UPDATE public.inventory_documents SET title = p_payload->>'title' WHERE id = v_assign_id;
+    END IF;
+    IF p_payload ? 'due_at' THEN
+        UPDATE public.inventory_documents SET due_at = (p_payload->>'due_at')::TIMESTAMPTZ WHERE id = v_assign_id;
+    END IF;
+
+    -- Update or add lines
+    IF p_payload ? 'lines' THEN
+        FOR v_elem IN SELECT * FROM jsonb_array_elements(p_payload->'lines') LOOP
+            v_new_qty := (v_elem->>'required_qty')::NUMERIC(12,2);
+            IF v_new_qty IS NULL OR v_new_qty < 0 THEN
+                RAISE EXCEPTION 'Required quantity must be a non-negative number';
+            END IF;
+
+            IF v_elem ? 'id' AND v_elem->>'id' IS NOT NULL THEN
+                v_line_id := (v_elem->>'id')::UUID;
+
+                IF v_line_id = ANY(v_seen_line_ids) THEN
+                    RAISE EXCEPTION 'Duplicate line ID % in update payload', v_line_id;
+                END IF;
+                v_seen_line_ids := array_append(v_seen_line_ids, v_line_id);
+
+                -- Foreign line ID rejection check
+                SELECT * INTO v_existing_line 
+                FROM public.inventory_document_lines 
+                WHERE id = v_line_id AND document_id = v_assign_id AND line_type = 'WORK_OUTPUT'
+                FOR UPDATE;
+
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'Line % not found in assignment %', v_line_id, v_assign_id;
+                END IF;
+
+                IF v_new_qty < (v_existing_line.accepted_qty + v_existing_line.pending_qty) THEN
+                    RAISE EXCEPTION 'Cannot reduce required quantity below accepted (%) + pending (%) for line %',
+                        v_existing_line.accepted_qty, v_existing_line.pending_qty, v_line_id;
+                END IF;
+
+                -- History meaning preservation: prevent changing description or unit if outputs were already accepted
+                IF v_existing_line.accepted_qty > 0 THEN
+                    IF v_elem ? 'description' AND (v_elem->>'description') IS DISTINCT FROM v_existing_line.description THEN
+                        RAISE EXCEPTION 'Cannot change description of line % because outputs have already been accepted (% accepted). Add a new output line instead',
+                            v_line_id, v_existing_line.accepted_qty;
+                    END IF;
+                    IF v_elem ? 'unit' AND (v_elem->>'unit') IS DISTINCT FROM v_existing_line.unit THEN
+                        RAISE EXCEPTION 'Cannot change unit of line % because outputs have already been accepted (% accepted). Add a new output line instead',
+                            v_line_id, v_existing_line.accepted_qty;
+                    END IF;
+                END IF;
+
+                UPDATE public.inventory_document_lines
+                SET description = coalesce(v_elem->>'description', description),
+                    required_qty = v_new_qty,
+                    unit = coalesce(v_elem->>'unit', unit),
+                    updated_at = timezone('utc'::text, now())
+                WHERE id = v_line_id;
+            ELSE
+                -- New output line
+                INSERT INTO public.inventory_document_lines (
+                    document_id, line_type, description, required_qty, unit, is_active,
+                    submitted_qty, accepted_qty, rejected_qty, pending_qty, created_at, updated_at
+                ) VALUES (
+                    v_assign_id,
+                    'WORK_OUTPUT',
+                    coalesce(v_elem->>'description', 'งานผลิตเพิ่มเติม'),
+                    v_new_qty,
+                    coalesce(v_elem->>'unit', 'ชุด'),
+                    true,
+                    0.00, 0.00, 0.00, 0.00,
+                    timezone('utc'::text, now()), timezone('utc'::text, now())
+                );
+            END IF;
+        END LOOP;
+    END IF;
+
+    -- Increment parent WORK version for realtime
+    UPDATE public.inventory_documents
+    SET version = version + 1,
+        updated_at = timezone('utc'::text, now())
+    WHERE id = v_assign_id;
+
+    INSERT INTO public.inventory_movements (
+        document_id, movement_type, quantity, delta_stock, project_id,
+        recipient_id, recipient_name_snapshot, actor_auth_user_id, actor_name_snapshot,
+        notes, metadata, created_at
+    ) VALUES (
+        v_assign_id, 'WORK_EVENT', 0, 0, v_assign.project_id,
+        v_assign.recipient_id, v_assign.recipient_name_snapshot, v_auth_uid, v_actor_name,
+        p_payload->>'reason',
+        jsonb_build_object('event_type', 'edited', 'reason', p_payload->>'reason', 'details', p_payload),
+        timezone('utc'::text, now())
+    );
+
+    v_result := jsonb_build_object('success', true, 'data', jsonb_build_object('id', v_assign_id, 'version', v_assign.version + 1));
+
+    PERFORM public.warehouse_command_finish('assignment_update', v_payload_hash, p_idempotency_key, v_result, v_assign_id, false);
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- Alias preserving update_assignment
+
+-- 4.3 Split Assignment (Remaining Work to Another Person)
+CREATE OR REPLACE FUNCTION public.warehouse_split_assignment(
+    p_payload JSONB,
+    p_idempotency_key UUID
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_actor_name TEXT;
+    v_payload_hash TEXT;
+    v_cached JSONB;
+    v_assign_id UUID;
+    v_expected_ver INT;
+    v_assign RECORD;
+    v_to_person_key TEXT;
+    v_resolved JSONB;
+    v_target_rec_id UUID;
+    v_target_rec_name TEXT;
+    v_child_id UUID;
+    v_elem JSONB;
+    v_line_id UUID;
+    v_split_qty NUMERIC(12,2);
+    v_line RECORD;
+    v_avail_unsubmitted NUMERIC(12,2);
+    v_result JSONB;
+BEGIN
+    IF p_idempotency_key IS NULL THEN
+        RAISE EXCEPTION 'Idempotency key (UUID) strictly required';
+    END IF;
+
+    v_payload_hash := md5('assignment_split:' || p_payload::text);
+
+    v_cached := public.warehouse_command_lookup('assignment_split', v_payload_hash, p_idempotency_key, false);
+    IF v_cached IS NOT NULL THEN
+        RETURN v_cached;
+    END IF;
+
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required';
+    END IF;
+
+    SELECT coalesce(full_name, username) INTO v_actor_name
+    FROM public.staff_users
+    WHERE auth_user_id = v_auth_uid AND is_active = TRUE
+    LIMIT 1;
+
+    IF v_actor_name IS NULL THEN
+        RAISE EXCEPTION 'Active staff mapping not found';
+    END IF;
+
+    IF NOT public.fn_can_access_inventory(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: Inventory access required to split assignment';
+    END IF;
+
+    v_assign_id := (p_payload->>'assignment_id')::UUID;
+    v_expected_ver := (p_payload->>'expected_version')::INT;
+
+    IF v_expected_ver IS NULL OR v_expected_ver < 1 THEN
+        RAISE EXCEPTION 'expected_version must be a positive integer';
+    END IF;
+
+    v_to_person_key := p_payload->>'to_person_key';
+    IF v_to_person_key IS NULL THEN
+        RAISE EXCEPTION 'to_person_key is required for split';
+    END IF;
+
+    v_resolved := public.warehouse_resolve_person(v_to_person_key);
+    v_target_rec_id := (v_resolved->>'recipient_id')::UUID;
+    v_target_rec_name := v_resolved->>'name';
+
+    -- Lock parent WORK document
+    SELECT * INTO v_assign
+    FROM public.inventory_documents
+    WHERE id = v_assign_id AND doc_type = 'WORK'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Assignment % not found', v_assign_id;
+    END IF;
+
+    IF v_assign.version <> v_expected_ver THEN
+        RAISE EXCEPTION 'Version conflict: Expected version % but found % (stale overwrite rejected)', v_expected_ver, v_assign.version;
+    END IF;
+
+    IF v_assign.is_cash THEN
+        IF NOT public.fn_can_manage_cash(v_auth_uid) THEN
+            RAISE EXCEPTION 'Unauthorized: Cash management permissions required for cash assignment';
+        END IF;
+        RAISE EXCEPTION 'Cannot split cash assignment directly; use core cash handover';
+    END IF;
+
+    -- Create child WORK document
+    INSERT INTO public.inventory_documents (
+        doc_number,
+        doc_type,
+        parent_document_id,
+        project_id,
+        recipient_id,
+        recipient_name_snapshot,
+        title,
+        due_at,
+        status,
+        is_cash,
+        version,
+        actor_auth_user_id,
+        actor_name_snapshot,
+        created_at,
+        updated_at
+    ) VALUES (
+        'WRK-' || substring(gen_random_uuid()::text, 1, 8),
+        'WORK',
+        v_assign.id,
+        v_assign.project_id,
+        v_target_rec_id,
+        v_target_rec_name,
+        coalesce(p_payload->>'title', 'งานแบ่งจาก ' || v_assign.recipient_name_snapshot),
+        v_assign.due_at,
+        'in_progress',
+        false,
+        1,
+        v_auth_uid,
+        v_actor_name,
+        timezone('utc'::text, now()),
+        timezone('utc'::text, now())
+    ) RETURNING id INTO v_child_id;
+
+    -- Deduct unsubmitted remaining work from parent and add to child
+    FOR v_elem IN SELECT * FROM jsonb_array_elements(p_payload->'line_quantities') LOOP
+        v_line_id := (v_elem->>'line_id')::UUID;
+        v_split_qty := (v_elem->>'quantity')::NUMERIC(12,2);
+
+        IF v_split_qty <= 0 THEN
+            RAISE EXCEPTION 'Split quantity must be strictly greater than 0';
+        END IF;
+
+        -- Lock parent line
+        SELECT * INTO v_line
+        FROM public.inventory_document_lines
+        WHERE id = v_line_id AND document_id = v_assign_id AND line_type = 'WORK_OUTPUT'
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Line % not found in assignment %', v_line_id, v_assign_id;
+        END IF;
+
+        v_avail_unsubmitted := v_line.required_qty - v_line.accepted_qty - v_line.pending_qty;
+        IF v_split_qty > v_avail_unsubmitted THEN
+            RAISE EXCEPTION 'Cannot split % units from line %; only % unsubmitted units available',
+                v_split_qty, v_line_id, v_avail_unsubmitted;
+        END IF;
+
+        -- Deduct from parent
+        UPDATE public.inventory_document_lines
+        SET required_qty = required_qty - v_split_qty,
+            updated_at = timezone('utc'::text, now())
+        WHERE id = v_line_id;
+
+        -- Add to child
+        INSERT INTO public.inventory_document_lines (
+            document_id, line_type, description, required_qty, unit, is_active,
+            submitted_qty, accepted_qty, rejected_qty, pending_qty, created_at, updated_at
+        ) VALUES (
+            v_child_id, 'WORK_OUTPUT', v_line.description, v_split_qty, v_line.unit, true,
+            0.00, 0.00, 0.00, 0.00, timezone('utc'::text, now()), timezone('utc'::text, now())
+        );
+    END LOOP;
+
+    -- Increment parent WORK version for realtime
+    UPDATE public.inventory_documents
+    SET version = version + 1,
+        updated_at = timezone('utc'::text, now())
+    WHERE id = v_assign_id;
+
+    INSERT INTO public.inventory_movements (
+        document_id, movement_type, quantity, delta_stock, project_id,
+        recipient_id, recipient_name_snapshot, actor_auth_user_id, actor_name_snapshot,
+        notes, metadata, created_at
+    ) VALUES (
+        v_assign_id, 'WORK_EVENT', 0, 0, v_assign.project_id,
+        v_assign.recipient_id, v_assign.recipient_name_snapshot, v_auth_uid, v_actor_name,
+        p_payload->>'reason',
+        jsonb_build_object('event_type', 'split', 'child_assignment_id', v_child_id, 'to_person', v_target_rec_name),
+        timezone('utc'::text, now())
+    );
+
+    v_result := jsonb_build_object(
+        'success', true,
+        'data', jsonb_build_object(
+            'parent_assignment_id', v_assign_id,
+            'child_assignment', jsonb_build_object('id', v_child_id, 'recipient_name', v_target_rec_name)
+        )
+    );
+
+    PERFORM public.warehouse_command_finish('assignment_split', v_payload_hash, p_idempotency_key, v_result, v_assign_id, false);
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- Alias preserving split_assignment
+
+-- 4.4 Submit Work for Inspection
+CREATE OR REPLACE FUNCTION public.warehouse_submit_work(
+    p_payload JSONB,
+    p_idempotency_key UUID
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_actor_name TEXT;
+    v_payload_hash TEXT;
+    v_cached JSONB;
+    v_assign_id UUID;
+    v_assign RECORD;
+    v_sub_id UUID;
+    v_elem JSONB;
+    v_line_id UUID;
+    v_sub_qty NUMERIC(12,2);
+    v_line RECORD;
+    v_result JSONB;
+BEGIN
+    IF p_idempotency_key IS NULL THEN
+        RAISE EXCEPTION 'Idempotency key (UUID) strictly required';
+    END IF;
+
+    v_payload_hash := md5('work_submit:' || p_payload::text);
+
+    v_cached := public.warehouse_command_lookup('work_submit', v_payload_hash, p_idempotency_key, false);
+    IF v_cached IS NOT NULL THEN
+        RETURN v_cached;
+    END IF;
+
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required';
+    END IF;
+
+    SELECT coalesce(full_name, username) INTO v_actor_name
+    FROM public.staff_users
+    WHERE auth_user_id = v_auth_uid AND is_active = TRUE
+    LIMIT 1;
+
+    IF v_actor_name IS NULL THEN
+        RAISE EXCEPTION 'Active staff mapping not found';
+    END IF;
+
+    IF NOT (public.fn_can_access_inventory(v_auth_uid) OR public.fn_can_manage_cash(v_auth_uid)) THEN
+        RAISE EXCEPTION 'Unauthorized: Inventory access required to submit work';
+    END IF;
+
+    v_assign_id := (p_payload->>'assignment_id')::UUID;
+
+    -- Lock parent WORK document
+    SELECT * INTO v_assign
+    FROM public.inventory_documents
+    WHERE id = v_assign_id AND doc_type = 'WORK'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Assignment % not found', v_assign_id;
+    END IF;
+
+    IF v_assign.is_cash THEN
+        RAISE EXCEPTION 'Generic submit on cash assignment is prohibited; prepared banknotes flow through cash ledger';
+    END IF;
+
+    IF v_assign.status IN ('completed', 'cancelled') THEN
+        RAISE EXCEPTION 'Cannot submit work for assignment in % status', v_assign.status;
+    END IF;
+
+    -- Create SUBMISSION document header
+    INSERT INTO public.inventory_documents (
+        doc_number,
+        doc_type,
+        parent_document_id,
+        project_id,
+        recipient_id,
+        recipient_name_snapshot,
+        status,
+        notes,
+        actor_auth_user_id,
+        actor_name_snapshot,
+        is_cash,
+        created_at,
+        updated_at
+    ) VALUES (
+        'SUB-' || substring(gen_random_uuid()::text, 1, 8),
+        'SUBMISSION',
+        v_assign_id,
+        v_assign.project_id,
+        v_assign.recipient_id,
+        v_assign.recipient_name_snapshot,
+        'pending',
+        p_payload->>'note',
+        v_auth_uid,
+        v_actor_name,
+        false,
+        timezone('utc'::text, now()),
+        timezone('utc'::text, now())
+    ) RETURNING id INTO v_sub_id;
+
+    -- Insert submission lines and update parent pending counters
+    FOR v_elem IN SELECT * FROM jsonb_array_elements(p_payload->'lines') LOOP
+        v_line_id := (v_elem->>'line_id')::UUID;
+        v_sub_qty := (v_elem->>'quantity')::NUMERIC(12,2);
+
+        IF v_sub_qty <= 0 THEN
+            RAISE EXCEPTION 'Submission quantity must be strictly greater than 0';
+        END IF;
+
+        -- Lock work line
+        SELECT * INTO v_line
+        FROM public.inventory_document_lines
+        WHERE id = v_line_id AND document_id = v_assign_id AND line_type = 'WORK_OUTPUT'
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Line % not found in assignment', v_line_id;
+        END IF;
+
+        IF (v_line.accepted_qty + v_line.pending_qty + v_sub_qty) > v_line.required_qty THEN
+            RAISE EXCEPTION 'Cannot submit % units. Exceeds required quantity (%) for line %',
+                v_sub_qty, v_line.required_qty, v_line_id;
+        END IF;
+
+        INSERT INTO public.inventory_document_lines (
+            document_id,
+            line_type,
+            source_line_id,
+            quantity,
+            accepted_qty,
+            rejected_qty,
+            pending_qty,
+            unit,
+            created_at,
+            updated_at
+        ) VALUES (
+            v_sub_id,
+            'SUBMISSION',
+            v_line_id,
+            v_sub_qty,
+            0.00,
+            0.00,
+            v_sub_qty,
+            v_line.unit,
+            timezone('utc'::text, now()),
+            timezone('utc'::text, now())
+        );
+
+        UPDATE public.inventory_document_lines
+        SET submitted_qty = submitted_qty + v_sub_qty,
+            pending_qty = pending_qty + v_sub_qty,
+            updated_at = timezone('utc'::text, now())
+        WHERE id = v_line_id;
+    END LOOP;
+
+    -- Update assignment status to submitted if it was in_progress
+    UPDATE public.inventory_documents
+    SET status = CASE WHEN status = 'in_progress' THEN 'submitted' ELSE status END,
+        version = version + 1,
+        updated_at = timezone('utc'::text, now())
+    WHERE id = v_assign_id;
+
+    INSERT INTO public.inventory_movements (
+        document_id, movement_type, quantity, delta_stock, project_id,
+        recipient_id, recipient_name_snapshot, actor_auth_user_id, actor_name_snapshot,
+        notes, metadata, created_at
+    ) VALUES (
+        v_assign_id, 'WORK_EVENT', 0, 0, v_assign.project_id,
+        v_assign.recipient_id, v_assign.recipient_name_snapshot, v_auth_uid, v_actor_name,
+        p_payload->>'note',
+        jsonb_build_object('event_type', 'submission_created', 'submission_id', v_sub_id, 'note', p_payload->>'note'),
+        timezone('utc'::text, now())
+    );
+
+    v_result := jsonb_build_object(
+        'success', true,
+        'data', jsonb_build_object('id', v_sub_id, 'assignment_id', v_assign_id)
+    );
+
+    PERFORM public.warehouse_command_finish('work_submit', v_payload_hash, p_idempotency_key, v_result, v_sub_id, false);
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- Alias preserving submit_work
+
+-- 4.5 Inspect Work (Accept / Reject per Submission Line)
+CREATE OR REPLACE FUNCTION public.warehouse_inspect_work(
+    p_payload JSONB,
+    p_idempotency_key UUID
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_actor_name TEXT;
+    v_payload_hash TEXT;
+    v_cached JSONB;
+    v_sub_id UUID;
+    v_sub RECORD;
+    v_assign RECORD;
+    v_insp_id UUID;
+    v_elem JSONB;
+    v_sub_line_id UUID;
+    v_acc_qty NUMERIC(12,2);
+    v_rej_qty NUMERIC(12,2);
+    v_sub_line RECORD;
+    v_has_pending_sub_lines BOOLEAN;
+    v_has_remaining_work BOOLEAN;
+    v_result JSONB;
+BEGIN
+    IF p_idempotency_key IS NULL THEN
+        RAISE EXCEPTION 'Idempotency key (UUID) strictly required';
+    END IF;
+
+    v_payload_hash := md5('work_inspect:' || p_payload::text);
+
+    v_cached := public.warehouse_command_lookup('work_inspect', v_payload_hash, p_idempotency_key, false);
+    IF v_cached IS NOT NULL THEN
+        RETURN v_cached;
+    END IF;
+
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required';
+    END IF;
+
+    SELECT coalesce(full_name, username) INTO v_actor_name
+    FROM public.staff_users
+    WHERE auth_user_id = v_auth_uid AND is_active = TRUE
+    LIMIT 1;
+
+    IF v_actor_name IS NULL THEN
+        RAISE EXCEPTION 'Active staff mapping not found';
+    END IF;
+
+    IF NOT (public.fn_can_access_inventory(v_auth_uid) OR public.fn_can_manage_cash(v_auth_uid)) THEN
+        RAISE EXCEPTION 'Unauthorized to inspect work';
+    END IF;
+
+    v_sub_id := (p_payload->>'submission_id')::UUID;
+
+    -- Lock SUBMISSION document
+    SELECT * INTO v_sub
+    FROM public.inventory_documents
+    WHERE id = v_sub_id AND doc_type = 'SUBMISSION'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Submission % not found', v_sub_id;
+    END IF;
+
+    -- Lock parent WORK document
+    SELECT * INTO v_assign
+    FROM public.inventory_documents
+    WHERE id = v_sub.parent_document_id AND doc_type = 'WORK'
+    FOR UPDATE;
+
+    IF v_assign.is_cash THEN
+        RAISE EXCEPTION 'Generic inspect on cash assignment is prohibited; prepared banknotes flow through cash ledger';
+    END IF;
+
+    -- Create INSPECTION document header
+    INSERT INTO public.inventory_documents (
+        doc_number,
+        doc_type,
+        parent_document_id,
+        source_document_id,
+        project_id,
+        status,
+        notes,
+        actor_auth_user_id,
+        actor_name_snapshot,
+        is_cash,
+        created_at,
+        updated_at
+    ) VALUES (
+        'INS-' || substring(gen_random_uuid()::text, 1, 8),
+        'INSPECTION',
+        v_sub_id,
+        v_assign.id,
+        v_assign.project_id,
+        'completed',
+        p_payload->>'note',
+        v_auth_uid,
+        v_actor_name,
+        false,
+        timezone('utc'::text, now()),
+        timezone('utc'::text, now())
+    ) RETURNING id INTO v_insp_id;
+
+    FOR v_elem IN SELECT * FROM jsonb_array_elements(p_payload->'lines') LOOP
+        v_sub_line_id := (v_elem->>'submission_line_id')::UUID;
+        v_acc_qty := coalesce((v_elem->>'accepted_qty')::NUMERIC(12,2), 0);
+        v_rej_qty := coalesce((v_elem->>'rejected_qty')::NUMERIC(12,2), 0);
+
+        IF v_acc_qty < 0 OR v_rej_qty < 0 THEN
+            RAISE EXCEPTION 'Accepted and rejected quantities must be non-negative';
+        END IF;
+
+        -- Lock submission line
+        SELECT * INTO v_sub_line
+        FROM public.inventory_document_lines
+        WHERE id = v_sub_line_id AND document_id = v_sub_id AND line_type = 'SUBMISSION'
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Submission line % not found', v_sub_line_id;
+        END IF;
+
+        IF (v_acc_qty + v_rej_qty) > v_sub_line.pending_qty THEN
+            RAISE EXCEPTION 'Inspection total (% + %) cannot accept more than pending quantity (%) for line %',
+                v_acc_qty, v_rej_qty, v_sub_line.pending_qty, v_sub_line_id;
+        END IF;
+
+        -- Insert INSPECTION line
+        INSERT INTO public.inventory_document_lines (
+            document_id,
+            line_type,
+            source_line_id,
+            accepted_qty,
+            rejected_qty,
+            notes,
+            unit,
+            created_at,
+            updated_at
+        ) VALUES (
+            v_insp_id,
+            'INSPECTION',
+            v_sub_line_id,
+            v_acc_qty,
+            v_rej_qty,
+            v_elem->>'notes',
+            v_sub_line.unit,
+            timezone('utc'::text, now()),
+            timezone('utc'::text, now())
+        );
+
+        -- Update submission line counters
+        UPDATE public.inventory_document_lines
+        SET accepted_qty = accepted_qty + v_acc_qty,
+            rejected_qty = rejected_qty + v_rej_qty,
+            pending_qty = pending_qty - (v_acc_qty + v_rej_qty),
+            updated_at = timezone('utc'::text, now())
+        WHERE id = v_sub_line_id;
+
+        -- Update WORK_OUTPUT line counters:
+        -- accepted increases accepted_qty; rejected frees remaining work (rejected_qty increases, pending decreases)
+        UPDATE public.inventory_document_lines
+        SET accepted_qty = accepted_qty + v_acc_qty,
+            rejected_qty = rejected_qty + v_rej_qty,
+            pending_qty = pending_qty - (v_acc_qty + v_rej_qty),
+            updated_at = timezone('utc'::text, now())
+        WHERE id = v_sub_line.source_line_id;
+    END LOOP;
+
+    -- Update SUBMISSION status
+    SELECT EXISTS (
+        SELECT 1 FROM public.inventory_document_lines
+        WHERE document_id = v_sub_id AND line_type = 'SUBMISSION' AND pending_qty > 0
+    ) INTO v_has_pending_sub_lines;
+
+    UPDATE public.inventory_documents
+    SET status = CASE WHEN v_has_pending_sub_lines THEN 'partially_inspected' ELSE 'inspected' END,
+        updated_at = timezone('utc'::text, now())
+    WHERE id = v_sub_id;
+
+    -- Update parent WORK status: if uncompleted work remains and no other pending submissions, status can revert to in_progress
+    SELECT EXISTS (
+        SELECT 1 FROM public.inventory_document_lines
+        WHERE document_id = v_assign.id AND line_type = 'WORK_OUTPUT' AND accepted_qty < required_qty
+    ) INTO v_has_remaining_work;
+
+    IF v_has_remaining_work THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM public.inventory_documents
+            WHERE parent_document_id = v_assign.id AND doc_type = 'SUBMISSION' AND status = 'pending'
+        ) THEN
+            UPDATE public.inventory_documents
+            SET status = 'in_progress',
+                version = version + 1,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_assign.id;
+        ELSE
+            UPDATE public.inventory_documents
+            SET version = version + 1,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_assign.id;
+        END IF;
+    ELSE
+        UPDATE public.inventory_documents
+        SET version = version + 1,
+            updated_at = timezone('utc'::text, now())
+        WHERE id = v_assign.id;
+    END IF;
+
+    INSERT INTO public.inventory_movements (
+        document_id, movement_type, quantity, delta_stock, project_id,
+        recipient_id, recipient_name_snapshot, actor_auth_user_id, actor_name_snapshot,
+        notes, metadata, created_at
+    ) VALUES (
+        v_assign.id, 'WORK_EVENT', 0, 0, v_assign.project_id,
+        v_assign.recipient_id, v_assign.recipient_name_snapshot, v_auth_uid, v_actor_name,
+        p_payload->>'note',
+        jsonb_build_object('event_type', 'inspection_completed', 'inspection_id', v_insp_id, 'submission_id', v_sub_id),
+        timezone('utc'::text, now())
+    );
+
+    v_result := jsonb_build_object(
+        'success', true,
+        'data', jsonb_build_object('id', v_insp_id, 'submission_id', v_sub_id)
+    );
+
+    PERFORM public.warehouse_command_finish('work_inspect', v_payload_hash, p_idempotency_key, v_result, v_insp_id, false);
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- Alias preserving inspect_work
+
+-- 4.6 Set Assignment Status (in_progress, submitted, completed, problem, cancelled)
+CREATE OR REPLACE FUNCTION public.warehouse_set_assignment_status(
+    p_payload JSONB,
+    p_idempotency_key UUID
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_actor_name TEXT;
+    v_payload_hash TEXT;
+    v_cached JSONB;
+    v_assign_id UUID;
+    v_expected_ver INT;
+    v_new_status TEXT;
+    v_reason TEXT;
+    v_assign RECORD;
+    v_incomplete RECORD;
+    v_result JSONB;
+BEGIN
+    IF p_idempotency_key IS NULL THEN
+        RAISE EXCEPTION 'Idempotency key (UUID) strictly required';
+    END IF;
+
+    v_payload_hash := md5('assignment_set_status:' || p_payload::text);
+
+    v_cached := public.warehouse_command_lookup('assignment_set_status', v_payload_hash, p_idempotency_key, false);
+    IF v_cached IS NOT NULL THEN
+        RETURN v_cached;
+    END IF;
+
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required';
+    END IF;
+
+    SELECT coalesce(full_name, username) INTO v_actor_name
+    FROM public.staff_users
+    WHERE auth_user_id = v_auth_uid AND is_active = TRUE
+    LIMIT 1;
+
+    IF v_actor_name IS NULL THEN
+        RAISE EXCEPTION 'Active staff mapping not found';
+    END IF;
+
+    IF NOT public.fn_can_access_inventory(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: Inventory access required to set assignment status';
+    END IF;
+
+    v_assign_id := (p_payload->>'assignment_id')::UUID;
+    v_expected_ver := (p_payload->>'expected_version')::INT;
+
+    IF v_expected_ver IS NULL OR v_expected_ver < 1 THEN
+        RAISE EXCEPTION 'expected_version must be a positive integer';
+    END IF;
+
+    v_new_status := p_payload->>'status';
+    v_reason := trim(coalesce(p_payload->>'reason', ''));
+
+    IF v_new_status NOT IN ('in_progress', 'submitted', 'completed', 'problem', 'cancelled') THEN
+        RAISE EXCEPTION 'Invalid assignment status: %', v_new_status;
+    END IF;
+
+    -- Lock parent WORK document
+    SELECT * INTO v_assign
+    FROM public.inventory_documents
+    WHERE id = v_assign_id AND doc_type = 'WORK'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Assignment % not found', v_assign_id;
+    END IF;
+
+    IF v_assign.version <> v_expected_ver THEN
+        RAISE EXCEPTION 'Version conflict: Expected version % but found % (stale overwrite rejected)', v_expected_ver, v_assign.version;
+    END IF;
+
+    -- Cash assignment status modification requires cash permissions for any status
+    IF v_assign.is_cash AND NOT public.fn_can_manage_cash(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: Cash management permissions required for cash assignment';
+    END IF;
+
+    IF v_new_status = 'completed' THEN
+        -- Verify all active lines are fully accepted and no pending inspection
+        SELECT * INTO v_incomplete
+        FROM public.inventory_document_lines
+        WHERE document_id = v_assign_id
+          AND line_type = 'WORK_OUTPUT'
+          AND is_active = TRUE
+          AND (accepted_qty < required_qty OR pending_qty > 0)
+        LIMIT 1;
+
+        IF FOUND THEN
+            RAISE EXCEPTION 'Cannot complete assignment: Not all required outputs are accepted (line %: accepted %, required %, pending %)',
+                v_incomplete.id, v_incomplete.accepted_qty, v_incomplete.required_qty, v_incomplete.pending_qty;
+        END IF;
+    END IF;
+
+    IF v_new_status IN ('cancelled', 'problem') THEN
+        IF v_reason = '' THEN
+            RAISE EXCEPTION 'Reason is strictly required for % status', v_new_status;
+        END IF;
+    END IF;
+
+    UPDATE public.inventory_documents
+    SET status = v_new_status,
+        version = version + 1,
+        notes = CASE 
+            WHEN v_reason <> '' THEN coalesce(notes || E'\n', '') || '[' || v_new_status || '] ' || v_reason 
+            ELSE notes 
+        END,
+        updated_at = timezone('utc'::text, now())
+    WHERE id = v_assign_id;
+
+    INSERT INTO public.inventory_movements (
+        document_id, movement_type, quantity, delta_stock, project_id,
+        recipient_id, recipient_name_snapshot, actor_auth_user_id, actor_name_snapshot,
+        notes, metadata, created_at
+    ) VALUES (
+        v_assign_id, 'WORK_EVENT', 0, 0, v_assign.project_id,
+        v_assign.recipient_id, v_assign.recipient_name_snapshot, v_auth_uid, v_actor_name,
+        v_reason,
+        jsonb_build_object('event_type', 'status_changed', 'from_status', v_assign.status, 'to_status', v_new_status, 'reason', v_reason),
+        timezone('utc'::text, now())
+    );
+
+    v_result := jsonb_build_object(
+        'success', true,
+        'data', jsonb_build_object('id', v_assign_id, 'status', v_new_status, 'version', v_assign.version + 1)
+    );
+
+    PERFORM public.warehouse_command_finish('assignment_set_status', v_payload_hash, p_idempotency_key, v_result, v_assign_id, false);
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- Alias preserving set_assignment_status
+
+-- ------------------------------------------------------------------------------
+-- 5. READ BUDGET & PRODUCTION BOARD RPCs
+-- ------------------------------------------------------------------------------
+
+-- 5.1 Project Production Board (Bounded Preview & Summary)
+CREATE OR REPLACE FUNCTION public.warehouse_load_production_project(
+    p_project_id TEXT,
+    p_limit INT DEFAULT 25,
+    p_offset INT DEFAULT 0
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_can_manage_cash BOOLEAN;
+    v_can_check BOOLEAN;
+    v_clean_limit INT;
+    v_clean_offset INT;
+    v_project RECORD;
+    v_assignments JSONB;
+    v_has_restricted BOOLEAN;
+    v_total_count INT;
+    v_completed_count INT;
+    v_pending_review_count INT;
+    v_problem_count INT;
+    v_cancelled_count INT;
+    v_ready_for_next BOOLEAN;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required';
+    END IF;
+
+    v_can_check := public.fn_can_access_inventory(v_auth_uid);
+    IF NOT v_can_check THEN
+        RAISE EXCEPTION 'Unauthorized to access warehouse production project';
+    END IF;
+
+    v_can_manage_cash := public.fn_can_manage_cash(v_auth_uid);
+
+    -- Default 25, bounded between 1 and 50
+    v_clean_limit := LEAST(GREATEST(coalesce(p_limit, 25), 1), 50);
+    v_clean_offset := GREATEST(coalesce(p_offset, 0), 0);
+
+    SELECT id, name INTO v_project
+    FROM public.projects
+    WHERE id = p_project_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Project % not found', p_project_id;
+    END IF;
+
+    -- Check if restricted cash assignments exist in this project
+    SELECT EXISTS (
+        SELECT 1 FROM public.inventory_documents
+        WHERE project_id = p_project_id AND doc_type = 'WORK' AND is_cash = TRUE
+    ) INTO v_has_restricted;
+
+    -- Compute project-wide summary counts (excluding cash if unauthorized)
+    SELECT 
+        count(*)::INT,
+        count(*) FILTER (WHERE status = 'completed')::INT,
+        count(*) FILTER (WHERE status = 'submitted')::INT,
+        count(*) FILTER (WHERE status = 'problem')::INT,
+        count(*) FILTER (WHERE status = 'cancelled')::INT
+    INTO 
+        v_total_count,
+        v_completed_count,
+        v_pending_review_count,
+        v_problem_count,
+        v_cancelled_count
+    FROM public.inventory_documents
+    WHERE project_id = p_project_id
+      AND doc_type = 'WORK'
+      AND (NOT is_cash OR v_can_manage_cash);
+
+    -- Ready for next step is true ONLY when there is at least 1 completed task and all tasks are resolved (not empty or all cancelled)
+    v_ready_for_next := (v_total_count > 0 AND v_completed_count > 0 AND (v_completed_count + v_cancelled_count) = v_total_count);
+
+    -- Load assignments with bounded submission preview (first 5 submissions, latest inspection info)
+    SELECT coalesce(jsonb_agg(to_jsonb(a)), '[]'::jsonb) INTO v_assignments
+    FROM (
+        SELECT 
+            pa.id,
+            pa.title,
+            pa.status,
+            pa.version,
+            pa.recipient_id,
+            pa.recipient_name_snapshot AS responsible_name,
+            pa.team_members_snapshot,
+            pa.due_at,
+            pa.source_document_id,
+            CASE WHEN pa.is_cash THEN pa.source_document_id ELSE NULL END AS source_cash_batch_id,
+            pa.is_cash AS cash_only,
+            coalesce((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', pal.id,
+                    'description', pal.description,
+                    'unit', pal.unit,
+                    'required_qty', pal.required_qty,
+                    'submitted_qty', pal.submitted_qty,
+                    'accepted_qty', pal.accepted_qty,
+                    'rejected_qty', pal.rejected_qty,
+                    'pending_qty', pal.pending_qty,
+                    'remaining_qty', GREATEST(0, pal.required_qty - pal.accepted_qty)
+                ))
+                FROM public.inventory_document_lines pal
+                WHERE pal.document_id = pa.id AND pal.line_type = 'WORK_OUTPUT' AND pal.is_active = TRUE
+            ), '[]'::jsonb) AS lines,
+            coalesce((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', ps.id,
+                    'submitted_at', ps.created_at,
+                    'submitted_by_name', ps.actor_name_snapshot,
+                    'note', ps.notes,
+                    'status', ps.status,
+                    'lines', coalesce((
+                        SELECT jsonb_agg(jsonb_build_object(
+                            'id', psl.id,
+                            'line_id', psl.source_line_id,
+                            'quantity', psl.quantity,
+                            'accepted_qty', psl.accepted_qty,
+                            'rejected_qty', psl.rejected_qty,
+                            'pending_qty', psl.pending_qty
+                        ))
+                        FROM public.inventory_document_lines psl
+                        WHERE psl.document_id = ps.id AND psl.line_type = 'SUBMISSION'
+                    ), '[]'::jsonb),
+                    'inspections', coalesce((
+                        SELECT jsonb_agg(jsonb_build_object(
+                            'id', pi.id,
+                            'inspector_name', pi.actor_name_snapshot,
+                            'inspected_at', pi.created_at,
+                            'notes', pi.notes,
+                            'lines', coalesce((
+                                SELECT jsonb_agg(jsonb_build_object(
+                                    'id', pil.id,
+                                    'submission_line_id', pil.source_line_id,
+                                    'accepted_qty', pil.accepted_qty,
+                                    'rejected_qty', pil.rejected_qty,
+                                    'notes', pil.notes
+                                ))
+                                FROM public.inventory_document_lines pil
+                                WHERE pil.document_id = pi.id AND pil.line_type = 'INSPECTION'
+                            ), '[]'::jsonb)
+                        ) ORDER BY pi.created_at ASC)
+                        FROM public.inventory_documents pi
+                        WHERE pi.parent_document_id = ps.id AND pi.doc_type = 'INSPECTION'
+                    ), '[]'::jsonb)
+                ) ORDER BY ps.created_at DESC)
+                FROM (
+                    SELECT * FROM public.inventory_documents
+                    WHERE parent_document_id = pa.id AND doc_type = 'SUBMISSION'
+                    ORDER BY created_at DESC
+                    LIMIT 5
+                ) ps
+            ), '[]'::jsonb) AS submissions,
+            ((SELECT count(*) FROM public.inventory_documents WHERE parent_document_id = pa.id AND doc_type = 'SUBMISSION') > 5) AS has_more_submissions,
+            (
+                SELECT jsonb_build_object(
+                    'inspector_name', pi.actor_name_snapshot,
+                    'inspected_at', pi.created_at,
+                    'notes', pi.notes
+                )
+                FROM public.inventory_documents pi
+                WHERE pi.source_document_id = pa.id AND pi.doc_type = 'INSPECTION'
+                ORDER BY pi.created_at DESC
+                LIMIT 1
+            ) AS latest_check
+        FROM public.inventory_documents pa
+        WHERE pa.project_id = p_project_id
+          AND pa.doc_type = 'WORK'
+          AND (NOT pa.is_cash OR v_can_manage_cash)
+        ORDER BY pa.created_at ASC
+        LIMIT v_clean_limit
+        OFFSET v_clean_offset
+    ) a;
+
+    RETURN jsonb_build_object(
+        'project', jsonb_build_object('id', v_project.id, 'name', v_project.name),
+        'assignments', v_assignments,
+        'summary', jsonb_build_object(
+            'assignment_count', v_total_count,
+            'completed_count', v_completed_count,
+            'pending_review_count', v_pending_review_count,
+            'problem_count', v_problem_count,
+            'cancelled_count', v_cancelled_count,
+            'ready_for_next_step', v_ready_for_next,
+            'has_restricted_work', v_has_restricted
+        ),
+        'permissions', jsonb_build_object(
+            'can_check', v_can_check,
+            'can_manage_cash', v_can_manage_cash
+        ),
+        'updated_at', timezone('utc'::text, now()),
+        'has_more', (v_clean_offset + v_clean_limit) < v_total_count
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+-- Alias preserving load_production_project
+
+-- 5.2 Detailed Receipts On-Demand (warehouse_get_work_details)
+CREATE OR REPLACE FUNCTION public.warehouse_get_work_details(
+    p_assignment_id UUID,
+    p_limit INT DEFAULT 20,
+    p_offset INT DEFAULT 0
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_clean_limit INT;
+    v_clean_offset INT;
+    v_assign RECORD;
+    v_total_subs INT;
+    v_submissions JSONB;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required';
+    END IF;
+
+    IF NOT (public.fn_can_access_inventory(v_auth_uid) OR public.fn_can_manage_cash(v_auth_uid)) THEN
+        RAISE EXCEPTION 'Unauthorized to access warehouse production work details';
+    END IF;
+
+    v_clean_limit := LEAST(GREATEST(coalesce(p_limit, 20), 1), 100);
+    v_clean_offset := GREATEST(coalesce(p_offset, 0), 0);
+
+    SELECT * INTO v_assign
+    FROM public.inventory_documents
+    WHERE id = p_assignment_id AND doc_type = 'WORK';
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Assignment % not found', p_assignment_id;
+    END IF;
+
+    IF v_assign.is_cash AND NOT public.fn_can_manage_cash(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized to access cash work details';
+    END IF;
+
+    SELECT count(*)::INT INTO v_total_subs
+    FROM public.inventory_documents
+    WHERE parent_document_id = p_assignment_id AND doc_type = 'SUBMISSION';
+
+    SELECT coalesce(jsonb_agg(to_jsonb(s)), '[]'::jsonb) INTO v_submissions
+    FROM (
+        SELECT 
+            ps.id,
+            ps.created_at AS submitted_at,
+            ps.actor_name_snapshot AS submitted_by_name,
+            ps.actor_auth_user_id AS submitted_by_auth_user_id,
+            ps.notes AS note,
+            ps.status,
+            coalesce((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', psl.id,
+                    'line_id', psl.source_line_id,
+                    'quantity', psl.quantity,
+                    'accepted_qty', psl.accepted_qty,
+                    'rejected_qty', psl.rejected_qty,
+                    'pending_qty', psl.pending_qty,
+                    'unit', psl.unit
+                ))
+                FROM public.inventory_document_lines psl
+                WHERE psl.document_id = ps.id AND psl.line_type = 'SUBMISSION'
+            ), '[]'::jsonb) AS lines,
+            coalesce((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', pi.id,
+                    'inspector_auth_user_id', pi.actor_auth_user_id,
+                    'inspector_name', pi.actor_name_snapshot,
+                    'inspected_at', pi.created_at,
+                    'notes', pi.notes,
+                    'lines', coalesce((
+                        SELECT jsonb_agg(jsonb_build_object(
+                            'id', pil.id,
+                            'submission_line_id', pil.source_line_id,
+                            'accepted_qty', pil.accepted_qty,
+                            'rejected_qty', pil.rejected_qty,
+                            'notes', pil.notes
+                        ))
+                        FROM public.inventory_document_lines pil
+                        WHERE pil.document_id = pi.id AND pil.line_type = 'INSPECTION'
+                    ), '[]'::jsonb)
+                ) ORDER BY pi.created_at ASC)
+                FROM public.inventory_documents pi
+                WHERE pi.parent_document_id = ps.id AND pi.doc_type = 'INSPECTION'
+            ), '[]'::jsonb) AS inspections
+        FROM public.inventory_documents ps
+        WHERE ps.parent_document_id = p_assignment_id AND ps.doc_type = 'SUBMISSION'
+        ORDER BY ps.created_at DESC
+        LIMIT v_clean_limit
+        OFFSET v_clean_offset
+    ) s;
+
+    RETURN jsonb_build_object(
+        'assignment_id', p_assignment_id,
+        'submissions', v_submissions,
+        'total_submissions', v_total_subs,
+        'has_more', (v_clean_offset + v_clean_limit) < v_total_subs
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+-- 5.3 Targeted Work Cards Refresh (warehouse_get_work_cards, max 25)
+CREATE OR REPLACE FUNCTION public.warehouse_get_work_cards(
+    p_project_id TEXT,
+    p_assignment_ids UUID[]
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_can_manage_cash BOOLEAN;
+    v_target_ids UUID[];
+    v_cards JSONB;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required';
+    END IF;
+
+    IF NOT (public.fn_can_access_inventory(v_auth_uid) OR public.fn_can_manage_cash(v_auth_uid)) THEN
+        RAISE EXCEPTION 'Unauthorized to access warehouse production cards';
+    END IF;
+
+    v_can_manage_cash := public.fn_can_manage_cash(v_auth_uid);
+
+    -- Cap targeted refresh at 25 IDs
+    SELECT array_agg(t.id) INTO v_target_ids
+    FROM (
+        SELECT unnest(p_assignment_ids) AS id
+        LIMIT 25
+    ) t;
+
+    IF v_target_ids IS NULL OR array_length(v_target_ids, 1) = 0 THEN
+        RETURN '[]'::jsonb;
+    END IF;
+
+    SELECT coalesce(jsonb_agg(to_jsonb(a)), '[]'::jsonb) INTO v_cards
+    FROM (
+        SELECT 
+            pa.id,
+            pa.title,
+            pa.status,
+            pa.version,
+            pa.recipient_id,
+            pa.recipient_name_snapshot AS responsible_name,
+            pa.team_members_snapshot,
+            pa.due_at,
+            pa.source_document_id,
+            CASE WHEN pa.is_cash THEN pa.source_document_id ELSE NULL END AS source_cash_batch_id,
+            pa.is_cash AS cash_only,
+            coalesce((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', pal.id,
+                    'description', pal.description,
+                    'unit', pal.unit,
+                    'required_qty', pal.required_qty,
+                    'submitted_qty', pal.submitted_qty,
+                    'accepted_qty', pal.accepted_qty,
+                    'rejected_qty', pal.rejected_qty,
+                    'pending_qty', pal.pending_qty,
+                    'remaining_qty', GREATEST(0, pal.required_qty - pal.accepted_qty)
+                ))
+                FROM public.inventory_document_lines pal
+                WHERE pal.document_id = pa.id AND pal.line_type = 'WORK_OUTPUT' AND pal.is_active = TRUE
+            ), '[]'::jsonb) AS lines,
+            coalesce((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', ps.id,
+                    'submitted_at', ps.created_at,
+                    'submitted_by_name', ps.actor_name_snapshot,
+                    'note', ps.notes,
+                    'status', ps.status,
+                    'lines', coalesce((
+                        SELECT jsonb_agg(jsonb_build_object(
+                            'id', psl.id,
+                            'line_id', psl.source_line_id,
+                            'quantity', psl.quantity,
+                            'accepted_qty', psl.accepted_qty,
+                            'rejected_qty', psl.rejected_qty,
+                            'pending_qty', psl.pending_qty
+                        ))
+                        FROM public.inventory_document_lines psl
+                        WHERE psl.document_id = ps.id AND psl.line_type = 'SUBMISSION'
+                    ), '[]'::jsonb),
+                    'inspections', coalesce((
+                        SELECT jsonb_agg(jsonb_build_object(
+                            'id', pi.id,
+                            'inspector_name', pi.actor_name_snapshot,
+                            'inspected_at', pi.created_at,
+                            'notes', pi.notes,
+                            'lines', coalesce((
+                                SELECT jsonb_agg(jsonb_build_object(
+                                    'id', pil.id,
+                                    'submission_line_id', pil.source_line_id,
+                                    'accepted_qty', pil.accepted_qty,
+                                    'rejected_qty', pil.rejected_qty,
+                                    'notes', pil.notes
+                                ))
+                                FROM public.inventory_document_lines pil
+                                WHERE pil.document_id = pi.id AND pil.line_type = 'INSPECTION'
+                            ), '[]'::jsonb)
+                        ) ORDER BY pi.created_at ASC)
+                        FROM public.inventory_documents pi
+                        WHERE pi.parent_document_id = ps.id AND pi.doc_type = 'INSPECTION'
+                    ), '[]'::jsonb)
+                ) ORDER BY ps.created_at DESC)
+                FROM (
+                    SELECT * FROM public.inventory_documents
+                    WHERE parent_document_id = pa.id AND doc_type = 'SUBMISSION'
+                    ORDER BY created_at DESC
+                    LIMIT 5
+                ) ps
+            ), '[]'::jsonb) AS submissions,
+            ((SELECT count(*) FROM public.inventory_documents WHERE parent_document_id = pa.id AND doc_type = 'SUBMISSION') > 5) AS has_more_submissions,
+            (
+                SELECT jsonb_build_object(
+                    'inspector_name', pi.actor_name_snapshot,
+                    'inspected_at', pi.created_at,
+                    'notes', pi.notes
+                )
+                FROM public.inventory_documents pi
+                WHERE pi.source_document_id = pa.id AND pi.doc_type = 'INSPECTION'
+                ORDER BY pi.created_at DESC
+                LIMIT 1
+            ) AS latest_check
+        FROM public.inventory_documents pa
+        WHERE pa.id = ANY(v_target_ids)
+          AND (p_project_id IS NULL OR pa.project_id = p_project_id)
+          AND pa.doc_type = 'WORK'
+          AND (NOT pa.is_cash OR v_can_manage_cash)
+        ORDER BY pa.created_at ASC
+    ) a;
+
+    RETURN v_cards;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+-- 5.4 Inspect Production Cash (Canonical Single-RPC Resolver)
+CREATE OR REPLACE FUNCTION public.warehouse_inspect_production_cash(
+    p_payload JSONB,
+    p_idempotency_key UUID
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_payload_hash TEXT;
+    v_cached JSONB;
+    v_assignment_id UUID;
+    v_batch_id UUID;
+    v_work_doc RECORD;
+    v_batch_doc RECORD;
+    v_project_id TEXT;
+    v_denom INT;
+    v_note_count INT;
+    v_notes TEXT;
+    v_core_result JSONB;
+BEGIN
+    IF p_idempotency_key IS NULL THEN
+        RAISE EXCEPTION 'Idempotency key (UUID) strictly required';
+    END IF;
+
+    v_payload_hash := md5('inspect_production_cash:' || p_payload::text);
+
+    v_cached := public.warehouse_command_lookup('inspect_production_cash', v_payload_hash, p_idempotency_key, true);
+    IF v_cached IS NOT NULL THEN
+        RETURN v_cached;
+    END IF;
+
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required';
+    END IF;
+
+    IF NOT public.fn_can_manage_cash(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: Cash management role strictly required to inspect cash';
+    END IF;
+
+    v_assignment_id := (p_payload->>'assignment_id')::UUID;
+    v_batch_id := (p_payload->>'batch_id')::UUID;
+    v_note_count := (p_payload->>'note_count')::INT;
+    v_notes := coalesce(p_payload->>'notes', 'Prepared notes verified from production hub');
+
+    IF v_note_count IS NULL OR v_note_count <= 0 THEN
+        RAISE EXCEPTION 'note_count must be a positive integer';
+    END IF;
+
+    -- Resolve canonical cash batch from assignment or batch ID
+    IF v_assignment_id IS NOT NULL THEN
+        SELECT id, project_id, source_document_id, is_cash, denomination INTO v_work_doc
+        FROM public.inventory_documents
+        WHERE id = v_assignment_id AND doc_type = 'WORK';
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Production cash assignment not found';
+        END IF;
+
+        IF NOT v_work_doc.is_cash OR v_work_doc.source_document_id IS NULL THEN
+            RAISE EXCEPTION 'Target assignment is not a canonical cash batch assignment';
+        END IF;
+
+        v_batch_id := v_work_doc.source_document_id;
+        v_project_id := v_work_doc.project_id;
+        v_denom := v_work_doc.denomination;
+    END IF;
+
+    IF v_batch_id IS NULL THEN
+        RAISE EXCEPTION 'Either assignment_id or batch_id must be provided to inspect production cash';
+    END IF;
+
+    -- Look up batch in unified documents or fallback
+    SELECT id, project_id, denomination INTO v_batch_doc
+    FROM public.inventory_documents
+    WHERE id = v_batch_id;
+
+    IF FOUND THEN
+        v_project_id := coalesce(v_project_id, v_batch_doc.project_id);
+        v_denom := coalesce(v_denom, v_batch_doc.denomination);
+    ELSE
+        BEGIN
+            EXECUTE 'SELECT project_id, denomination FROM public.cash_helper_batches WHERE id = $1'
+            INTO v_project_id, v_denom
+            USING v_batch_id;
+        EXCEPTION WHEN OTHERS THEN
+            v_project_id := NULL;
+        END;
+
+        IF v_project_id IS NULL THEN
+            RAISE EXCEPTION 'Source cash batch % not found', v_batch_id;
+        END IF;
+    END IF;
+
+    -- Dispatch canonical core cash_receive_prepared
+    v_core_result := public.warehouse_dispatch(
+        'cash_receive_prepared',
+        jsonb_build_object(
+            'project_id', v_project_id,
+            'batch_id', v_batch_id,
+            'denomination', v_denom,
+            'note_count', v_note_count,
+            'notes', v_notes
+        ),
+        p_idempotency_key
+    );
+
+    RETURN v_core_result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- ------------------------------------------------------------------------------
+-- 6. GRANTS & REVOCATIONS
+-- ------------------------------------------------------------------------------
+
+-- Private helpers: revoke from PUBLIC, anon, authenticated (definer-only)
+REVOKE ALL ON FUNCTION public.warehouse_ensure_production_work(UUID) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.warehouse_sync_cash_work(UUID) FROM PUBLIC, anon, authenticated;
+
+-- Public RPCs: revoke from PUBLIC and anon; grant execute to authenticated
+REVOKE ALL ON FUNCTION public.warehouse_list_people(TEXT, INT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_list_people(TEXT, INT) TO authenticated;
+
+REVOKE ALL ON FUNCTION public.warehouse_resolve_person(TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_resolve_person(TEXT) TO authenticated;
+
+
+REVOKE ALL ON FUNCTION public.warehouse_create_production_issue(JSONB, JSONB, UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_create_production_issue(JSONB, JSONB, UUID) TO authenticated;
+
+
+REVOKE ALL ON FUNCTION public.warehouse_create_assignment(JSONB, UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_create_assignment(JSONB, UUID) TO authenticated;
+
+
+REVOKE ALL ON FUNCTION public.warehouse_update_assignment(JSONB, UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_update_assignment(JSONB, UUID) TO authenticated;
+
+
+REVOKE ALL ON FUNCTION public.warehouse_split_assignment(JSONB, UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_split_assignment(JSONB, UUID) TO authenticated;
+
+
+REVOKE ALL ON FUNCTION public.warehouse_submit_work(JSONB, UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_submit_work(JSONB, UUID) TO authenticated;
+
+
+REVOKE ALL ON FUNCTION public.warehouse_inspect_work(JSONB, UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_inspect_work(JSONB, UUID) TO authenticated;
+
+
+REVOKE ALL ON FUNCTION public.warehouse_set_assignment_status(JSONB, UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_set_assignment_status(JSONB, UUID) TO authenticated;
+
+
+REVOKE ALL ON FUNCTION public.warehouse_load_production_project(TEXT, INT, INT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_load_production_project(TEXT, INT, INT) TO authenticated;
+
+
+REVOKE ALL ON FUNCTION public.warehouse_get_work_details(UUID, INT, INT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_get_work_details(UUID, INT, INT) TO authenticated;
+
+REVOKE ALL ON FUNCTION public.warehouse_get_work_cards(TEXT, UUID[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_get_work_cards(TEXT, UUID[]) TO authenticated;
+
+REVOKE ALL ON FUNCTION public.warehouse_inspect_production_cash(JSONB, UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_inspect_production_cash(JSONB, UUID) TO authenticated;

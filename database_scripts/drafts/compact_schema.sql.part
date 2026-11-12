@@ -1,0 +1,1798 @@
+-- ==============================================================================
+-- FLOWER2U COMPACT SCHEMA & LOSSLESS MIGRATION PART (v2)
+-- Owned file: database_scripts/drafts/compact_schema.sql.part
+-- Establishes canonical 8 inventory tables, migrates all 22 legacy/hub/plan-c
+-- tables losslessly, validates ID coverage & invariants, and retires legacy tables.
+-- ==============================================================================
+
+-- 1. FAIL-CLOSED GUARD
+-- Must be executed inside an assembly transaction configured with flower.compact_build = 'v2'
+DO $$
+BEGIN
+  IF current_setting('flower.compact_build', true) IS DISTINCT FROM 'v2' THEN
+    RAISE EXCEPTION 'flower.compact_build guard violation: expected v2, got %', current_setting('flower.compact_build', true);
+  END IF;
+END $$;
+
+-- Freeze both source and destination rows until this transaction commits.
+-- A busy installation aborts safely instead of migrating a changing cash ledger.
+DO $$
+DECLARE v_table TEXT;
+BEGIN
+  PERFORM set_config('lock_timeout', '5s', true);
+  PERFORM pg_advisory_xact_lock(781320462);
+  FOREACH v_table IN ARRAY ARRAY['asset_loans', 'asset_unit_custody', 'asset_units', 'cash_helper_batches', 'cash_job_reservations', 'cash_movements', 'cash_prepared_sets', 'cash_vault_denominations', 'inventory_categories', 'inventory_disposals', 'inventory_document_lines', 'inventory_documents', 'inventory_field_round_projects', 'inventory_field_rounds', 'inventory_idempotency_records', 'inventory_incidents', 'inventory_items', 'inventory_material_recoveries', 'inventory_movements', 'inventory_procurements', 'inventory_recipient_teams', 'inventory_recipients', 'production_assignment_events', 'production_assignment_lines', 'production_assignments', 'production_inspection_lines', 'production_inspections', 'production_submission_lines', 'production_submissions', 'project_checklist_items']
+  LOOP
+    IF to_regclass('public.' || v_table) IS NOT NULL THEN
+      EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE', v_table);
+    END IF;
+  END LOOP;
+END $$;
+
+-- 2. DROP KNOWN OLD AUTOCREATE / STOCK TRIGGERS BEFORE MIGRATION
+-- Prevents spurious work assignment creation or physical stock changes during import
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_doc_production_issue_create') THEN
+    DROP TRIGGER IF EXISTS trg_doc_production_issue_create ON public.inventory_documents;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_cash_helper_batch_sync') THEN
+    DROP TRIGGER IF EXISTS trg_cash_helper_batch_sync ON public.cash_helper_batches;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trigger_procurement_stock_add') THEN
+    DROP TRIGGER IF EXISTS trigger_procurement_stock_add ON public.inventory_procurements;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trigger_process_inventory_disposal') THEN
+    DROP TRIGGER IF EXISTS trigger_process_inventory_disposal ON public.inventory_disposals;
+  END IF;
+END $$;
+
+-- 3. DETECT UNRESOLVABLE CROSS-SOURCE UUID COLLISIONS
+-- If distinct source records have colliding UUIDs across tables feeding into
+-- documents, lines, or movements, abort immediately rather than corrupting data.
+DO $$
+DECLARE
+  v_collision_count INT := 0;
+  v_collision_desc TEXT := '';
+BEGIN
+  CREATE TEMP TABLE IF NOT EXISTS _pre_doc_ids (src TEXT, id UUID) ON COMMIT DROP;
+  TRUNCATE TABLE _pre_doc_ids;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_documents') THEN
+    INSERT INTO _pre_doc_ids SELECT 'inventory_documents', id FROM public.inventory_documents;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_field_rounds') THEN
+    INSERT INTO _pre_doc_ids SELECT 'inventory_field_rounds', id FROM public.inventory_field_rounds;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_incidents') THEN
+    INSERT INTO _pre_doc_ids SELECT 'inventory_incidents', id FROM public.inventory_incidents;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_job_reservations') THEN
+    INSERT INTO _pre_doc_ids SELECT 'cash_job_reservations', id FROM public.cash_job_reservations;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_helper_batches') THEN
+    INSERT INTO _pre_doc_ids SELECT 'cash_helper_batches', id FROM public.cash_helper_batches;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_prepared_sets') THEN
+    INSERT INTO _pre_doc_ids SELECT 'cash_prepared_sets', id FROM public.cash_prepared_sets;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_assignments') THEN
+    INSERT INTO _pre_doc_ids SELECT 'production_assignments', id FROM public.production_assignments;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_submissions') THEN
+    INSERT INTO _pre_doc_ids SELECT 'production_submissions', id FROM public.production_submissions;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_inspections') THEN
+    INSERT INTO _pre_doc_ids SELECT 'production_inspections', id FROM public.production_inspections;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'asset_loans') THEN
+    INSERT INTO _pre_doc_ids SELECT 'asset_loans', id FROM public.asset_loans;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_procurements') THEN
+    INSERT INTO _pre_doc_ids SELECT 'inventory_procurements', id FROM public.inventory_procurements;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_disposals') THEN
+    INSERT INTO _pre_doc_ids SELECT 'inventory_disposals', id FROM public.inventory_disposals;
+  END IF;
+
+  SELECT count(*), COALESCE(string_agg(src || ':' || id::text, ', '), '')
+  INTO v_collision_count, v_collision_desc
+  FROM (
+    SELECT id, string_agg(src, '+') AS src
+    FROM _pre_doc_ids
+    GROUP BY id
+    HAVING count(DISTINCT src) > 1
+  ) c;
+
+  IF v_collision_count > 0 THEN
+    RAISE EXCEPTION 'Unresolvable cross-source UUID collision detected targeting inventory_documents: % [%]', v_collision_count, v_collision_desc;
+  END IF;
+
+  CREATE TEMP TABLE IF NOT EXISTS _pre_line_ids (src TEXT, id UUID) ON COMMIT DROP;
+  TRUNCATE TABLE _pre_line_ids;
+
+  -- Some deployed checklists use TEXT keys. Keep UUID keys unchanged and map
+  -- other legacy keys consistently; uniqueness failures abort before retiring data.
+  CREATE TEMP TABLE IF NOT EXISTS _legacy_checklist_ids (
+    legacy_id TEXT PRIMARY KEY, target_id UUID NOT NULL UNIQUE
+  ) ON COMMIT DROP;
+  TRUNCATE TABLE _legacy_checklist_ids;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_checklist_items') THEN
+    INSERT INTO _legacy_checklist_ids (legacy_id, target_id)
+    SELECT id::text, CASE
+      WHEN id::text ~* '^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$'
+        THEN id::text::uuid
+      ELSE md5('flower2u:legacy:project_checklist_items:' || id::text)::uuid
+    END FROM public.project_checklist_items;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_document_lines') THEN
+    INSERT INTO _pre_line_ids SELECT 'inventory_document_lines', id FROM public.inventory_document_lines;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_material_recoveries') THEN
+    INSERT INTO _pre_line_ids SELECT 'inventory_material_recoveries', id FROM public.inventory_material_recoveries;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'asset_unit_custody') THEN
+    INSERT INTO _pre_line_ids SELECT 'asset_unit_custody', id FROM public.asset_unit_custody;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_assignment_lines') THEN
+    INSERT INTO _pre_line_ids SELECT 'production_assignment_lines', id FROM public.production_assignment_lines;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_submission_lines') THEN
+    INSERT INTO _pre_line_ids SELECT 'production_submission_lines', id FROM public.production_submission_lines;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_inspection_lines') THEN
+    INSERT INTO _pre_line_ids SELECT 'production_inspection_lines', id FROM public.production_inspection_lines;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_checklist_items') THEN
+    INSERT INTO _pre_line_ids SELECT 'project_checklist_items', target_id FROM _legacy_checklist_ids;
+  END IF;
+
+  SELECT count(*), COALESCE(string_agg(src || ':' || id::text, ', '), '')
+  INTO v_collision_count, v_collision_desc
+  FROM (
+    SELECT id, string_agg(src, '+') AS src
+    FROM _pre_line_ids
+    GROUP BY id
+    HAVING count(DISTINCT src) > 1
+  ) c;
+
+  IF v_collision_count > 0 THEN
+    RAISE EXCEPTION 'Unresolvable cross-source UUID collision detected targeting inventory_document_lines: % [%]', v_collision_count, v_collision_desc;
+  END IF;
+
+  CREATE TEMP TABLE IF NOT EXISTS _pre_mov_ids (src TEXT, id UUID) ON COMMIT DROP;
+  TRUNCATE TABLE _pre_mov_ids;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_movements') THEN
+    INSERT INTO _pre_mov_ids SELECT 'inventory_movements', id FROM public.inventory_movements;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_movements') THEN
+    INSERT INTO _pre_mov_ids SELECT 'cash_movements', id FROM public.cash_movements;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_assignment_events') THEN
+    INSERT INTO _pre_mov_ids SELECT 'production_assignment_events', id FROM public.production_assignment_events;
+  END IF;
+
+  SELECT count(*), COALESCE(string_agg(src || ':' || id::text, ', '), '')
+  INTO v_collision_count, v_collision_desc
+  FROM (
+    SELECT id, string_agg(src, '+') AS src
+    FROM _pre_mov_ids
+    GROUP BY id
+    HAVING count(DISTINCT src) > 1
+  ) c;
+
+  IF v_collision_count > 0 THEN
+    RAISE EXCEPTION 'Unresolvable cross-source UUID collision detected targeting inventory_movements: % [%]', v_collision_count, v_collision_desc;
+  END IF;
+END $$;
+
+-- 4. ESTABLISH CANONICAL 8 INVENTORY TABLES & SCHEMAS
+
+-- 4.1 inventory_categories (Table 1/8)
+CREATE TABLE IF NOT EXISTS public.inventory_categories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL CHECK (type IN ('asset', 'consumable', 'reusable_material')),
+    description TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
+);
+
+ALTER TABLE public.inventory_categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
+
+-- 4.2 inventory_items (Table 2/8)
+CREATE TABLE IF NOT EXISTS public.inventory_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code TEXT UNIQUE,
+    name TEXT NOT NULL,
+    category_id UUID REFERENCES public.inventory_categories(id) ON DELETE SET NULL,
+    item_type TEXT NOT NULL,
+    unit TEXT NOT NULL DEFAULT 'ชิ้น',
+    current_stock NUMERIC(12,2) NOT NULL DEFAULT 0,
+    min_alert_threshold NUMERIC(12,2) DEFAULT 5,
+    average_cost NUMERIC(12,2) DEFAULT 0,
+    storage_location TEXT,
+    color TEXT,
+    size TEXT,
+    status TEXT NOT NULL DEFAULT 'in_service',
+    is_active BOOLEAN DEFAULT true,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
+);
+
+-- A Drive URL only: image binaries remain in Google Drive, never in Supabase.
+ALTER TABLE public.inventory_items ADD COLUMN IF NOT EXISTS image_url TEXT;
+
+-- Ensure item_type check accommodates banknote and task as historical data
+DO $$
+BEGIN
+  ALTER TABLE public.inventory_items DROP CONSTRAINT IF EXISTS inventory_items_item_type_check;
+  ALTER TABLE public.inventory_items ADD CONSTRAINT inventory_items_item_type_check 
+    CHECK (lower(item_type) IN ('asset', 'reusable', 'consumable', 'banknote', 'task', 'reusable_material'));
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;
+
+-- 4.3 inventory_recipients (Table 3/8)
+CREATE TABLE IF NOT EXISTS public.inventory_recipients (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    recipient_type TEXT NOT NULL DEFAULT 'individual' CHECK (recipient_type IN ('individual', 'team', 'casual_helper', 'staff')),
+    contact_info TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
+);
+
+-- Merge team attributes & staff link columns into inventory_recipients
+ALTER TABLE public.inventory_recipients ADD COLUMN IF NOT EXISTS staff_user_id TEXT;
+ALTER TABLE public.inventory_recipients ADD COLUMN IF NOT EXISTS primary_recipient_id UUID REFERENCES public.inventory_recipients(id) ON DELETE SET NULL;
+ALTER TABLE public.inventory_recipients ADD COLUMN IF NOT EXISTS primary_receiver_name TEXT;
+ALTER TABLE public.inventory_recipients ADD COLUMN IF NOT EXISTS member_names TEXT[] DEFAULT '{}';
+ALTER TABLE public.inventory_recipients ADD COLUMN IF NOT EXISTS team_is_active BOOLEAN DEFAULT true;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.inventory_recipients'::regclass 
+    AND conname = 'inventory_recipients_staff_user_id_key'
+  ) THEN
+    ALTER TABLE public.inventory_recipients ADD CONSTRAINT inventory_recipients_staff_user_id_key UNIQUE (staff_user_id);
+  END IF;
+END $$;
+
+-- 4.4 inventory_documents (Table 4/8)
+CREATE TABLE IF NOT EXISTS public.inventory_documents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    doc_number TEXT NOT NULL,
+    doc_type TEXT NOT NULL,
+    project_id TEXT REFERENCES public.projects(id) ON DELETE RESTRICT,
+    round_id UUID,
+    recipient_id UUID REFERENCES public.inventory_recipients(id) ON DELETE RESTRICT,
+    recipient_name_snapshot TEXT,
+    team_members_snapshot TEXT[] DEFAULT '{}',
+    idempotency_key UUID UNIQUE,
+    idempotency_payload_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'COMPLETED',
+    notes TEXT,
+    actor_auth_user_id UUID,
+    actor_name_snapshot TEXT,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
+);
+
+-- Repoint project_id FK to RESTRICT if existing was SET NULL
+ALTER TABLE public.inventory_documents DROP CONSTRAINT IF EXISTS inventory_documents_project_id_fkey;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.inventory_documents'::regclass 
+    AND conname = 'inventory_documents_project_id_fkey'
+  ) THEN
+    ALTER TABLE public.inventory_documents 
+      ADD CONSTRAINT inventory_documents_project_id_fkey 
+      FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE RESTRICT;
+  END IF;
+END $$;
+
+-- Drop old foreign key to inventory_field_rounds (delay re-adding until after round records copy)
+ALTER TABLE public.inventory_documents DROP CONSTRAINT IF EXISTS inventory_documents_round_id_fkey;
+
+-- Add compact canonical columns to inventory_documents
+ALTER TABLE public.inventory_documents ADD COLUMN IF NOT EXISTS parent_document_id UUID REFERENCES public.inventory_documents(id) ON DELETE RESTRICT;
+ALTER TABLE public.inventory_documents ADD COLUMN IF NOT EXISTS source_document_id UUID REFERENCES public.inventory_documents(id) ON DELETE RESTRICT;
+ALTER TABLE public.inventory_documents ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE public.inventory_documents ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ;
+ALTER TABLE public.inventory_documents ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1;
+ALTER TABLE public.inventory_documents ADD COLUMN IF NOT EXISTS is_cash BOOLEAN DEFAULT false;
+ALTER TABLE public.inventory_documents ADD COLUMN IF NOT EXISTS denomination INTEGER;
+ALTER TABLE public.inventory_documents ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE public.inventory_documents ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.inventory_documents ADD COLUMN IF NOT EXISTS action_name TEXT;
+ALTER TABLE public.inventory_documents ADD COLUMN IF NOT EXISTS response_payload JSONB;
+
+-- Relax old constraints safely for all new typed states
+ALTER TABLE public.inventory_documents ALTER COLUMN recipient_name_snapshot DROP NOT NULL;
+ALTER TABLE public.inventory_documents DROP CONSTRAINT IF EXISTS inventory_documents_doc_number_key;
+ALTER TABLE public.inventory_documents DROP CONSTRAINT IF EXISTS inventory_documents_doc_type_check;
+ALTER TABLE public.inventory_documents DROP CONSTRAINT IF EXISTS inventory_documents_status_check;
+
+-- Ensure doc_type check supports full canonical doc set
+ALTER TABLE public.inventory_documents ADD CONSTRAINT inventory_documents_doc_type_check CHECK (
+  doc_type IN (
+    'PRODUCTION_ISSUE', 'FIELD_ISSUE', 'RETURN_UNUSED', 'RECOVERY', 'OPENING_STOCK', 'ADJUSTMENT',
+    'FIELD_ROUND', 'INCIDENT', 'CASH_RESERVATION', 'CASH_BATCH', 'CASH_PREPARED',
+    'WORK', 'SUBMISSION', 'INSPECTION', 'WORK_EVENT', 'COMMAND',
+    'LEGACY_LOAN', 'PROCUREMENT', 'DISPOSAL', 'CHECKLIST', 'SYSTEM_MIGRATION'
+  )
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.inventory_documents'::regclass 
+    AND conname = 'inventory_documents_doc_type_doc_number_key'
+  ) THEN
+    ALTER TABLE public.inventory_documents ADD CONSTRAINT inventory_documents_doc_type_doc_number_key UNIQUE (doc_type, doc_number);
+  END IF;
+END $$;
+
+-- 4.5 inventory_document_lines (Table 5/8 - NEW)
+CREATE TABLE IF NOT EXISTS public.inventory_document_lines (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES public.inventory_documents(id) ON DELETE RESTRICT,
+    line_type TEXT NOT NULL CHECK (line_type IN (
+      'ITEM', 'TOOL_CUSTODY', 'ROUND_PROJECT', 'RECOVERY',
+      'WORK_OUTPUT', 'SUBMISSION', 'INSPECTION',
+      'CASH_RESERVATION', 'CASH_BATCH', 'CASH_PREPARED',
+      'CHECKLIST', 'LEGACY_DETAIL', 'INCIDENT'
+    )),
+    item_id UUID REFERENCES public.inventory_items(id) ON DELETE RESTRICT,
+    unit_code TEXT,
+    recipient_id UUID REFERENCES public.inventory_recipients(id) ON DELETE RESTRICT,
+    due_at TIMESTAMPTZ,
+    project_id TEXT REFERENCES public.projects(id) ON DELETE RESTRICT,
+    round_id UUID REFERENCES public.inventory_documents(id) ON DELETE RESTRICT,
+    source_line_id UUID REFERENCES public.inventory_document_lines(id) ON DELETE RESTRICT,
+    source_issue_movement_id UUID,
+    description TEXT,
+    unit TEXT,
+    quantity NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+    required_qty NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (required_qty >= 0),
+    submitted_qty NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (submitted_qty >= 0),
+    accepted_qty NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (accepted_qty >= 0),
+    rejected_qty NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (rejected_qty >= 0),
+    pending_qty NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (pending_qty >= 0),
+    returned_qty NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (returned_qty >= 0),
+    handed_over_qty NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (handed_over_qty >= 0),
+    delivered_qty NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (delivered_qty >= 0),
+    denomination INTEGER CHECK (denomination IS NULL OR denomination IN (20, 50, 100, 500, 1000)),
+    status TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    notes TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    CONSTRAINT chk_cash_integer_counts CHECK (
+      denomination IS NULL OR (
+        quantity = trunc(quantity) AND
+        required_qty = trunc(required_qty) AND
+        submitted_qty = trunc(submitted_qty) AND
+        accepted_qty = trunc(accepted_qty) AND
+        rejected_qty = trunc(rejected_qty) AND
+        pending_qty = trunc(pending_qty) AND
+        returned_qty = trunc(returned_qty) AND
+        handed_over_qty = trunc(handed_over_qty) AND
+        delivered_qty = trunc(delivered_qty)
+      )
+    )
+);
+
+ALTER TABLE public.inventory_document_lines ADD COLUMN IF NOT EXISTS recipient_id UUID REFERENCES public.inventory_recipients(id) ON DELETE RESTRICT;
+ALTER TABLE public.inventory_document_lines ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_inv_doc_lines_doc_id ON public.inventory_document_lines(document_id);
+CREATE INDEX IF NOT EXISTS idx_inv_doc_lines_line_type ON public.inventory_document_lines(line_type);
+CREATE INDEX IF NOT EXISTS idx_inv_doc_lines_item_id ON public.inventory_document_lines(item_id);
+CREATE INDEX IF NOT EXISTS idx_inv_doc_lines_unit_code ON public.inventory_document_lines(unit_code);
+CREATE INDEX IF NOT EXISTS idx_inv_doc_lines_recipient_id ON public.inventory_document_lines(recipient_id);
+CREATE INDEX IF NOT EXISTS idx_inv_doc_lines_project_id ON public.inventory_document_lines(project_id);
+CREATE INDEX IF NOT EXISTS idx_inv_doc_lines_source_line ON public.inventory_document_lines(source_line_id);
+
+-- 4.6 asset_units (Table 6/8)
+CREATE TABLE IF NOT EXISTS public.asset_units (
+    unit_code TEXT PRIMARY KEY,
+    item_id UUID NOT NULL REFERENCES public.inventory_items(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'AVAILABLE',
+    borrowed_by TEXT,
+    borrowed_at TIMESTAMPTZ,
+    project_id TEXT REFERENCES public.projects(id) ON DELETE SET NULL,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
+);
+
+ALTER TABLE public.asset_units ADD COLUMN IF NOT EXISTS active_recipient_id UUID REFERENCES public.inventory_recipients(id) ON DELETE SET NULL;
+ALTER TABLE public.asset_units ADD COLUMN IF NOT EXISTS active_custody_line_id UUID REFERENCES public.inventory_document_lines(id) ON DELETE SET NULL;
+ALTER TABLE public.asset_units ADD COLUMN IF NOT EXISTS active_round_id UUID REFERENCES public.inventory_documents(id) ON DELETE SET NULL;
+ALTER TABLE public.asset_units ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ;
+
+-- Ensure asset_units foreign keys
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.asset_units'::regclass 
+    AND conname = 'asset_units_active_custody_line_id_fkey'
+  ) THEN
+    ALTER TABLE public.asset_units 
+      ADD CONSTRAINT asset_units_active_custody_line_id_fkey 
+      FOREIGN KEY (active_custody_line_id) REFERENCES public.inventory_document_lines(id) ON DELETE SET NULL;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.asset_units'::regclass 
+    AND conname = 'asset_units_active_round_id_fkey'
+  ) THEN
+    ALTER TABLE public.asset_units 
+      ADD CONSTRAINT asset_units_active_round_id_fkey 
+      FOREIGN KEY (active_round_id) REFERENCES public.inventory_documents(id) ON DELETE SET NULL;
+  END IF;
+  -- Link unit_code on document lines
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.inventory_document_lines'::regclass 
+    AND conname = 'inventory_document_lines_unit_code_fkey'
+  ) THEN
+    ALTER TABLE public.inventory_document_lines
+      ADD CONSTRAINT inventory_document_lines_unit_code_fkey
+      FOREIGN KEY (unit_code) REFERENCES public.asset_units(unit_code) ON DELETE RESTRICT;
+  END IF;
+END $$;
+
+-- 4.7 inventory_movements (Table 7/8)
+CREATE TABLE IF NOT EXISTS public.inventory_movements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID REFERENCES public.inventory_documents(id) ON DELETE RESTRICT,
+    item_id UUID REFERENCES public.inventory_items(id) ON DELETE RESTRICT,
+    movement_type TEXT NOT NULL,
+    quantity NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+    delta_stock NUMERIC(12,2) NOT NULL DEFAULT 0,
+    source_issue_movement_id UUID REFERENCES public.inventory_movements(id) ON DELETE RESTRICT,
+    source_item_variant_snapshot JSONB,
+    notes TEXT,
+    actor_auth_user_id UUID,
+    actor_name_snapshot TEXT,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
+);
+
+-- Repoint document_id FK to RESTRICT if existing was CASCADE
+ALTER TABLE public.inventory_movements DROP CONSTRAINT IF EXISTS inventory_movements_document_id_fkey;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.inventory_movements'::regclass 
+    AND conname = 'inventory_movements_document_id_fkey'
+  ) THEN
+    ALTER TABLE public.inventory_movements 
+      ADD CONSTRAINT inventory_movements_document_id_fkey 
+      FOREIGN KEY (document_id) REFERENCES public.inventory_documents(id) ON DELETE RESTRICT;
+  END IF;
+END $$;
+
+-- Repoint source_issue_movement_id FK to RESTRICT if existing was SET NULL
+ALTER TABLE public.inventory_movements DROP CONSTRAINT IF EXISTS inventory_movements_source_issue_movement_id_fkey;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.inventory_movements'::regclass 
+    AND conname = 'inventory_movements_source_issue_movement_id_fkey'
+  ) THEN
+    ALTER TABLE public.inventory_movements 
+      ADD CONSTRAINT inventory_movements_source_issue_movement_id_fkey 
+      FOREIGN KEY (source_issue_movement_id) REFERENCES public.inventory_movements(id) ON DELETE RESTRICT;
+  END IF;
+END $$;
+
+-- Add compact columns to inventory_movements
+ALTER TABLE public.inventory_movements ADD COLUMN IF NOT EXISTS line_id UUID REFERENCES public.inventory_document_lines(id) ON DELETE RESTRICT;
+ALTER TABLE public.inventory_movements ADD COLUMN IF NOT EXISTS unit_code TEXT REFERENCES public.asset_units(unit_code) ON DELETE RESTRICT;
+ALTER TABLE public.inventory_movements ADD COLUMN IF NOT EXISTS project_id TEXT REFERENCES public.projects(id) ON DELETE RESTRICT;
+ALTER TABLE public.inventory_movements ADD COLUMN IF NOT EXISTS round_id UUID REFERENCES public.inventory_documents(id) ON DELETE RESTRICT;
+ALTER TABLE public.inventory_movements ADD COLUMN IF NOT EXISTS recipient_id UUID REFERENCES public.inventory_recipients(id) ON DELETE RESTRICT;
+ALTER TABLE public.inventory_movements ADD COLUMN IF NOT EXISTS recipient_name_snapshot TEXT;
+ALTER TABLE public.inventory_movements ADD COLUMN IF NOT EXISTS denomination INTEGER;
+ALTER TABLE public.inventory_movements ADD COLUMN IF NOT EXISTS from_location TEXT;
+ALTER TABLE public.inventory_movements ADD COLUMN IF NOT EXISTS to_location TEXT;
+ALTER TABLE public.inventory_movements ADD COLUMN IF NOT EXISTS is_cash BOOLEAN DEFAULT false;
+ALTER TABLE public.inventory_movements ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+
+-- Relax item_id and constraints on movements for cash/work audit events
+ALTER TABLE public.inventory_movements ALTER COLUMN item_id DROP NOT NULL;
+ALTER TABLE public.inventory_movements ALTER COLUMN delta_stock SET DEFAULT 0;
+ALTER TABLE public.inventory_movements DROP CONSTRAINT IF EXISTS inventory_movements_quantity_check;
+ALTER TABLE public.inventory_movements ADD CONSTRAINT inventory_movements_quantity_check CHECK (quantity >= 0);
+ALTER TABLE public.inventory_movements DROP CONSTRAINT IF EXISTS inventory_movements_movement_type_check;
+
+-- Link source_issue_movement_id on document lines
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.inventory_document_lines'::regclass 
+    AND conname = 'inventory_document_lines_source_issue_movement_id_fkey'
+  ) THEN
+    ALTER TABLE public.inventory_document_lines
+      ADD CONSTRAINT inventory_document_lines_source_issue_movement_id_fkey
+      FOREIGN KEY (source_issue_movement_id) REFERENCES public.inventory_movements(id) ON DELETE RESTRICT;
+  END IF;
+END $$;
+
+-- 4.8 cash_vault_denominations (Table 8/8)
+CREATE TABLE IF NOT EXISTS public.cash_vault_denominations (
+    denomination INT PRIMARY KEY CHECK (denomination IN (20, 50, 100, 500, 1000)),
+    physical_count INT NOT NULL DEFAULT 0 CHECK (physical_count >= 0),
+    reserved_count INT NOT NULL DEFAULT 0 CHECK (reserved_count >= 0 AND reserved_count <= physical_count),
+    low_alert_threshold INT NOT NULL DEFAULT 0 CHECK (low_alert_threshold >= 0),
+    target_available_count INT NOT NULL DEFAULT 0 CHECK (target_available_count >= 0),
+    is_initialized BOOLEAN NOT NULL DEFAULT false,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
+);
+
+-- Seed existing 5 physical rows if not already present
+INSERT INTO public.cash_vault_denominations (denomination, physical_count, reserved_count, low_alert_threshold, target_available_count, is_initialized)
+VALUES 
+    (20, 0, 0, 50, 200, false),
+    (50, 0, 0, 40, 150, false),
+    (100, 0, 0, 50, 200, false),
+    (500, 0, 0, 20, 100, false),
+    (1000, 0, 0, 10, 50, false)
+ON CONFLICT (denomination) DO NOTHING;
+
+-- 5. LOSSLESS DATA MIGRATION FROM 22 RETIRED TABLES
+
+-- 5.1 inventory_recipient_teams -> inventory_recipients
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_recipient_teams') THEN
+    UPDATE public.inventory_recipients r
+    SET primary_recipient_id = t.primary_recipient_id,
+        primary_receiver_name = t.primary_receiver_name,
+        member_names = t.member_names,
+        team_is_active = t.is_active
+    FROM public.inventory_recipient_teams t
+    WHERE r.id = t.team_recipient_id;
+  END IF;
+
+  -- Support staff UUID or TEXT matching
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'staff_users') THEN
+    UPDATE public.inventory_recipients r
+    SET staff_user_id = s.id::text
+    FROM public.staff_users s
+    WHERE r.recipient_type = 'staff' 
+      AND r.staff_user_id IS NULL
+      AND (r.name = s.full_name OR r.name = s.username);
+  END IF;
+END $$;
+
+-- 5.2 inventory_field_rounds -> inventory_documents
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_field_rounds') THEN
+    INSERT INTO public.inventory_documents (
+      id, doc_number, doc_type, title, recipient_id, recipient_name_snapshot,
+      team_members_snapshot, due_at, status, notes, actor_auth_user_id,
+      metadata, created_at, updated_at, version
+    )
+    SELECT
+      r.id,
+      r.round_code,
+      'FIELD_ROUND',
+      r.title,
+      r.recipient_id,
+      r.recipient_name_snapshot,
+      COALESCE(r.team_members_snapshot, '{}'),
+      r.expected_return_at,
+      r.status,
+      r.notes,
+      r.created_by_auth_user_id,
+      jsonb_build_object('legacy_table', 'inventory_field_rounds', 'created_by_auth_user_id', r.created_by_auth_user_id),
+      r.created_at,
+      COALESCE(r.updated_at, r.created_at),
+      1
+    FROM public.inventory_field_rounds r
+    ON CONFLICT (id) DO UPDATE SET
+      doc_type = 'FIELD_ROUND',
+      title = EXCLUDED.title,
+      recipient_id = EXCLUDED.recipient_id,
+      recipient_name_snapshot = EXCLUDED.recipient_name_snapshot,
+      team_members_snapshot = EXCLUDED.team_members_snapshot,
+      due_at = EXCLUDED.due_at,
+      status = EXCLUDED.status,
+      notes = EXCLUDED.notes;
+  END IF;
+
+  -- Link round_id self-referencing to inventory_documents now that all FIELD_ROUND documents are migrated
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.inventory_documents'::regclass 
+    AND conname = 'inventory_documents_round_id_fkey'
+  ) THEN
+    ALTER TABLE public.inventory_documents 
+      ADD CONSTRAINT inventory_documents_round_id_fkey 
+      FOREIGN KEY (round_id) REFERENCES public.inventory_documents(id) ON DELETE RESTRICT;
+  END IF;
+END $$;
+
+-- 5.3 inventory_field_round_projects -> inventory_document_lines
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_field_round_projects') THEN
+    INSERT INTO public.inventory_document_lines (
+      document_id, round_id, line_type, project_id, status, is_active, metadata, created_at, updated_at
+    )
+    SELECT
+      rp.round_id,
+      rp.round_id,
+      'ROUND_PROJECT',
+      rp.project_id,
+      'active',
+      true,
+      jsonb_build_object('sort_order', rp.sort_order, 'legacy_table', 'inventory_field_round_projects'),
+      timezone('utc'::text, now()),
+      timezone('utc'::text, now())
+    FROM public.inventory_field_round_projects rp
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.inventory_document_lines l
+      WHERE l.document_id = rp.round_id AND l.project_id = rp.project_id AND l.line_type = 'ROUND_PROJECT'
+    );
+  END IF;
+END $$;
+
+-- 5.4 inventory_material_recoveries -> inventory_document_lines
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_material_recoveries') THEN
+    INSERT INTO public.inventory_document_lines (
+      id, document_id, line_type, item_id, source_issue_movement_id,
+      quantity, accepted_qty, rejected_qty, status, notes, metadata,
+      created_at, updated_at
+    )
+    SELECT
+      m.id,
+      m.document_id,
+      'RECOVERY',
+      m.item_id,
+      m.source_issue_movement_id,
+      m.recovered_qty,
+      COALESCE(m.inspected_good_qty, 0),
+      COALESCE(m.inspected_damaged_qty, 0),
+      m.status,
+      m.notes,
+      jsonb_build_object(
+        'legacy_table', 'inventory_material_recoveries',
+        'inspected_at', m.inspected_at,
+        'inspected_by_auth_user_id', m.inspected_by_auth_user_id,
+        'inspected_good_qty', m.inspected_good_qty,
+        'inspected_damaged_qty', m.inspected_damaged_qty
+      ),
+      m.created_at,
+      COALESCE(m.inspected_at, m.created_at)
+    FROM public.inventory_material_recoveries m
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+END $$;
+
+-- 5.5 asset_unit_custody -> inventory_document_lines & asset_units
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'asset_unit_custody') THEN
+    -- Fallback header for orphaned legacy custody records if neither document_id nor round_id exists
+    IF EXISTS (SELECT 1 FROM public.asset_unit_custody WHERE document_id IS NULL AND round_id IS NULL) THEN
+      INSERT INTO public.inventory_documents (id, doc_number, doc_type, status, notes, title, created_at, updated_at)
+      VALUES (
+        '00000000-0000-0000-0000-000000000001'::uuid,
+        'DOC-LEGACY-CUSTODY',
+        'LEGACY_LOAN',
+        'COMPLETED',
+        'Fallback document for legacy custody records without document_id',
+        'Legacy Tool Custody Records',
+        timezone('utc'::text, now()),
+        timezone('utc'::text, now())
+      ) ON CONFLICT (doc_type, doc_number) DO NOTHING;
+    END IF;
+
+    INSERT INTO public.inventory_document_lines (
+      id, document_id, line_type, unit_code, item_id, recipient_id, due_at, project_id, round_id,
+      quantity, status, notes, metadata, created_at, updated_at
+    )
+    SELECT
+      c.id,
+      COALESCE(c.document_id, c.round_id, '00000000-0000-0000-0000-000000000001'::uuid),
+      'TOOL_CUSTODY',
+      c.unit_code,
+      u.item_id,
+      c.recipient_id,
+      COALESCE((to_jsonb(c)->>'expected_return_at')::timestamptz, (to_jsonb(c)->>'due_date')::timestamptz),
+      c.project_id,
+      c.round_id,
+      1,
+      CASE 
+        WHEN (to_jsonb(c) ? 'status') AND (to_jsonb(c)->>'status' IS NOT NULL) THEN to_jsonb(c)->>'status'
+        WHEN (to_jsonb(c) ? 'is_active') AND (to_jsonb(c)->>'is_active')::boolean = true THEN 'ACTIVE'
+        ELSE COALESCE(to_jsonb(c)->>'return_status', 'RETURNED')
+      END,
+      c.notes,
+      jsonb_build_object(
+        'legacy_table', 'asset_unit_custody',
+        'recipient_id', c.recipient_id,
+        'recipient_name_snapshot', c.recipient_name_snapshot,
+        'borrowed_at', c.borrowed_at,
+        'due_date', to_jsonb(c)->>'due_date',
+        'expected_return_at', COALESCE(to_jsonb(c)->>'expected_return_at', to_jsonb(c)->>'due_date'),
+        'returned_at', c.returned_at,
+        'handed_over_to_custody_id', to_jsonb(c)->>'handed_over_to_custody_id'
+      ),
+      c.created_at,
+      COALESCE(c.returned_at, c.created_at)
+    FROM public.asset_unit_custody c
+    LEFT JOIN public.asset_units u ON u.unit_code = c.unit_code
+    ON CONFLICT (id) DO NOTHING;
+
+    -- Update active asset_units custody pointers for ACTIVE custody
+    UPDATE public.asset_units u
+    SET active_recipient_id = c.recipient_id,
+        active_custody_line_id = c.id,
+        active_round_id = c.round_id,
+        due_at = COALESCE((to_jsonb(c)->>'expected_return_at')::timestamptz, (to_jsonb(c)->>'due_date')::timestamptz),
+        status = 'BORROWED'
+    FROM public.asset_unit_custody c
+    WHERE u.unit_code = c.unit_code 
+      AND (
+        ((to_jsonb(c) ? 'is_active') AND (to_jsonb(c)->>'is_active')::boolean = true) OR
+        ((to_jsonb(c) ? 'status') AND upper(to_jsonb(c)->>'status') = 'ACTIVE')
+      );
+  END IF;
+END $$;
+
+-- 5.6 inventory_incidents -> inventory_documents & inventory_document_lines
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_incidents') THEN
+    INSERT INTO public.inventory_documents (
+      id, doc_number, doc_type, round_id, recipient_id, recipient_name_snapshot,
+      status, notes, actor_auth_user_id, metadata, created_at, updated_at
+    )
+    SELECT
+      inc.id,
+      'INC-' || inc.id::text,
+      'INCIDENT',
+      inc.round_id,
+      inc.responsible_recipient_id,
+      inc.recipient_name_snapshot,
+      inc.resolution_status,
+      inc.notes,
+      inc.reporter_auth_user_id,
+      jsonb_build_object(
+        'legacy_table', 'inventory_incidents',
+        'incident_type', inc.incident_type,
+        'severity', inc.severity,
+        'unit_code', inc.unit_code,
+        'custody_id', inc.custody_id,
+        'document_id', inc.document_id
+      ),
+      inc.created_at,
+      inc.created_at
+    FROM public.inventory_incidents inc
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO public.inventory_document_lines (
+      document_id, line_type, unit_code, item_id, round_id, quantity, status, notes, metadata, created_at, updated_at
+    )
+    SELECT
+      inc.id,
+      'INCIDENT',
+      inc.unit_code,
+      u.item_id,
+      inc.round_id,
+      1,
+      inc.resolution_status,
+      inc.notes,
+      jsonb_build_object(
+        'legacy_table', 'inventory_incidents',
+        'incident_type', inc.incident_type,
+        'severity', inc.severity,
+        'custody_id', inc.custody_id
+      ),
+      inc.created_at,
+      inc.created_at
+    FROM public.inventory_incidents inc
+    LEFT JOIN public.asset_units u ON u.unit_code = inc.unit_code
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.inventory_document_lines l WHERE l.document_id = inc.id AND l.line_type = 'INCIDENT'
+    );
+  END IF;
+END $$;
+
+-- 5.7 cash_job_reservations -> inventory_documents & inventory_document_lines
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_job_reservations') THEN
+    INSERT INTO public.inventory_documents (
+      id, doc_number, doc_type, project_id, denomination, is_cash, status, metadata, created_at, updated_at
+    )
+    SELECT
+      r.id,
+      'CRES-' || r.project_id || '-' || r.denomination::text || '-' || SUBSTRING(r.id::text FROM 1 FOR 8),
+      'CASH_RESERVATION',
+      r.project_id,
+      r.denomination,
+      true,
+      'COMPLETED',
+      jsonb_build_object('legacy_table', 'cash_job_reservations', 'reserved_count', r.reserved_count),
+      r.created_at,
+      r.updated_at
+    FROM public.cash_job_reservations r
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO public.inventory_document_lines (
+      document_id, line_type, project_id, denomination, quantity, required_qty, status, is_active, metadata, created_at, updated_at
+    )
+    SELECT
+      r.id,
+      'CASH_RESERVATION',
+      r.project_id,
+      r.denomination,
+      r.reserved_count,
+      r.reserved_count,
+      'COMPLETED',
+      (r.reserved_count > 0),
+      jsonb_build_object('legacy_table', 'cash_job_reservations', 'reserved_count', r.reserved_count),
+      r.created_at,
+      r.updated_at
+    FROM public.cash_job_reservations r
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.inventory_document_lines l WHERE l.document_id = r.id AND l.line_type = 'CASH_RESERVATION'
+    );
+  END IF;
+END $$;
+
+-- 5.8 cash_helper_batches -> inventory_documents & inventory_document_lines
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_helper_batches') THEN
+    INSERT INTO public.inventory_documents (
+      id, doc_number, doc_type, project_id, recipient_id, recipient_name_snapshot,
+      denomination, is_cash, status, notes, metadata, created_at, updated_at
+    )
+    SELECT
+      b.id,
+      b.batch_code,
+      'CASH_BATCH',
+      b.project_id,
+      b.recipient_id,
+      b.recipient_name_snapshot,
+      b.denomination,
+      true,
+      b.status,
+      b.notes,
+      jsonb_build_object(
+        'legacy_table', 'cash_helper_batches',
+        'issued_count', b.issued_count,
+        'prepared_count', b.prepared_count,
+        'returned_raw_count', b.returned_raw_count,
+        'handed_over_count', b.handed_over_count
+      ),
+      b.created_at,
+      b.updated_at
+    FROM public.cash_helper_batches b
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO public.inventory_document_lines (
+      document_id, line_type, project_id, denomination, quantity,
+      accepted_qty, returned_qty, handed_over_qty, status, notes, metadata, created_at, updated_at
+    )
+    SELECT
+      b.id,
+      'CASH_BATCH',
+      b.project_id,
+      b.denomination,
+      b.issued_count,
+      b.prepared_count,
+      b.returned_raw_count,
+      b.handed_over_count,
+      b.status,
+      b.notes,
+      jsonb_build_object('legacy_table', 'cash_helper_batches'),
+      b.created_at,
+      b.updated_at
+    FROM public.cash_helper_batches b
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.inventory_document_lines l WHERE l.document_id = b.id AND l.line_type = 'CASH_BATCH'
+    );
+  END IF;
+END $$;
+
+-- 5.9 cash_prepared_sets -> inventory_documents & inventory_document_lines
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_prepared_sets') THEN
+    INSERT INTO public.inventory_documents (
+      id, doc_number, doc_type, project_id, denomination, is_cash, status, metadata, created_at, updated_at
+    )
+    SELECT
+      p.id,
+      'CPREP-' || p.project_id || '-' || p.denomination::text || '-' || SUBSTRING(p.id::text FROM 1 FOR 8),
+      'CASH_PREPARED',
+      p.project_id,
+      p.denomination,
+      true,
+      'COMPLETED',
+      jsonb_build_object('legacy_table', 'cash_prepared_sets', 'prepared_count', p.prepared_count, 'delivered_count', p.delivered_count),
+      p.created_at,
+      p.updated_at
+    FROM public.cash_prepared_sets p
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO public.inventory_document_lines (
+      document_id, line_type, project_id, denomination, quantity, delivered_qty, status, metadata, created_at, updated_at
+    )
+    SELECT
+      p.id,
+      'CASH_PREPARED',
+      p.project_id,
+      p.denomination,
+      p.prepared_count,
+      p.delivered_count,
+      'COMPLETED',
+      jsonb_build_object('legacy_table', 'cash_prepared_sets'),
+      p.created_at,
+      p.updated_at
+    FROM public.cash_prepared_sets p
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.inventory_document_lines l WHERE l.document_id = p.id AND l.line_type = 'CASH_PREPARED'
+    );
+  END IF;
+END $$;
+
+-- 5.10 cash_movements -> inventory_movements
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_movements') THEN
+    INSERT INTO public.inventory_movements (
+      id, document_id, movement_type, quantity, delta_stock, denomination,
+      from_location, to_location, project_id, actor_auth_user_id,
+      actor_name_snapshot, notes, is_cash, metadata, created_at
+    )
+    SELECT
+      cm.id,
+      cm.batch_id,
+      cm.action_type,
+      cm.note_count,
+      0,
+      cm.denomination,
+      cm.from_location,
+      cm.to_location,
+      cm.project_id,
+      cm.actor_auth_user_id,
+      cm.actor_name_snapshot,
+      cm.notes,
+      true,
+      jsonb_build_object(
+        'legacy_table', 'cash_movements',
+        'total_value', cm.total_value,
+        'idempotency_key', cm.idempotency_key
+      ),
+      cm.created_at
+    FROM public.cash_movements cm
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+END $$;
+
+-- 5.11 inventory_idempotency_records -> inventory_documents
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_idempotency_records') THEN
+    -- Attach cached result to existing business header if same key
+    UPDATE public.inventory_documents d
+    SET action_name = COALESCE(d.action_name, r.action_name),
+        idempotency_payload_hash = COALESCE(d.idempotency_payload_hash, r.payload_hash),
+        response_payload = COALESCE(d.response_payload, r.response_payload),
+        actor_auth_user_id = COALESCE(d.actor_auth_user_id, r.actor_auth_user_id)
+    FROM public.inventory_idempotency_records r
+    WHERE d.idempotency_key = r.idempotency_key;
+
+    -- Legacy requests lacking a business header get COMMAND headers
+    INSERT INTO public.inventory_documents (
+      doc_number, doc_type, idempotency_key, idempotency_payload_hash,
+      action_name, response_payload, actor_auth_user_id, status, metadata, created_at, updated_at
+    )
+    SELECT
+      'CMD-' || replace(r.idempotency_key::text, '-', ''),
+      'COMMAND',
+      r.idempotency_key,
+      r.payload_hash,
+      r.action_name,
+      r.response_payload,
+      r.actor_auth_user_id,
+      'COMPLETED',
+      jsonb_build_object('legacy_table', 'inventory_idempotency_records'),
+      r.created_at,
+      r.created_at
+    FROM public.inventory_idempotency_records r
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.inventory_documents d WHERE d.idempotency_key = r.idempotency_key
+    );
+  END IF;
+END $$;
+
+-- 5.12 7 production_* tables -> inventory_documents, inventory_document_lines, inventory_movements
+DO $$
+BEGIN
+  -- production_assignments -> WORK headers
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_assignments') THEN
+    INSERT INTO public.inventory_documents (
+      id, doc_number, doc_type, project_id, recipient_id, recipient_name_snapshot,
+      team_members_snapshot, title, due_at, status, source_document_id, is_cash,
+      version, actor_auth_user_id, metadata, created_at, updated_at
+    )
+    SELECT
+      pa.id,
+      'WORK-' || pa.id::text,
+      'WORK',
+      pa.project_id,
+      pa.recipient_id,
+      pa.responsible_name,
+      COALESCE(pa.team_members_snapshot, '{}'),
+      pa.title,
+      pa.due_at,
+      pa.status,
+      COALESCE(pa.source_document_id, pa.source_cash_batch_id),
+      pa.cash_only,
+      COALESCE(pa.version, 1),
+      pa.created_by_auth_user_id,
+      jsonb_build_object(
+        'legacy_table', 'production_assignments',
+        'source_cash_batch_id', pa.source_cash_batch_id,
+        'source_document_id', pa.source_document_id,
+        'responsible_name', pa.responsible_name
+      ),
+      pa.created_at,
+      pa.updated_at
+    FROM public.production_assignments pa
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+
+  -- production_assignment_lines -> WORK_OUTPUT lines
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_assignment_lines') THEN
+    INSERT INTO public.inventory_document_lines (
+      id, document_id, line_type, description, required_qty, quantity, unit,
+      is_active, submitted_qty, accepted_qty, rejected_qty, pending_qty,
+      status, metadata, created_at, updated_at
+    )
+    SELECT
+      pal.id,
+      pal.assignment_id,
+      'WORK_OUTPUT',
+      pal.description,
+      pal.required_qty,
+      pal.required_qty,
+      pal.unit,
+      pal.is_active,
+      pal.submitted_qty,
+      pal.accepted_qty,
+      pal.rejected_qty,
+      pal.pending_qty,
+      CASE WHEN pal.is_active THEN 'active' ELSE 'inactive' END,
+      jsonb_build_object('legacy_table', 'production_assignment_lines'),
+      pal.created_at,
+      pal.updated_at
+    FROM public.production_assignment_lines pal
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+
+  -- production_submissions -> SUBMISSION headers
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_submissions') THEN
+    INSERT INTO public.inventory_documents (
+      id, doc_number, doc_type, parent_document_id, project_id, status, notes,
+      actor_auth_user_id, actor_name_snapshot, metadata, created_at, updated_at
+    )
+    SELECT
+      ps.id,
+      'SUB-' || ps.id::text,
+      'SUBMISSION',
+      ps.assignment_id,
+      (SELECT project_id FROM public.inventory_documents WHERE id = ps.assignment_id),
+      ps.status,
+      ps.note,
+      ps.submitted_by_auth_user_id,
+      ps.submitted_by_name,
+      jsonb_build_object('legacy_table', 'production_submissions', 'submitted_at', ps.submitted_at),
+      ps.submitted_at,
+      ps.updated_at
+    FROM public.production_submissions ps
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+
+  -- production_submission_lines -> SUBMISSION lines
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_submission_lines') THEN
+    INSERT INTO public.inventory_document_lines (
+      id, document_id, source_line_id, line_type, quantity, accepted_qty, rejected_qty, pending_qty, status, metadata, created_at, updated_at
+    )
+    SELECT
+      psl.id,
+      psl.submission_id,
+      psl.line_id,
+      'SUBMISSION',
+      psl.quantity,
+      psl.accepted_qty,
+      psl.rejected_qty,
+      (psl.quantity - psl.accepted_qty - psl.rejected_qty),
+      'submitted',
+      jsonb_build_object('legacy_table', 'production_submission_lines'),
+      COALESCE((SELECT created_at FROM public.inventory_documents WHERE id = psl.submission_id), timezone('utc'::text, now())),
+      COALESCE((SELECT updated_at FROM public.inventory_documents WHERE id = psl.submission_id), timezone('utc'::text, now()))
+    FROM public.production_submission_lines psl
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+
+  -- production_inspections -> INSPECTION headers
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_inspections') THEN
+    INSERT INTO public.inventory_documents (
+      id, doc_number, doc_type, parent_document_id, project_id, status, notes,
+      actor_auth_user_id, actor_name_snapshot, metadata, created_at, updated_at
+    )
+    SELECT
+      pi.id,
+      'INSP-' || pi.id::text,
+      'INSPECTION',
+      pi.submission_id,
+      (SELECT project_id FROM public.inventory_documents WHERE id = pi.submission_id),
+      'COMPLETED',
+      pi.notes,
+      pi.inspector_auth_user_id,
+      pi.inspector_name,
+      jsonb_build_object('legacy_table', 'production_inspections', 'inspected_at', pi.inspected_at),
+      pi.inspected_at,
+      pi.inspected_at
+    FROM public.production_inspections pi
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+
+  -- production_inspection_lines -> INSPECTION lines
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_inspection_lines') THEN
+    INSERT INTO public.inventory_document_lines (
+      id, document_id, source_line_id, line_type, quantity, accepted_qty, rejected_qty, notes, status, metadata, created_at, updated_at
+    )
+    SELECT
+      pil.id,
+      pil.inspection_id,
+      pil.submission_line_id,
+      'INSPECTION',
+      (pil.accepted_qty + pil.rejected_qty),
+      pil.accepted_qty,
+      pil.rejected_qty,
+      pil.notes,
+      'inspected',
+      jsonb_build_object('legacy_table', 'production_inspection_lines'),
+      COALESCE((SELECT created_at FROM public.inventory_documents WHERE id = pil.inspection_id), timezone('utc'::text, now())),
+      COALESCE((SELECT updated_at FROM public.inventory_documents WHERE id = pil.inspection_id), timezone('utc'::text, now()))
+    FROM public.production_inspection_lines pil
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+
+  -- production_assignment_events -> inventory_movements
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_assignment_events') THEN
+    INSERT INTO public.inventory_movements (
+      id, document_id, movement_type, quantity, delta_stock, actor_auth_user_id,
+      actor_name_snapshot, notes, is_cash, metadata, created_at
+    )
+    SELECT
+      pae.id,
+      pae.assignment_id,
+      pae.event_type,
+      0,
+      0,
+      pae.actor_auth_user_id,
+      pae.actor_name,
+      pae.reason,
+      coalesce((SELECT d.is_cash FROM public.inventory_documents d WHERE d.id = pae.assignment_id), false),
+      jsonb_build_object(
+        'legacy_table', 'production_assignment_events',
+        'from_status', pae.from_status,
+        'to_status', pae.to_status,
+        'details', pae.details
+      ),
+      pae.created_at
+    FROM public.production_assignment_events pae
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+END $$;
+
+-- 5.13 4 legacy tables -> inventory_documents & inventory_document_lines
+DO $$
+BEGIN
+  -- asset_loans -> LEGACY_LOAN headers & detail lines
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'asset_loans') THEN
+    INSERT INTO public.inventory_documents (
+      id, doc_number, doc_type, project_id, recipient_name_snapshot, due_at,
+      status, notes, actor_auth_user_id, actor_name_snapshot, metadata, created_at, updated_at
+    )
+    SELECT
+      al.id,
+      'LOAN-' || al.id::text,
+      'LEGACY_LOAN',
+      al.project_id,
+      al.borrower_name,
+      al.expected_return_at,
+      al.status,
+      al.notes,
+      -- Legacy borrower_user_id references staff_users.id, not auth.users.id.
+      (SELECT s.auth_user_id FROM public.staff_users s
+       WHERE s.id::text = al.borrower_user_id::text OR s.auth_user_id::text = al.borrower_user_id::text
+       ORDER BY (s.id::text = al.borrower_user_id::text) DESC LIMIT 1),
+      al.borrower_name,
+      jsonb_build_object(
+        'legacy_table', 'asset_loans',
+        'borrower_user_id', al.borrower_user_id::text,
+        'condition_out', al.condition_out,
+        'condition_in', al.condition_in,
+        'actual_returned_at', al.actual_returned_at,
+        'borrowed_at', al.borrowed_at
+      ),
+      al.borrowed_at,
+      COALESCE(al.actual_returned_at, al.borrowed_at)
+    FROM public.asset_loans al
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO public.inventory_document_lines (
+      document_id, line_type, item_id, project_id, quantity, status, notes, metadata, created_at, updated_at
+    )
+    SELECT
+      al.id,
+      'LEGACY_DETAIL',
+      al.item_id,
+      al.project_id,
+      1,
+      al.status,
+      al.notes,
+      jsonb_build_object(
+        'legacy_table', 'asset_loans',
+        'condition_out', al.condition_out,
+        'condition_in', al.condition_in,
+        'borrower_name', al.borrower_name
+      ),
+      al.borrowed_at,
+      COALESCE(al.actual_returned_at, al.borrowed_at)
+    FROM public.asset_loans al
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.inventory_document_lines l WHERE l.document_id = al.id AND l.line_type = 'LEGACY_DETAIL'
+    );
+  END IF;
+
+  -- inventory_procurements -> PROCUREMENT headers & lines
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_procurements') THEN
+    INSERT INTO public.inventory_documents (
+      id, doc_number, doc_type, status, notes, metadata, created_at, updated_at
+    )
+    SELECT
+      pr.id,
+      COALESCE(
+        NULLIF((to_jsonb(pr) ->> 'procurement_code'), ''),
+        'PROC-' || pr.id::text
+      ),
+      'PROCUREMENT',
+      'COMPLETED',
+      (to_jsonb(pr) ->> 'quality_notes'),
+      jsonb_build_object(
+        'legacy_table', 'inventory_procurements',
+        'vendor_id', to_jsonb(pr) ->> 'vendor_id',
+        'purchase_date', to_jsonb(pr) ->> 'purchase_date',
+        'receipt_url', to_jsonb(pr) ->> 'receipt_url',
+        'total_cost', to_jsonb(pr) -> 'total_cost',
+        'unit_price', to_jsonb(pr) -> 'unit_price'
+      ),
+      pr.created_at,
+      pr.created_at
+    FROM public.inventory_procurements pr
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO public.inventory_document_lines (
+      document_id, line_type, item_id, quantity, notes, metadata, created_at, updated_at
+    )
+    SELECT
+      pr.id,
+      'ITEM',
+      pr.item_id,
+      pr.quantity,
+      (to_jsonb(pr) ->> 'quality_notes'),
+      jsonb_build_object(
+        'legacy_table', 'inventory_procurements',
+        'unit_price', to_jsonb(pr) -> 'unit_price',
+        'receipt_url', to_jsonb(pr) ->> 'receipt_url',
+        'vendor_id', to_jsonb(pr) ->> 'vendor_id'
+      ),
+      pr.created_at,
+      pr.created_at
+    FROM public.inventory_procurements pr
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.inventory_document_lines l WHERE l.document_id = pr.id AND l.line_type = 'ITEM'
+    );
+  END IF;
+
+  -- inventory_disposals -> DISPOSAL headers & lines
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_disposals') THEN
+    INSERT INTO public.inventory_documents (
+      id, doc_number, doc_type, project_id, status, notes, actor_auth_user_id, metadata, created_at, updated_at
+    )
+    SELECT
+      d.id,
+      d.disposal_code,
+      'DISPOSAL',
+      (to_jsonb(d) ->> 'project_id'),
+      'COMPLETED',
+      (to_jsonb(d) ->> 'reason_notes'),
+      (SELECT s.auth_user_id FROM public.staff_users s
+       WHERE s.id::text = to_jsonb(d)->>'disposed_by_user_id' OR s.auth_user_id::text = to_jsonb(d)->>'disposed_by_user_id'
+       ORDER BY (s.id::text = to_jsonb(d)->>'disposed_by_user_id') DESC LIMIT 1),
+      jsonb_build_object(
+        'legacy_table', 'inventory_disposals',
+        'disposed_by_user_id', to_jsonb(d)->>'disposed_by_user_id',
+        'approved_by_user_id', to_jsonb(d)->>'approved_by_user_id',
+        'reason_type', to_jsonb(d) ->> 'reason_type',
+        'proof_image_url', to_jsonb(d) ->> 'proof_image_url',
+        'salvage_value', to_jsonb(d) -> 'salvage_value',
+        'financial_loss', to_jsonb(d) -> 'financial_loss',
+        'disposal_date', to_jsonb(d) ->> 'disposal_date'
+      ),
+      d.created_at,
+      d.created_at
+    FROM public.inventory_disposals d
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO public.inventory_document_lines (
+      document_id, line_type, item_id, project_id, quantity, notes, metadata, created_at, updated_at
+    )
+    SELECT
+      d.id,
+      'ITEM',
+      d.item_id,
+      (to_jsonb(d) ->> 'project_id'),
+      d.quantity,
+      (to_jsonb(d) ->> 'reason_notes'),
+      jsonb_build_object(
+        'legacy_table', 'inventory_disposals',
+        'reason_type', to_jsonb(d) ->> 'reason_type',
+        'salvage_value', to_jsonb(d) -> 'salvage_value',
+        'financial_loss', to_jsonb(d) -> 'financial_loss'
+      ),
+      d.created_at,
+      d.created_at
+    FROM public.inventory_disposals d
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.inventory_document_lines l WHERE l.document_id = d.id AND l.line_type = 'ITEM'
+    );
+  END IF;
+
+  -- project_checklist_items -> CHECKLIST headers (grouped by project) & detail lines
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_checklist_items') THEN
+    INSERT INTO public.inventory_documents (
+      id, doc_number, doc_type, project_id, title, status, metadata, created_at, updated_at
+    )
+    SELECT
+      ('00000000-0000-5000-8000-' || LPAD(TO_HEX(dense_rank() OVER (ORDER BY pci.project_id)), 12, '0'))::uuid,
+      'CHK-' || pci.project_id,
+      'CHECKLIST',
+      pci.project_id,
+      'Project Checklist ' || pci.project_id,
+      'COMPLETED',
+      jsonb_build_object('legacy_table', 'project_checklist_items'),
+      MIN(pci.created_at),
+      MAX(pci.updated_at)
+    FROM public.project_checklist_items pci
+    GROUP BY pci.project_id
+    ON CONFLICT (doc_type, doc_number) DO NOTHING;
+
+    INSERT INTO public.inventory_document_lines (
+      id, document_id, line_type, project_id, item_id, description, unit,
+      required_qty, quantity, submitted_qty, returned_qty, rejected_qty,
+      status, notes, metadata, created_at, updated_at
+    )
+    SELECT
+      ids.target_id,
+      (SELECT d.id FROM public.inventory_documents d WHERE d.doc_type = 'CHECKLIST' AND d.doc_number = 'CHK-' || pci.project_id LIMIT 1),
+      'CHECKLIST',
+      pci.project_id,
+      pci.item_id,
+      pci.item_name,
+      pci.unit,
+      pci.required_qty,
+      pci.required_qty,
+      pci.picked_qty,
+      pci.returned_qty,
+      pci.damaged_qty,
+      CASE WHEN pci.is_checked THEN 'checked' ELSE 'unchecked' END,
+      pci.notes,
+      jsonb_build_object(
+        'legacy_table', 'project_checklist_items',
+        'legacy_id', pci.id::text,
+        'category_name', pci.category_name,
+        'item_type', pci.item_type,
+        'unit_cost', pci.unit_cost,
+        'assigned_codes', pci.assigned_codes,
+        'is_checked', pci.is_checked
+      ),
+      pci.created_at,
+      pci.updated_at
+    FROM public.project_checklist_items pci
+    JOIN _legacy_checklist_ids ids ON ids.legacy_id = pci.id::text
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+END $$;
+
+-- Existing schemas may still have deletion actions that erase audit lineage.
+DO $$
+DECLARE v_fk RECORD; v_definition TEXT;
+BEGIN
+  FOR v_fk IN
+    SELECT c.conrelid::regclass AS relation_name, c.conname, pg_get_constraintdef(c.oid) AS definition
+    FROM pg_constraint c
+    WHERE c.contype = 'f' AND c.confdeltype IN ('c', 'n')
+      AND c.conrelid IN ('public.inventory_documents'::regclass,
+                        'public.inventory_document_lines'::regclass,
+                        'public.inventory_movements'::regclass,
+                        'public.asset_units'::regclass)
+    ORDER BY c.conrelid, c.conname
+  LOOP
+    v_definition := regexp_replace(v_fk.definition, 'ON DELETE (CASCADE|SET NULL)', 'ON DELETE RESTRICT');
+    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', v_fk.relation_name, v_fk.conname);
+    EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I %s', v_fk.relation_name, v_fk.conname, v_definition);
+  END LOOP;
+END $$;
+
+-- 6. STRICT INVARIANT AND ID COVERAGE VALIDATION
+-- Verifies exact ID coverage, stock balances, cash totals, active custodies, and work outputs.
+-- Any assertion failure throws an exception and rolls back the entire transaction.
+DO $$
+DECLARE
+  v_missing_cnt INT;
+  v_source_sum NUMERIC;
+  v_target_sum NUMERIC;
+  v_target_issued NUMERIC;
+  v_target_prepared NUMERIC;
+  v_target_returned NUMERIC;
+  v_target_handed NUMERIC;
+  v_rec RECORD;
+BEGIN
+  -- 6.1 ID Coverage Assertions
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_material_recoveries') THEN
+    SELECT count(*) INTO v_missing_cnt
+    FROM public.inventory_material_recoveries r
+    WHERE NOT EXISTS (SELECT 1 FROM public.inventory_document_lines l WHERE l.id = r.id);
+    IF v_missing_cnt > 0 THEN
+      RAISE EXCEPTION 'Validation failed: % inventory_material_recoveries missing from inventory_document_lines', v_missing_cnt;
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'asset_unit_custody') THEN
+    SELECT count(*) INTO v_missing_cnt
+    FROM public.asset_unit_custody c
+    WHERE NOT EXISTS (SELECT 1 FROM public.inventory_document_lines l WHERE l.id = c.id);
+    IF v_missing_cnt > 0 THEN
+      RAISE EXCEPTION 'Validation failed: % asset_unit_custody missing from inventory_document_lines', v_missing_cnt;
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_movements') THEN
+    SELECT count(*) INTO v_missing_cnt
+    FROM public.cash_movements cm
+    WHERE NOT EXISTS (SELECT 1 FROM public.inventory_movements m WHERE m.id = cm.id);
+    IF v_missing_cnt > 0 THEN
+      RAISE EXCEPTION 'Validation failed: % cash_movements missing from inventory_movements', v_missing_cnt;
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_assignments') THEN
+    SELECT count(*) INTO v_missing_cnt
+    FROM public.production_assignments pa
+    WHERE NOT EXISTS (SELECT 1 FROM public.inventory_documents d WHERE d.id = pa.id);
+    IF v_missing_cnt > 0 THEN
+      RAISE EXCEPTION 'Validation failed: % production_assignments missing from inventory_documents', v_missing_cnt;
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_assignment_lines') THEN
+    SELECT count(*) INTO v_missing_cnt
+    FROM public.production_assignment_lines pal
+    WHERE NOT EXISTS (SELECT 1 FROM public.inventory_document_lines l WHERE l.id = pal.id);
+    IF v_missing_cnt > 0 THEN
+      RAISE EXCEPTION 'Validation failed: % production_assignment_lines missing from inventory_document_lines', v_missing_cnt;
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_submissions') THEN
+    SELECT count(*) INTO v_missing_cnt
+    FROM public.production_submissions ps
+    WHERE NOT EXISTS (SELECT 1 FROM public.inventory_documents d WHERE d.id = ps.id);
+    IF v_missing_cnt > 0 THEN
+      RAISE EXCEPTION 'Validation failed: % production_submissions missing from inventory_documents', v_missing_cnt;
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_submission_lines') THEN
+    SELECT count(*) INTO v_missing_cnt
+    FROM public.production_submission_lines psl
+    WHERE NOT EXISTS (SELECT 1 FROM public.inventory_document_lines l WHERE l.id = psl.id);
+    IF v_missing_cnt > 0 THEN
+      RAISE EXCEPTION 'Validation failed: % production_submission_lines missing from inventory_document_lines', v_missing_cnt;
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_inspections') THEN
+    SELECT count(*) INTO v_missing_cnt
+    FROM public.production_inspections pi
+    WHERE NOT EXISTS (SELECT 1 FROM public.inventory_documents d WHERE d.id = pi.id);
+    IF v_missing_cnt > 0 THEN
+      RAISE EXCEPTION 'Validation failed: % production_inspections missing from inventory_documents', v_missing_cnt;
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_inspection_lines') THEN
+    SELECT count(*) INTO v_missing_cnt
+    FROM public.production_inspection_lines pil
+    WHERE NOT EXISTS (SELECT 1 FROM public.inventory_document_lines l WHERE l.id = pil.id);
+    IF v_missing_cnt > 0 THEN
+      RAISE EXCEPTION 'Validation failed: % production_inspection_lines missing from inventory_document_lines', v_missing_cnt;
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_assignment_events') THEN
+    SELECT count(*) INTO v_missing_cnt
+    FROM public.production_assignment_events pae
+    WHERE NOT EXISTS (SELECT 1 FROM public.inventory_movements m WHERE m.id = pae.id);
+    IF v_missing_cnt > 0 THEN
+      RAISE EXCEPTION 'Validation failed: % production_assignment_events missing from inventory_movements', v_missing_cnt;
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_checklist_items') THEN
+    SELECT count(*) INTO v_missing_cnt
+    FROM public.project_checklist_items pci
+    JOIN _legacy_checklist_ids ids ON ids.legacy_id = pci.id::text
+    WHERE NOT EXISTS (SELECT 1 FROM public.inventory_document_lines l
+      WHERE l.id = ids.target_id AND l.line_type = 'CHECKLIST' AND l.metadata->>'legacy_id' = pci.id::text);
+    IF v_missing_cnt > 0 THEN
+      RAISE EXCEPTION 'Validation failed: % project_checklist_items missing from inventory_document_lines', v_missing_cnt;
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'inventory_idempotency_records') THEN
+    SELECT count(*) INTO v_missing_cnt
+    FROM public.inventory_idempotency_records ir
+    WHERE NOT EXISTS (SELECT 1 FROM public.inventory_documents d WHERE d.idempotency_key = ir.idempotency_key);
+    IF v_missing_cnt > 0 THEN
+      RAISE EXCEPTION 'Validation failed: % inventory_idempotency_records missing from inventory_documents', v_missing_cnt;
+    END IF;
+  END IF;
+
+  -- 6.2 Per-Denomination Totals Validation
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_helper_batches') THEN
+    FOR v_rec IN (
+      SELECT
+        b.denomination,
+        SUM(b.issued_count) AS exp_issued,
+        SUM(b.prepared_count) AS exp_prepared,
+        SUM(b.returned_raw_count) AS exp_returned,
+        SUM(b.handed_over_count) AS exp_handed
+      FROM public.cash_helper_batches b
+      GROUP BY b.denomination
+    ) LOOP
+      SELECT
+        COALESCE(SUM(l.quantity), 0),
+        COALESCE(SUM(l.accepted_qty), 0),
+        COALESCE(SUM(l.returned_qty), 0),
+        COALESCE(SUM(l.handed_over_qty), 0)
+      INTO v_target_issued, v_target_prepared, v_target_returned, v_target_handed
+      FROM public.inventory_document_lines l
+      WHERE l.line_type = 'CASH_BATCH' AND l.denomination = v_rec.denomination;
+
+      IF v_target_issued != v_rec.exp_issued 
+         OR v_target_prepared != v_rec.exp_prepared 
+         OR v_target_returned != v_rec.exp_returned 
+         OR v_target_handed != v_rec.exp_handed THEN
+        RAISE EXCEPTION 'Denomination % batch totals mismatch: issued (% != %), prepared (% != %), returned (% != %), handed (% != %)',
+          v_rec.denomination, v_target_issued, v_rec.exp_issued, v_target_prepared, v_rec.exp_prepared, v_target_returned, v_rec.exp_returned, v_target_handed, v_rec.exp_handed;
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- Cash job reservations check
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_job_reservations') THEN
+    FOR v_rec IN (
+      SELECT r.project_id, r.denomination, r.reserved_count FROM public.cash_job_reservations r
+    ) LOOP
+      SELECT COALESCE(SUM(l.quantity), 0) INTO v_target_sum
+      FROM public.inventory_document_lines l
+      WHERE l.line_type = 'CASH_RESERVATION' AND l.project_id = v_rec.project_id AND l.denomination = v_rec.denomination;
+      IF v_target_sum != v_rec.reserved_count THEN
+        RAISE EXCEPTION 'Cash reservation mismatch for project %, denom %: % != %', v_rec.project_id, v_rec.denomination, v_target_sum, v_rec.reserved_count;
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- Cash prepared sets check
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_prepared_sets') THEN
+    FOR v_rec IN (
+      SELECT p.project_id, p.denomination, p.prepared_count, p.delivered_count FROM public.cash_prepared_sets p
+    ) LOOP
+      SELECT COALESCE(SUM(l.quantity), 0), COALESCE(SUM(l.delivered_qty), 0)
+      INTO v_target_prepared, v_target_handed
+      FROM public.inventory_document_lines l
+      WHERE l.line_type = 'CASH_PREPARED' AND l.project_id = v_rec.project_id AND l.denomination = v_rec.denomination;
+      IF v_target_prepared != v_rec.prepared_count OR v_target_handed != v_rec.delivered_count THEN
+        RAISE EXCEPTION 'Cash prepared set mismatch for project %, denom %: prepared (% != %), delivered (% != %)',
+          v_rec.project_id, v_rec.denomination, v_target_prepared, v_rec.prepared_count, v_target_handed, v_rec.delivered_count;
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- Cash vault denominations invariant check
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_vault_denominations') THEN
+    SELECT count(*) INTO v_missing_cnt FROM public.cash_vault_denominations;
+    IF v_missing_cnt != 5 THEN
+      RAISE EXCEPTION 'Cash vault validation failed: expected 5 denominations, found %', v_missing_cnt;
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.cash_vault_denominations WHERE physical_count < 0 OR reserved_count < 0 OR reserved_count > physical_count) THEN
+      RAISE EXCEPTION 'Cash vault invariant validation failed: invalid physical or reserved count bounds';
+    END IF;
+  END IF;
+
+  -- 6.3 Active Custody Count Validation
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'asset_unit_custody') THEN
+    SELECT count(*) INTO v_source_sum 
+    FROM public.asset_unit_custody c
+    WHERE (
+      ((to_jsonb(c) ? 'is_active') AND (to_jsonb(c)->>'is_active')::boolean = true) OR
+      ((to_jsonb(c) ? 'status') AND upper(to_jsonb(c)->>'status') = 'ACTIVE')
+    );
+    SELECT count(*) INTO v_target_sum FROM public.asset_units WHERE active_custody_line_id IS NOT NULL;
+    IF v_source_sum != v_target_sum THEN
+      RAISE EXCEPTION 'Active custody count mismatch: source active % != target active %', v_source_sum, v_target_sum;
+    END IF;
+  END IF;
+
+  -- 6.4 Production Output Accepted & Pending Totals Validation
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'production_assignment_lines') THEN
+    SELECT COALESCE(SUM(accepted_qty), 0), COALESCE(SUM(pending_qty), 0)
+    INTO v_source_sum, v_target_sum
+    FROM public.production_assignment_lines;
+
+    IF EXISTS (
+      SELECT 1 FROM (
+        SELECT COALESCE(SUM(accepted_qty), 0) AS a, COALESCE(SUM(pending_qty), 0) AS p
+        FROM public.inventory_document_lines
+        WHERE line_type = 'WORK_OUTPUT'
+      ) t WHERE t.a != v_source_sum OR t.p != v_target_sum
+    ) THEN
+      RAISE EXCEPTION 'Production output accepted/pending totals validation failed';
+    END IF;
+  END IF;
+END $$;
+
+-- 7. RETIRE EXPLICIT LEGACY TABLES (NO CASCADE)
+-- Dropped in reverse-dependency order with RESTRICT semantics.
+-- If any unknown external table depends on them, the drop aborts and rolls back.
+DROP TABLE IF EXISTS public.production_inspection_lines RESTRICT;
+DROP TABLE IF EXISTS public.production_inspections RESTRICT;
+DROP TABLE IF EXISTS public.production_submission_lines RESTRICT;
+DROP TABLE IF EXISTS public.production_submissions RESTRICT;
+DROP TABLE IF EXISTS public.production_assignment_events RESTRICT;
+DROP TABLE IF EXISTS public.production_assignment_lines RESTRICT;
+DROP TABLE IF EXISTS public.production_assignments RESTRICT;
+
+DROP TABLE IF EXISTS public.cash_movements RESTRICT;
+DROP TABLE IF EXISTS public.cash_prepared_sets RESTRICT;
+DROP TABLE IF EXISTS public.cash_helper_batches RESTRICT;
+DROP TABLE IF EXISTS public.cash_job_reservations RESTRICT;
+
+DROP TABLE IF EXISTS public.inventory_idempotency_records RESTRICT;
+DROP TABLE IF EXISTS public.inventory_incidents RESTRICT;
+DROP TABLE IF EXISTS public.asset_unit_custody RESTRICT;
+DROP TABLE IF EXISTS public.inventory_material_recoveries RESTRICT;
+DROP TABLE IF EXISTS public.inventory_field_round_projects RESTRICT;
+DROP TABLE IF EXISTS public.inventory_field_rounds RESTRICT;
+DROP TABLE IF EXISTS public.inventory_recipient_teams RESTRICT;
+
+DROP TABLE IF EXISTS public.asset_loans RESTRICT;
+DROP TABLE IF EXISTS public.inventory_procurements RESTRICT;
+DROP TABLE IF EXISTS public.inventory_disposals RESTRICT;
+DROP TABLE IF EXISTS public.project_checklist_items RESTRICT;
+
+-- 8. SYSTEM MIGRATION MARKER
+-- Version marker document with metadata snapshot; no permanent archives or views.
+INSERT INTO public.inventory_documents (
+  id, doc_number, doc_type, title, status, metadata, created_at, updated_at
+)
+VALUES (
+  '00000000-0000-5000-a000-000000000002'::uuid,
+  'MIG-COMPACT-SCHEMA-V2',
+  'SYSTEM_MIGRATION',
+  'Inventory Compact Schema Migration v2',
+  'COMPLETED',
+  jsonb_build_object(
+    'version', 2,
+    'compact_build', 'v2',
+    'table_count', 8,
+    'retired_table_count', 22,
+    'migrated_at', timezone('utc'::text, now())
+  ),
+  timezone('utc'::text, now()),
+  timezone('utc'::text, now())
+)
+ON CONFLICT (doc_type, doc_number) DO UPDATE SET
+  updated_at = timezone('utc'::text, now()),
+  metadata = EXCLUDED.metadata;
+
+-- 9. FINAL VERIFICATION: EXACTLY 8 CANONICAL TABLES AND ZERO RETIRED TABLES
+DO $$
+DECLARE
+  v_inv_table_cnt INT;
+  v_retired_cnt INT;
+BEGIN
+  SELECT count(*) INTO v_inv_table_cnt
+  FROM information_schema.tables
+  WHERE table_schema = 'public'
+    AND table_name IN (
+      'inventory_categories',
+      'inventory_items',
+      'asset_units',
+      'inventory_recipients',
+      'inventory_documents',
+      'inventory_document_lines',
+      'inventory_movements',
+      'cash_vault_denominations'
+    );
+
+  IF v_inv_table_cnt != 8 THEN
+    RAISE EXCEPTION 'Table count assertion failed: expected 8 canonical inventory tables, found %', v_inv_table_cnt;
+  END IF;
+
+  SELECT count(*) INTO v_retired_cnt
+  FROM information_schema.tables
+  WHERE table_schema = 'public'
+    AND table_name IN (
+      'inventory_recipient_teams',
+      'inventory_field_rounds',
+      'inventory_field_round_projects',
+      'inventory_material_recoveries',
+      'asset_unit_custody',
+      'inventory_incidents',
+      'cash_job_reservations',
+      'cash_helper_batches',
+      'cash_prepared_sets',
+      'cash_movements',
+      'inventory_idempotency_records',
+      'production_assignments',
+      'production_assignment_lines',
+      'production_submissions',
+      'production_submission_lines',
+      'production_inspections',
+      'production_inspection_lines',
+      'production_assignment_events',
+      'asset_loans',
+      'inventory_procurements',
+      'inventory_disposals',
+      'project_checklist_items'
+    );
+
+  IF v_retired_cnt > 0 THEN
+    RAISE EXCEPTION 'Retired tables assertion failed: % retired tables still present in schema', v_retired_cnt;
+  END IF;
+END $$;

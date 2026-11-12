@@ -1,0 +1,90 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const esbuild = require('esbuild');
+const { JSDOM } = require('jsdom');
+const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {url:'http://localhost/'});
+global.window = dom.window;
+global.document = dom.window.document;
+global.navigator = dom.window.navigator;
+global.HTMLElement = dom.window.HTMLElement;
+global.requestAnimationFrame = callback => setTimeout(callback, 0);
+global.cancelAnimationFrame = clearTimeout;
+global.IS_REACT_ACT_ENVIRONMENT = true;
+window.matchMedia = () => ({matches:false,addEventListener(){},removeEventListener(){}});
+const React = require('react');
+const { render, fireEvent, waitFor, act, cleanup, within } = require('@testing-library/react');
+
+test('full inventory opens every main view and QR workspace offline without refetching on theme render', async () => {
+  const build = await esbuild.build({entryPoints:['tests/fixtures/inventory-full-preview.jsx'], bundle:true,
+    write:false, platform:'node',format:'cjs',jsx:'automatic',
+    external:['react','react-dom','react/jsx-runtime','lucide-react','qrcode','@zxing/browser'],
+    plugins:[{name:'offline-only',setup(builder){
+      builder.onResolve({filter:/supabaseClient(?:\.js)?$/},()=>({path:path.resolve('tests/fixtures/inventory-offline-data.js')}));
+      builder.onResolve({filter:/\/db(?:\.js)?$/},()=>({path:path.resolve('tests/fixtures/inventory-offline-db.js')}));
+    }}]});
+  const module = {exports:{}};
+  new Function('require','module','exports',build.outputFiles[0].text)(require,module,module.exports);
+  const ui = render(React.createElement(module.exports.default));
+  try {
+    await waitFor(()=>assert.ok(document.body.textContent.includes('ทิวลิปพลาสติก')));
+    const calls = () => window.__offlineRpcCalls || [];
+    assert.equal(calls().filter(call=>call.name==='warehouse_get_summary').length,1);
+    await act(async()=>fireEvent.change(ui.getByLabelText('ธีมทดสอบ'),{target:{value:'amber'}}));
+    assert.equal(calls().filter(call=>call.name==='warehouse_get_summary').length,1,'theme rerender must not reload the catalog');
+    const search = ui.getByPlaceholderText('ค้นหาชื่อ หมวดหมู่ สี ขนาด หรือรหัส...');
+    await act(async()=>fireEvent.change(search,{target:{value:'เทป'}}));
+    await waitFor(()=>assert.equal(calls().filter(call=>call.name==='warehouse_list_stock' && call.args.p_filters.search==='เทป').length,1));
+    await act(async()=>fireEvent.click(ui.getByRole('tab',{name:'เงินสด'})));
+    await waitFor(()=>assert.ok(calls().some(call=>call.name==='warehouse_get_cash_summary')));
+    await act(async()=>fireEvent.click(ui.getByRole('tab',{name:/เบิก–คืน/})));
+    await act(async()=>fireEvent.click(ui.getByRole('tab',{name:'งานผลิต'})));
+    await waitFor(()=>assert.ok(calls().some(call=>call.name==='warehouse_load_production_project')));
+    assert.ok(document.body.textContent.includes('หน้ากลางงานผลิตตามโปรเจกต์'));
+    await act(async()=>fireEvent.click(ui.getByRole('tab',{name:'ประวัติ'})));
+    await waitFor(()=>assert.ok(calls().some(call=>call.name==='warehouse_get_history')));
+    await waitFor(()=>assert.ok(document.body.textContent.includes('-2 ม้วน'),'issued stock must display a negative delta'));
+    assert.ok(document.body.textContent.includes('ธนบัตร 50 บาท'),'authorized cash audit must be visible');
+    assert.ok(document.body.textContent.includes('VAULT → HELPER'));
+    await act(async()=>fireEvent.click(ui.getByRole('button',{name:'ประวัติการยืมเดิม'})));
+    await waitFor(()=>assert.ok(document.body.textContent.includes('ผู้ยืมจากประวัติเดิม'),'migrated loans must load from compact history'));
+    assert.ok(calls().some(call=>call.args.p_filters?.doc_type==='LEGACY_LOAN'));
+    await act(async()=>fireEvent.click(ui.getByRole('tab',{name:'ของในคลัง'})));
+    assert.equal(ui.getByPlaceholderText('ค้นหาชื่อ หมวดหมู่ สี ขนาด หรือรหัส...').value,'เทป','stock filters survive other inventory tabs');
+    await act(async()=>fireEvent.click(ui.getByRole('button',{name:'รีเฟรชข้อมูลคลัง'})));
+    await waitFor(()=>assert.equal(calls().filter(call=>call.name==='warehouse_get_summary').length,2));
+    await waitFor(()=>assert.equal(calls().filter(call=>call.name==='warehouse_list_stock' && call.args.p_filters.search==='เทป').length,2));
+    await act(async()=>ui.rerender(React.createElement(module.exports.default,{isActive:false})));
+    await act(async()=>ui.rerender(React.createElement(module.exports.default,{isActive:true})));
+    await act(async()=>new Promise(resolve=>setTimeout(resolve,350)));
+    assert.equal(calls().filter(call=>call.name==='warehouse_get_summary').length,2,'quick main-page re-entry must not download summary again');
+    assert.equal(calls().filter(call=>call.name==='warehouse_list_stock' && call.args.p_filters.search==='เทป').length,2,'fresh filtered results must be reused');
+    assert.equal(ui.getByPlaceholderText('ค้นหาชื่อ หมวดหมู่ สี ขนาด หรือรหัส...').value,'เทป');
+    await act(async()=>fireEvent.change(search,{target:{value:''}}));
+    await act(async()=>fireEvent.click(within(document.querySelector('header')).getByText('จัดการคลัง')));
+    await act(async()=>fireEvent.click(within(document.querySelector('header')).getByRole('button',{name:'พิมพ์ฉลาก QR'})));
+    await waitFor(()=>assert.ok(document.querySelector('[role="dialog"][aria-label="พิมพ์ฉลาก QR ครุภัณฑ์"]')));
+    assert.ok(document.body.textContent.includes('SC-001'));
+    assert.equal(document.body.style.overflow,'hidden');
+    const choice = ui.getByRole('button',{name:'เลือก SC-001'});
+    await act(async()=>fireEvent.click(choice));
+    assert.equal(choice.getAttribute('aria-pressed'),'true');
+    await act(async()=>fireEvent.keyDown(window,{key:'Escape'}));
+    await waitFor(()=>assert.equal(document.querySelector('[role="dialog"][aria-label="พิมพ์ฉลาก QR ครุภัณฑ์"]'),null));
+    assert.equal(document.body.style.overflow,'');
+    await act(async()=>{window.innerWidth=820; fireEvent(window,new window.Event('resize'));});
+    await act(async()=>fireEvent.click(ui.getByRole('button',{name:'เลือก เทปใส'})));
+    await act(async()=>fireEvent.click(ui.getByRole('button',{name:'เปิดรายการเบิก (1)'})));
+    assert.equal(ui.getByRole('complementary',{name:'ตะกร้าเบิกพัสดุและเครื่องมือ'}).parentElement,document.body,'tablet cart must open above app navigation');
+    const notePlaceholder='ระบุข้อความหรือเงื่อนไขเพิ่มเติม (ถ้ามี)...';
+    await act(async()=>fireEvent.change(ui.getByPlaceholderText(notePlaceholder),{target:{value:'Keep this draft after rotation'}}));
+    await act(async()=>{window.innerWidth=1180; fireEvent(window,new window.Event('resize'));});
+    assert.equal(ui.getByPlaceholderText(notePlaceholder).value,'Keep this draft after rotation');
+    assert.notEqual(ui.getByRole('complementary',{name:'ตะกร้าเบิกพัสดุและเครื่องมือ'}).parentElement,document.body);
+    assert.equal(document.body.style.overflow,'');
+    await act(async()=>{window.innerWidth=820; fireEvent(window,new window.Event('resize'));});
+    assert.equal(document.body.style.overflow,'hidden');
+    await act(async()=>fireEvent.click(ui.getByRole('button',{name:'ปิดตะกร้า'})));
+    assert.equal(document.body.style.overflow,'');
+  } finally { cleanup(); dom.window.close(); }
+});

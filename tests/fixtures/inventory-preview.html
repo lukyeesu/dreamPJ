@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flower2U - Plan C Component Preview (Offline Test Data)</title>
+  <link rel="stylesheet" href="../../src/index.css">
+  <style>
+    body {
+      margin: 0;
+      background-color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Leelawadee UI", sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <!-- Standalone offline preview fixture container -->
+    <div style="padding: 20px; text-align: center; color: #64748b;">
+      <h2>Plan C Test Data Fixture Page</h2>
+      <p>This fixture mounts components with in-memory test mocks. No network or Supabase connection.</p>
+    </div>
+  </div>
+  <p style="padding:20px;text-align:center">ตัวอย่างนี้เป็นรุ่นเก่า กรุณาเปิด
+    <a href="http://127.0.0.1:5175/tests/fixtures/inventory-full-preview.html">หน้าคลังสินค้าตัวอย่างออฟไลน์รุ่นปัจจุบัน</a>
+    โดยรัน <code>npx vite --config tests/fixtures/inventory-offline.config.js</code>
+  </p>
+</body>
+</html>

@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle, AlertTriangle, X } from 'lucide-react';
 
-const Toast = ({ message, type, onClose }) => {
+const Toast = ({ message, type, onClose, zIndex = 150 }) => {
   useEffect(() => {
     const timer = setTimeout(() => {
       onClose();
@@ -13,7 +13,10 @@ const Toast = ({ message, type, onClose }) => {
   const isSuccess = type === 'success';
 
   return createPortal(
-    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top-2 fade-in duration-300 pointer-events-none w-full flex justify-center px-4">
+    <div
+      style={{ zIndex }}
+      className="fixed top-6 left-1/2 -translate-x-1/2 animate-in slide-in-from-top-2 fade-in duration-300 pointer-events-none w-full flex justify-center px-4"
+    >
       <div className={`pointer-events-auto flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border min-w-[280px] max-w-md w-auto ${
         isSuccess ? 'bg-white border-emerald-100 text-slate-800' : 'bg-white border-rose-100 text-slate-800'
       }`}>

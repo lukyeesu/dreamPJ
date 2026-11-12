@@ -35,11 +35,28 @@ async function harness(initial = [], respond = () => ({ data: [], error: null, c
     removeChannel() {}
   };
   const schemas = await import(pathToFileURL(path.join(root, 'src/schemas/index.js')));
+  const warehouseMock = {
+    resetWarehouseAuthSession: () => {},
+    onWarehouseAuthSessionChange: () => () => {},
+    initWarehouseAuthListener: () => {},
+    generateIdempotencyKey: () => '00000000-0000-4000-8000-000000000001',
+    dispatchWarehouseCommand: () => Promise.resolve({ success: true }),
+    loadWarehouseSummary: () => Promise.resolve({}),
+    loadCashSummary: () => Promise.resolve({}),
+    loadWarehouseOperations: () => Promise.resolve({}),
+    loadWarehouseHistory: () => Promise.resolve({}),
+    createItem: () => Promise.resolve({ success: true }),
+    saveItemMetadata: () => Promise.resolve({ success: true }),
+    addAssetUnit: () => Promise.resolve({ success: true })
+  };
   const context = vm.createContext({ console: { log() {}, warn() {}, error() {} }, Date, Map, Set, Promise, JSON });
   const module = new vm.SourceTextModule(fs.readFileSync(path.join(root, 'src/services/syncService.js'), 'utf8'), { context });
   await module.link(specifier => {
     const exports = specifier.includes('supabaseClient') ? { supabase: client, getActiveClient: () => client }
-      : specifier === './db' ? { db } : specifier.includes('formatters') ? { generateTrackingToken: () => '' } : schemas;
+      : specifier === './db' ? { db }
+      : specifier.includes('formatters') ? { generateTrackingToken: () => '' }
+      : specifier.includes('warehouseService') ? warehouseMock
+      : schemas;
     return new vm.SyntheticModule(Object.keys(exports), function () { for (const [key, value] of Object.entries(exports)) this.setExport(key, value); }, { context });
   });
   await module.evaluate();
@@ -199,8 +216,31 @@ test('one focus event syncs deleted records once', () => {
   const deps = {};
   for (const name of ['fetchServerProjectStats','loadLocationsLocalFirst','loadCustomersLocalFirst','loadArtistsLocalFirst','loadArtistsAndCustomersSummaryStats','loadInventoryLocalFirst','loadAssetLoansLocalFirst','applyProjectsData','setIsLoading','setServerStats','setDeliveryLocations','setCustomerList','setArtistList','setArtistSummaryStats','setCustomerSummaryStats','setInventoryItems','setAssetLoans','showToast','fetchSettings']) deps[name] = () => Promise.resolve(null);
   deps.syncDeletedRecords = () => { deleted++; return Promise.resolve([]); };
+  deps.lastFocusSyncRef = {current:0};
+  deps.lastMasterSyncRef = {current:0};
   deps.fetchProjects = evaluate(src.code(src.vars.get('fetchProjects')), deps);
   evaluate(src.code(src.vars.get('onFocus')), deps)(); assert.equal(deleted, 1);
+});
+
+test('rapid focus events share one background master-data refresh window', () => {
+  const src=sourceNodes('src/App.jsx'); let reads=0;
+  const focus=evaluate(src.code(src.vars.get('onFocus')),{
+    lastFocusSyncRef:{current:0},fetchProjects(){reads++;},fetchSettings(){}
+  });
+  focus(); focus(); focus();
+  assert.equal(reads,1,'quick window changes must not redownload master data repeatedly');
+});
+
+test('silent focus sync does not repeatedly download master dropdown lists', async () => {
+  const src=sourceNodes('src/App.jsx'); let reads=0, now=1000000;
+  const deps={lastMasterSyncRef:{current:0},Date:{now:()=>now}};
+  for(const name of ['fetchServerProjectStats','syncDeletedRecords','loadArtistsAndCustomersSummaryStats','setIsLoading','setServerStats','applyProjectsData','showToast']) deps[name]=()=>Promise.resolve(null);
+  for(const name of ['loadLocationsLocalFirst','loadCustomersLocalFirst','loadArtistsLocalFirst']) deps[name]=()=>{reads++;return Promise.resolve([]);};
+  const fetch=evaluate(src.code(src.vars.get('fetchProjects')),deps);
+  await fetch(false); await fetch(true); await fetch(true);
+  assert.equal(reads,3,'fresh master lists should only be downloaded once');
+  now+=300001; await fetch(true); assert.equal(reads,6);
+  await fetch(false); assert.equal(reads,9,'explicit refresh must always bypass master freshness');
 });
 test('quotation remote loading does not depend on project list changes', () => {
   const src = sourceNodes('src/Quotations.jsx');

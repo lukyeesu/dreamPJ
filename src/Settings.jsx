@@ -568,6 +568,7 @@ function Settings({
   onUpdateUserProfile = null
 }) {
   const [activeCategory, setActiveCategory] = useState(defaultCategory || 'permissions');
+  const displayedDriveFolders = driveFolders.some(f => f.type === 'inventory') ? driveFolders : [...driveFolders, {id: 'f_inventory', name: 'รูปสินค้าในคลัง', type: 'inventory', folderId: ''}];
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
   // Theme Sync & Lag-free Debounced Save
@@ -1806,11 +1807,11 @@ function Settings({
                 </div>
 
                 <p className="text-xs text-slate-500">
-                  ระบุ Folder ID จาก Google Drive เพื่อให้ระบบอัปโหลดสลิป รูปผลงาน และเอกสารไปยังโฟลเดอร์ที่กำหนด
+                  ระบุ Folder ID สำหรับไฟล์แต่ละประเภท รูปสินค้าในคลังใช้โฟลเดอร์เฉพาะได้ หากเว้นว่างจะใช้โฟลเดอร์ Assets เดิม
                 </p>
 
                 <div className="space-y-3">
-                  {driveFolders.map((f, idx) => (
+                  {displayedDriveFolders.map((f, idx) => (
                     <div key={f.id || idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
                         <Folder className="w-4 h-4 text-amber-500 shrink-0" />
@@ -1818,12 +1819,12 @@ function Settings({
                           type="text"
                           value={f.name || ''}
                           onChange={(e) => {
-                            const updated = [...driveFolders];
-                            updated[idx].name = e.target.value;
+                            const updated = [...displayedDriveFolders];
+                            updated[idx] = {...f, name: e.target.value};
                             setDriveFolders(updated);
                           }}
                           placeholder="ชื่อโฟลเดอร์"
-                          className="font-bold text-xs sm:text-sm bg-transparent border-b border-dashed border-slate-300 focus:outline-none focus:border-rose-500"
+                          className="w-full min-w-0 min-h-[44px] font-bold text-xs sm:text-sm bg-transparent border-b border-dashed border-slate-300 focus:outline-none focus:border-[var(--theme-main)]"
                         />
                       </div>
 
@@ -1832,20 +1833,22 @@ function Settings({
                           type="text"
                           value={f.folderId || ''}
                           onChange={(e) => {
-                            const updated = [...driveFolders];
-                            updated[idx].folderId = e.target.value;
+                            const updated = [...displayedDriveFolders];
+                            updated[idx] = {...f, folderId: e.target.value.trim()};
                             setDriveFolders(updated);
                           }}
                           placeholder="Drive Folder ID"
-                          className="flex-1 sm:w-56 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-1 focus:ring-rose-500"
+                          className="flex-1 min-w-0 min-h-[44px] sm:w-56 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-1 focus:ring-[var(--theme-main)]"
                         />
                         <button
                           type="button"
                           onClick={() => {
-                            const updated = driveFolders.filter((_, i) => i !== idx);
+                            const updated = displayedDriveFolders.filter((_, i) => i !== idx);
                             setDriveFolders(updated);
                           }}
-                          className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-50 transition cursor-pointer"
+                          disabled={f.type === 'inventory'}
+                          aria-label={`ลบโฟลเดอร์ ${f.name}`}
+                          className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-50 transition cursor-pointer disabled:opacity-30"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1857,10 +1860,8 @@ function Settings({
                 <div className="flex justify-end pt-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      saveSystemSettings('drive_folders', driveFolders);
-                      showToast('บันทึกการตั้งค่า Google Drive สำเร็จ', 'success');
-                    }}
+                    onClick={() => saveSystemSettings('drive_folders', displayedDriveFolders)}
+                    disabled={isSaving}
                     className="px-5 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-violet-200/50 transition flex items-center gap-2 cursor-pointer"
                   >
                     <Save className="w-4 h-4" />

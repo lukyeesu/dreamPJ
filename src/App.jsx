@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback, startTransition } from 'react';
 import { createPortal } from 'react-dom';
+import PersistentPage from './components/common/PersistentPage';
+import { resolveInventoryImageFolder } from './services/inventoryImageService.js';
 import {
   Home,
   BarChart2,
@@ -132,8 +134,6 @@ import {
   loadCustomersLocalFirst,
   loadArtistsLocalFirst,
   loadArtistsAndCustomersSummaryStats,
-  loadInventoryLocalFirst,
-  loadAssetLoansLocalFirst,
   fetchProjectDetailOnDemand,
   fetchServerAnalytics,
   fetchServerProjectStats,
@@ -432,16 +432,18 @@ const App = () => {
     return getTabFromUrl();
   });
   const [visitedTabs, setVisitedTabs] = useState(() => new Set([getTabFromUrl() || 'Calendar']));
+  const lastFocusSyncRef = useRef(0);
+  const lastMasterSyncRef = useRef(0);
 
   const handleSelectTab = useCallback((tabName) => {
     if (!tabName || tabName === activeTab) return;
-    setVisitedTabs(prev => {
-      if (prev.has(tabName)) return prev;
-      const next = new Set(prev);
-      next.add(tabName);
-      return next;
-    });
     startTransition(() => {
+      setVisitedTabs(prev => {
+        if (prev.has(tabName)) return prev;
+        const next = new Set(prev);
+        next.add(tabName);
+        return next;
+      });
       setActiveTab(tabName);
     });
   }, [activeTab]);
@@ -711,8 +713,8 @@ const App = () => {
   const [selectedVenueForModal, setSelectedVenueForModal] = useState(null);
   const [isVenueDirectoryOpen, setIsVenueDirectoryOpen] = useState(false);
   // Inventory, Loans & Customers States
-  const [inventoryItems, setInventoryItems] = useState([]);
-  const [assetLoans, setAssetLoans] = useState([]);
+  const [inventoryItems] = useState([]);
+  const [assetLoans] = useState([]);
   const [customerList, setCustomerList] = useState([]);
   const [artistList, setArtistList] = useState([]);
   const [customerSummaryStats, setCustomerSummaryStats] = useState({});
@@ -1295,7 +1297,7 @@ const App = () => {
     if (!isSilent) setIsLoading(true);
     
     try {
-      // 1. ดึงสถิติภาพรวมจาก Server Pushdown (Zero-Egress)
+      // Fetch a compact server-side aggregate rather than all project rows.
       fetchServerProjectStats().then(s => { if (s) setServerStats(s); }).catch(() => {});
 
       // ซิงก์กวาดล้างรายการที่ถูกลบจากเครื่องอื่น (Tombstone Sync) ทันที
@@ -1303,30 +1305,24 @@ const App = () => {
         applyProjectsData([], deletedIds);
       }).catch(() => {});
 
-      // 2. ดึงข้อมูลสถานที่จัดส่งแบบ Local-First (IndexedDB + Supabase)
-      loadLocationsLocalFirst((locations) => {
-        if (Array.isArray(locations) && locations.length > 0) {
-          setDeliveryLocations(locations);
-        }
-      });
-
-      // 3. ดึงข้อมูลลูกค้า, ศิลปิน, พัสดุ, และการยืมคืนแบบ Local-First
-      loadCustomersLocalFirst((custs) => {
-        if (Array.isArray(custs) && custs.length > 0) setCustomerList(custs);
-      });
-      loadArtistsLocalFirst((arts) => {
-        if (Array.isArray(arts) && arts.length > 0) setArtistList(arts);
-      });
+      // Master dropdown data changes less often than project status; explicit refresh bypasses this window.
+      if (!isSilent || Date.now() - lastMasterSyncRef.current >= 300000) {
+        lastMasterSyncRef.current = Date.now();
+        loadLocationsLocalFirst((locations) => {
+          if (Array.isArray(locations) && locations.length > 0) setDeliveryLocations(locations);
+        });
+        loadCustomersLocalFirst((custs) => {
+          if (Array.isArray(custs) && custs.length > 0) setCustomerList(custs);
+        });
+        loadArtistsLocalFirst((arts) => {
+          if (Array.isArray(arts) && arts.length > 0) setArtistList(arts);
+        });
+      }
       loadArtistsAndCustomersSummaryStats(({ artistStats, customerStats }) => {
         if (artistStats) setArtistSummaryStats(artistStats);
         if (customerStats) setCustomerSummaryStats(customerStats);
       });
-      loadInventoryLocalFirst((inv) => {
-        if (Array.isArray(inv) && inv.length > 0) setInventoryItems(inv);
-      });
-      loadAssetLoansLocalFirst((loans) => {
-        if (Array.isArray(loans) && loans.length > 0) setAssetLoans(loans);
-      });
+
     } catch (error) {
       console.error("Error fetching data:", error);
       if (!isSilent) showToast("การเชื่อมต่อล่าช้า ระบบกำลังทำงานในโหมด Offline", "error");
@@ -1337,6 +1333,7 @@ const App = () => {
 
   useEffect(() => {
     if (isLoggedIn || trackingId || quotationId) {
+        lastFocusSyncRef.current = Date.now();
         fetchProjects();
 
         // เปิดรับ Realtime Live Sync จาก Supabase สำหรับโปรเจกต์
@@ -1437,6 +1434,9 @@ const App = () => {
         window.addEventListener('storage', onStorage);
 
         const onFocus = () => {
+            const now = Date.now();
+            if (now - lastFocusSyncRef.current < 30000) return;
+            lastFocusSyncRef.current = now;
             fetchProjects(true); // Silent fetch เช็คส่วนต่างเบื้องหลัง
             fetchSettings(false); // เช็คการตั้งค่าเบื้องหลัง
         };
@@ -4495,7 +4495,7 @@ const App = () => {
       <>
         {/* --- Tab: Calendar --- */}
         {visitedTabs.has('Calendar') && (
-          <div className={activeTab === 'Calendar' ? 'block h-full' : 'hidden'}>
+          <PersistentPage active={activeTab === 'Calendar'} className="block h-full">
             <Calendar 
               activities={allActivities} 
               onEventClick={(item) => openModal(item, true)} 
@@ -4503,12 +4503,12 @@ const App = () => {
               transportStatuses={transportStatuses}
               onMonthChange={handleCalendarMonthChange}
             />
-          </div>
+          </PersistentPage>
         )}
 
         {/* --- Tab 3: Analytics --- */}
         {visitedTabs.has('Analytics') && (
-          <div className={activeTab === 'Analytics' ? 'block' : 'hidden'}>
+          <PersistentPage active={activeTab === 'Analytics'} className="block">
             <Analytics
               renderFilterCard={() => renderFilterCard('Analytics')}
               analyticsData={analyticsData}
@@ -4529,12 +4529,12 @@ const App = () => {
               }}
               onSelectProject={(project) => openModal(project, false)}
             />
-          </div>
+          </PersistentPage>
         )}
 
         {/* --- Tab 4: Plans --- */}
         {visitedTabs.has('Plans') && (
-          <div className={activeTab === 'Plans' ? 'block' : 'hidden'}>
+          <PersistentPage active={activeTab === 'Plans'} className="block">
             <Plans
               stats={stats}
               renderFilterCard={() => renderFilterCard('Plans')}
@@ -4556,12 +4556,12 @@ const App = () => {
                 />
               )}
             />
-          </div>
+          </PersistentPage>
         )}
 
         {/* --- Tab 5: Finance --- */}
         {visitedTabs.has('Finance') && (
-          <div className={activeTab === 'Finance' ? 'block min-h-full pb-24 md:pb-6' : 'hidden'}>
+          <PersistentPage active={activeTab === 'Finance'} className="block min-h-full pb-24 md:pb-6">
               <Finance
                   activities={allActivities}
                   dealStatuses={dealStatuses}
@@ -4587,12 +4587,12 @@ const App = () => {
                     });
                   }}
               />
-          </div>
+          </PersistentPage>
         )}
 
         {/* --- Tab: Quotations --- */}
         {visitedTabs.has('Quotations') && (
-          <div className={activeTab === 'Quotations' ? 'block' : 'hidden'}>
+          <PersistentPage active={activeTab === 'Quotations'} className="block">
             <Quotations
               activities={allActivities}
               allProjects={allActivities}
@@ -4600,17 +4600,19 @@ const App = () => {
               shopInfo={shopInfo}
               dealStatuses={dealStatuses}
               inventoryItems={inventoryItems}
+              inventoryImageFolderId={resolveInventoryImageFolder(driveFolders, assetsDriveFolderId)}
+              driveUploadUrl={GOOGLE_SCRIPT_URL}
               isCreateOpen={isCreateQuotationOpen}
               onCloseCreate={() => setIsCreateQuotationOpen(false)}
               onOpenProjectModal={openModal}
               onRefresh={fetchProjects}
             />
-          </div>
+          </PersistentPage>
         )}
 
         {/* --- Tab: Inventory --- */}
         {visitedTabs.has('Inventory') && (
-          <div className={activeTab === 'Inventory' ? 'block' : 'hidden'}>
+          <PersistentPage active={activeTab === 'Inventory'} className="block">
             <Inventory
               inventoryItems={inventoryItems}
               assetLoans={assetLoans}
@@ -4618,17 +4620,16 @@ const App = () => {
               isCreateOpen={isCreateInventoryOpen}
               onCloseCreate={() => setIsCreateInventoryOpen(false)}
               onOpenProjectModal={openModal}
-              onRefresh={() => {
-                loadInventoryLocalFirst(setInventoryItems);
-                loadAssetLoansLocalFirst(setAssetLoans);
-              }}
+
+              isActive={activeTab === 'Inventory'}
+              userProfile={userProfile}
             />
-          </div>
+          </PersistentPage>
         )}
 
         {/* --- Tab: Venues --- */}
         {visitedTabs.has('Locations') && (
-          <div className={activeTab === 'Locations' ? 'block' : 'hidden'}>
+          <PersistentPage active={activeTab === 'Locations'} className="block">
             <Locations
               venues={deliveryLocations}
               isCreateOpen={isCreateVenueOpen}
@@ -4641,12 +4642,12 @@ const App = () => {
               }}
               shopInfo={shopInfo}
             />
-          </div>
+          </PersistentPage>
         )}
 
         {/* --- Tab: Artists --- */}
         {visitedTabs.has('Artists') && (
-          <div className={activeTab === 'Artists' ? 'block' : 'hidden'}>
+          <PersistentPage active={activeTab === 'Artists'} className="block">
             <Artists
               artists={artistList}
               artistStats={artistSummaryStats}
@@ -4667,12 +4668,12 @@ const App = () => {
                 });
               }}
             />
-          </div>
+          </PersistentPage>
         )}
 
         {/* --- Tab: Customers --- */}
         {visitedTabs.has('Customers') && (
-          <div className={activeTab === 'Customers' ? 'block' : 'hidden'}>
+          <PersistentPage active={activeTab === 'Customers'} className="block">
             <Customers
               customers={customerList}
               customerStats={customerSummaryStats}
@@ -4692,24 +4693,24 @@ const App = () => {
                 });
               }}
             />
-          </div>
+          </PersistentPage>
         )}
 
         {/* --- Tab: Staff --- */}
         {visitedTabs.has('Staff') && (
-          <div className={activeTab === 'Staff' ? 'block' : 'hidden'}>
+          <PersistentPage active={activeTab === 'Staff'} className="block">
             <Staff
               activities={allActivities}
               isCreateOpen={isCreateStaffOpen}
               onCloseCreate={() => setIsCreateStaffOpen(false)}
               onRefresh={fetchSettings}
             />
-          </div>
+          </PersistentPage>
         )}
 
         {/* --- Tab 6: Settings --- */}
         {visitedTabs.has('Settings') && (
-          <div className={activeTab === 'Settings' ? 'block' : 'hidden'}>
+          <PersistentPage active={activeTab === 'Settings'} className="block">
             <Settings
               isSyncingSettings={isSyncingSettings}
               isUploadingProfile={isUploadingProfile}
@@ -4761,7 +4762,7 @@ const App = () => {
               defaultCategory={settingsDefaultCategory}
               onUpdateUserProfile={(newProf) => setUserProfile(newProf)}
             />
-          </div>
+          </PersistentPage>
         )}
       </>
     );

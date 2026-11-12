@@ -12,6 +12,8 @@ Flower2you manages a flower and event business. The inventory workspace must let
 
 ## Operating Context
 
+Budget and schema constraint confirmed by the user: Supabase Free only; no paid plan. The user has already applied the two earlier SQL scripts and requires a compact inventory design. Target exactly 8 inventory-owned tables as specified in docs/inventory-compact-contract.md, preserving real data and history. Reduce egress through bounded reads, active-page loading and selective refresh; do not claim that fewer tables alone reduces network usage.
+
 Confirmed by the user:
 
 - Consumables are used up, such as clear tape, hot glue sticks, and paper.
@@ -25,10 +27,14 @@ Confirmed by the user:
 - The business makes flower arrangements, gifts, and backdrops involving real banknotes. It holds banknote reserves by denomination (the user's example is twenty 500-baht notes) and needs low-stock visibility and suggested replenishment quantities to avoid repeated bank trips.
 - Real banknotes are also handed to casual helpers for folding or inserting into clear sleeves before assembly into gifts. One job can distribute this preparation among 5–10 or more people; the user's example handover is twenty 50-baht notes.
 - User-managed categories are required for filtering, such as artificial flowers and scissors. Tools within a category can have different colors and multiple individually identified units.
+- Existing staff, casual helpers, and teams must be searchable choices wherever the user selects a receiver or responsible person; new helpers remain available after saving and reloading.
+- Each customer project needs a shared production overview showing each person's responsibility, expected outputs, submissions, accepted quantities, shortages, and status. Staff inspect submitted work and explicitly complete it; one project can have ten or more helpers. Work can be added, changed, split, or cancelled without deleting prior receipts or inventory custody.
 - Artificial flowers sent with finished work are often discarded by the client after the event. The business can recover usable materials to reduce future purchasing; recovery is not guaranteed.
 - The user asked whether financial responsibility for lost tools could be shared across a team. This is a policy question, not an approved automatic payroll deduction feature.
 - Staff need to know which tools remain in the warehouse.
-- The user authorizes a redesign of the inventory experience; the initial design must be reviewable before replacing the live inventory workflow.
+- The user reviewed the inventory directions and approved implementing Plan C, with Codex supervising Gemini through Antigravity CLI (`agy`).
+- The inventory screens, issue/return forms, camera scanner, and print workspace must be easy to use on phones. Interface accents follow the selected application theme, including custom colors; semantic status colors and physical material colors remain meaningful. Printed QR labels remain black on white.
+- Responsive layouts must also cover tablets, wide and narrow windows, portrait and landscape, and split view. Device research informs representative tests; physical screen pixels are not assumed to equal CSS viewport pixels.
 
 ## Capabilities and Constraints
 

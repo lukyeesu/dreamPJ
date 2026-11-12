@@ -70,7 +70,7 @@ export const SHOP_SETTINGS_COLUMNS = 'id,shop_name,phone,email,address,line_id,f
 export const STAFF_COLUMNS = 'id,username,full_name,nickname,phone,email,citizen_id,birth_date,address,emergency_contact,role_id,is_active,profile_image_url,roles(id,name,label,code,allowed_pages)';
 export const ROLE_COLUMNS = 'id,name,code,label,description,allowed_pages,can_edit_pricing,can_delete_project,can_borrow_tools,can_manage_users,is_system_role';
 export const CUSTOMER_COLUMNS = 'id,name,phone,line_id,social_account,email,tax_id,billing_address,vip_tier,primary_artist_id,created_at';
-export const INVENTORY_COLUMNS = 'id,code,name,item_type,unit,current_stock,min_alert_threshold,average_cost,storage_location,color,size,status,is_active';
+export const INVENTORY_COLUMNS = 'id,code,name,category_id,item_type,unit,current_stock,min_alert_threshold,average_cost,storage_location,color,size,status,is_active';
 export const ASSET_LOAN_COLUMNS = 'id,item_id,project_id,borrower_name,borrowed_at,expected_return_at,actual_returned_at,status,notes';
 export const ASSET_UNIT_COLUMNS = 'unit_code,item_id,status,borrowed_by,borrowed_at,project_id,notes,created_at';
 export const CHECKLIST_ITEM_COLUMNS = 'id,project_id,item_id,category_name,item_name,item_type,required_qty,unit,picked_qty,returned_qty,damaged_qty,unit_cost,assigned_codes,is_checked,notes,created_at,updated_at';
@@ -1700,43 +1700,35 @@ export const DEFAULT_ASSET_UNITS = [
 // 13. คลังพัสดุและสต๊อก (Inventory Items) - Local-First + Zero-Egress Sync
 export async function loadInventoryLocalFirst(onUpdate) {
   try {
+    // Purge any legacy banknote rows from IndexedDB (banknotes must remain memory-only)
+    try {
+      await db.inventory_items.filter((it) => String(it.item_type || '').toLowerCase() === 'banknote').delete();
+    } catch {}
+
     let cached = await db.inventory_items.toArray();
-    if (!cached || cached.length === 0) {
-      await db.inventory_items.bulkPut(DEFAULT_INVENTORY_ITEMS_SPEC);
-      cached = DEFAULT_INVENTORY_ITEMS_SPEC;
-    } else {
-      const hasBanknote = cached.some(i => i.item_type === 'banknote');
-      if (!hasBanknote) {
-        await db.inventory_items.bulkPut(DEFAULT_INVENTORY_ITEMS_SPEC);
-        cached = await db.inventory_items.toArray();
-      }
-    }
+    // Exclude banknotes from cached results
+    cached = cached.filter((it) => String(it.item_type || '').toLowerCase() !== 'banknote');
 
     if (cached.length > 0 && onUpdate) {
       onUpdate(cached);
     }
 
-    const client = getActiveClient();
     try {
-      const { data: cloudItems, error } = await client
-        .from('inventory_items')
-        .select(INVENTORY_COLUMNS)
-        .eq('is_active', true)
-        .order('name');
-
-      if (!error && Array.isArray(cloudItems) && cloudItems.length > 0) {
-        await db.inventory_items.bulkPut(cloudItems);
-        if (onUpdate) onUpdate(cloudItems);
-        return cloudItems;
+      const {loadWarehouseStock} = await import('./warehouseService.js');
+      const page = await loadWarehouseStock();
+      if (page) {
+        const rows = page.items || [];
+        if (rows.length) await db.inventory_items.bulkPut(rows);
+        else if (page.total_count === 0) await db.inventory_items.clear();
+        onUpdate?.(rows);
+        return rows;
       }
-    } catch (cErr) {
-      // Fallback
-    }
+    } catch { /* Read-only cached catalog remains available offline. */ }
 
     return cached;
   } catch (err) {
     console.warn('Load inventory notice:', err);
-    return DEFAULT_INVENTORY_ITEMS_SPEC;
+    return [];
   }
 }
 
@@ -1746,10 +1738,11 @@ export async function saveInventoryItemSync(itemData) {
   try {
     const payload = {
       name: validated.name,
+      category_id: validated.category_id || null,
       item_type: validated.item_type || 'consumable',
       unit: validated.unit || 'ชิ้น',
       current_stock: Number(validated.current_stock) || 0,
-      min_alert_threshold: Number(validated.min_alert_threshold) || 5,
+      min_alert_threshold: validated.min_alert_threshold !== undefined ? Number(validated.min_alert_threshold) : 5,
       average_cost: Number(validated.average_cost) || 0,
       storage_location: validated.storage_location || '',
       color: validated.color || '',
@@ -1760,8 +1753,11 @@ export async function saveInventoryItemSync(itemData) {
 
     if (validated.id && isValidUuid(validated.id)) {
       payload.id = validated.id;
+      // Do not overwrite current_stock on metadata update from form
+      delete payload.current_stock;
     } else if (validated.id) {
       payload.id = validated.id;
+      delete payload.current_stock;
     } else {
       payload.id = crypto?.randomUUID ? crypto.randomUUID() : `itm-${Date.now()}`;
     }
@@ -1770,23 +1766,18 @@ export async function saveInventoryItemSync(itemData) {
       payload.code = validated.code;
     }
 
-    try {
-      const { data, error } = await client
-        .from('inventory_items')
-        .upsert(payload)
-        .select(INVENTORY_COLUMNS)
-        .single();
+    const { data, error } = await client
+      .from('inventory_items')
+      .upsert(payload)
+      .select(INVENTORY_COLUMNS)
+      .single();
 
-      if (!error && data) {
-        await db.inventory_items.put(data);
-        return data;
-      }
-    } catch (cErr) {
-      // Supabase constraint or offline fallback
+    if (error) throw error;
+    if (data) {
+      await db.inventory_items.put(data);
+      return data;
     }
-
-    await db.inventory_items.put(payload);
-    return payload;
+    throw new Error('No data returned from inventory item upsert');
   } catch (err) {
     console.error('Error saving inventory item:', err);
     throw err;
@@ -1796,9 +1787,8 @@ export async function saveInventoryItemSync(itemData) {
 export async function deleteInventoryItemSync(itemId) {
   const client = getActiveClient();
   try {
-    try {
-      await client.from('inventory_items').update({ is_active: false }).eq('id', itemId);
-    } catch (cErr) {}
+    const { error } = await client.from('inventory_items').update({ is_active: false }).eq('id', itemId);
+    if (error) throw error;
     await db.inventory_items.delete(itemId);
     broadcastRecordDeleted('inventory_items', itemId);
     return true;
@@ -1812,10 +1802,6 @@ export async function deleteInventoryItemSync(itemId) {
 export async function loadAssetUnitsLocalFirst(onUpdate) {
   try {
     let cached = await db.asset_units.toArray();
-    if (!cached || cached.length === 0) {
-      await db.asset_units.bulkPut(DEFAULT_ASSET_UNITS);
-      cached = DEFAULT_ASSET_UNITS;
-    }
     if (cached.length > 0 && onUpdate) {
       onUpdate(cached);
     }
@@ -1827,8 +1813,11 @@ export async function loadAssetUnitsLocalFirst(onUpdate) {
         .select(ASSET_UNIT_COLUMNS)
         .order('unit_code');
 
-      if (!error && Array.isArray(cloudUnits) && cloudUnits.length > 0) {
-        await db.asset_units.bulkPut(cloudUnits);
+      if (!error && Array.isArray(cloudUnits)) {
+        await db.asset_units.clear();
+        if (cloudUnits.length > 0) {
+          await db.asset_units.bulkPut(cloudUnits);
+        }
         if (onUpdate) onUpdate(cloudUnits);
         return cloudUnits;
       }
@@ -1837,7 +1826,7 @@ export async function loadAssetUnitsLocalFirst(onUpdate) {
     return cached;
   } catch (err) {
     console.warn('Load asset units notice:', err);
-    return DEFAULT_ASSET_UNITS;
+    return [];
   }
 }
 
@@ -1855,20 +1844,18 @@ export async function saveAssetUnitSync(unitData) {
       updated_at: new Date().toISOString()
     };
 
-    try {
-      const { data, error } = await client
-        .from('asset_units')
-        .upsert(payload)
-        .select(ASSET_UNIT_COLUMNS)
-        .single();
-      if (!error && data) {
-        await db.asset_units.put(data);
-        return data;
-      }
-    } catch (cErr) {}
+    const { data, error } = await client
+      .from('asset_units')
+      .upsert(payload)
+      .select(ASSET_UNIT_COLUMNS)
+      .single();
 
-    await db.asset_units.put(payload);
-    return payload;
+    if (error) throw error;
+    if (data) {
+      await db.asset_units.put(data);
+      return data;
+    }
+    throw new Error('No data returned from asset unit upsert');
   } catch (err) {
     console.error('Error saving asset unit:', err);
     throw err;
@@ -1878,9 +1865,8 @@ export async function saveAssetUnitSync(unitData) {
 export async function deleteAssetUnitSync(unitCode) {
   const client = getActiveClient();
   try {
-    try {
-      await client.from('asset_units').delete().eq('unit_code', unitCode);
-    } catch (cErr) {}
+    const { error } = await client.from('asset_units').delete().eq('unit_code', unitCode);
+    if (error) throw error;
     await db.asset_units.delete(unitCode);
     return true;
   } catch (err) {
@@ -1904,19 +1890,47 @@ export async function loadProjectChecklistLocalFirst(projectId, onUpdate) {
     }
 
     const client = getActiveClient();
-    try {
-      let query = client.from('project_checklist_items').select(CHECKLIST_ITEM_COLUMNS);
-      if (projectId) {
-        query = query.eq('project_id', projectId);
-      }
-      const { data: cloudItems, error } = await query.order('created_at');
+    if (client) {
+      try {
+        const { data, error } = await client.rpc('warehouse_get_checklists', {
+          p_filters: {
+            project_id: projectId || null,
+            limit: 20,
+            offset: 0
+          }
+        });
 
-      if (!error && Array.isArray(cloudItems) && cloudItems.length > 0) {
-        await db.project_checklist_items.bulkPut(cloudItems);
-        if (onUpdate) onUpdate(cloudItems);
-        return cloudItems;
+        if (!error && data && Array.isArray(data.checklists)) {
+          const mapped = data.checklists.map((c) => ({
+            id: c.id,
+            document_id: c.document_id,
+            project_id: c.project_id,
+            item_id: c.item_id || null,
+            item_name: c.name || '',
+            category_name: '',
+            required_qty: Number(c.quantity) || 1,
+            unit: c.unit || 'ชิ้น',
+            picked_qty: 0,
+            returned_qty: 0,
+            damaged_qty: 0,
+            unit_cost: 0,
+            assigned_codes: [],
+            is_checked: false,
+            notes: c.notes || '',
+            item_code: c.item_code || '',
+            created_at: c.created_at || new Date().toISOString()
+          }));
+
+          if (mapped.length > 0) {
+            await db.project_checklist_items.bulkPut(mapped);
+          }
+          if (onUpdate) onUpdate(mapped);
+          return mapped;
+        }
+      } catch (cErr) {
+        console.warn('warehouse_get_checklists notice:', cErr);
       }
-    } catch (cErr) {}
+    }
 
     return cached;
   } catch (err) {
@@ -1927,50 +1941,62 @@ export async function loadProjectChecklistLocalFirst(projectId, onUpdate) {
 
 export async function saveProjectChecklistItemSync(itemData) {
   const client = getActiveClient();
-  try {
-    const payload = {
-      project_id: itemData.project_id,
-      item_id: itemData.item_id || null,
-      category_name: itemData.category_name || '',
-      item_name: itemData.item_name,
-      item_type: itemData.item_type || 'consumable',
-      required_qty: Number(itemData.required_qty) || 1,
-      unit: itemData.unit || 'ชิ้น',
-      picked_qty: Number(itemData.picked_qty) || 0,
-      returned_qty: Number(itemData.returned_qty) || 0,
-      damaged_qty: Number(itemData.damaged_qty) || 0,
-      unit_cost: Number(itemData.unit_cost) || 0,
-      assigned_codes: Array.isArray(itemData.assigned_codes) ? itemData.assigned_codes : [],
-      is_checked: Boolean(itemData.is_checked),
-      notes: itemData.notes || '',
-      updated_at: new Date().toISOString()
-    };
-
-    if (itemData.id && isValidUuid(itemData.id)) {
-      payload.id = itemData.id;
-    } else {
-      payload.id = crypto?.randomUUID ? crypto.randomUUID() : `chk-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      payload.created_at = new Date().toISOString();
-    }
-
-    try {
-      const { data, error } = await client
-        .from('project_checklist_items')
-        .upsert(payload)
-        .select(CHECKLIST_ITEM_COLUMNS)
-        .single();
-      if (!error && data) {
-        await db.project_checklist_items.put(data);
-        return data;
-      }
-    } catch (cErr) {}
-
-    await db.project_checklist_items.put(payload);
-    return payload;
-  } catch (err) {
-    console.error('Error saving checklist item:', err);
-    throw err;
+  if (!client) {
+    throw new Error('Supabase client unavailable. Checklist save requires confirmed server connectivity.');
   }
+
+  const payload = {
+    project_id: itemData.project_id,
+    notes: itemData.notes || '',
+    items: [
+      {
+        item_id: itemData.item_id || null,
+        name: itemData.item_name || itemData.name,
+        quantity: Number(itemData.required_qty) || 1,
+        unit: itemData.unit || 'ชิ้น',
+        notes: itemData.notes || ''
+      }
+    ]
+  };
+
+  const idempotencyKey = itemData.idempotencyKey || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : null);
+
+  const { data, error } = await client.rpc('warehouse_dispatch', {
+    p_action: 'legacy_checklist_save',
+    p_payload: payload,
+    p_idempotency_key: idempotencyKey
+  });
+
+  if (error) {
+    console.error('Error saving checklist item via warehouse_dispatch:', error);
+    throw new Error(error.message || 'Failed to save checklist item');
+  }
+
+  if (!data?.success || !data?.data?.document_id) throw new Error(data?.message || 'Checklist save was not confirmed');
+  const docId = data.data.document_id;
+  const savedRecord = {
+    id: docId,
+    project_id: itemData.project_id,
+    item_id: itemData.item_id || null,
+    item_name: itemData.item_name || itemData.name,
+    category_name: itemData.category_name || '',
+    required_qty: Number(itemData.required_qty) || 1,
+    unit: itemData.unit || 'ชิ้น',
+    picked_qty: Number(itemData.picked_qty) || 0,
+    returned_qty: Number(itemData.returned_qty) || 0,
+    damaged_qty: Number(itemData.damaged_qty) || 0,
+    unit_cost: Number(itemData.unit_cost) || 0,
+    assigned_codes: Array.isArray(itemData.assigned_codes) ? itemData.assigned_codes : [],
+    is_checked: Boolean(itemData.is_checked),
+    notes: itemData.notes || '',
+    created_at: new Date().toISOString()
+  };
+
+  try {
+    await db.project_checklist_items.put(savedRecord);
+  } catch {}
+
+  return savedRecord;
 }
 
 export async function toggleChecklistItemSync(itemId, isChecked) {
@@ -1985,13 +2011,6 @@ export async function toggleChecklistItemSync(itemId, isChecked) {
       updated_at: new Date().toISOString()
     };
 
-    try {
-      await client
-        .from('project_checklist_items')
-        .update({ is_checked: Boolean(isChecked), updated_at: updated.updated_at })
-        .eq('id', itemId);
-    } catch (cErr) {}
-
     await db.project_checklist_items.put(updated);
     return updated;
   } catch (err) {
@@ -2001,11 +2020,7 @@ export async function toggleChecklistItemSync(itemId, isChecked) {
 }
 
 export async function deleteProjectChecklistItemSync(itemId) {
-  const client = getActiveClient();
   try {
-    try {
-      await client.from('project_checklist_items').delete().eq('id', itemId);
-    } catch (cErr) {}
     await db.project_checklist_items.delete(itemId);
     return true;
   } catch (err) {
@@ -2014,140 +2029,25 @@ export async function deleteProjectChecklistItemSync(itemId) {
   }
 }
 
-export async function borrowAssetUnitsSync({ projectId, unitCodes, borrowerName, checklistItemId }) {
-  const client = getActiveClient();
-  try {
-    const now = new Date().toISOString();
-    for (const code of unitCodes) {
-      const unit = await db.asset_units.get(code);
-      if (unit) {
-        unit.status = 'BORROWED';
-        unit.borrowed_by = borrowerName;
-        unit.borrowed_at = now;
-        unit.project_id = projectId;
-        await db.asset_units.put(unit);
-      }
-      try {
-        await client.from('asset_units').update({
-          status: 'BORROWED',
-          borrowed_by: borrowerName,
-          borrowed_at: now,
-          project_id: projectId
-        }).eq('unit_code', code);
-      } catch (cErr) {}
-    }
-
-    if (checklistItemId) {
-      const chk = await db.project_checklist_items.get(checklistItemId);
-      if (chk) {
-        chk.assigned_codes = Array.from(new Set([...(chk.assigned_codes || []), ...unitCodes]));
-        chk.is_checked = true;
-        await db.project_checklist_items.put(chk);
-        try {
-          await client.from('project_checklist_items').update({
-            assigned_codes: chk.assigned_codes,
-            is_checked: true
-          }).eq('id', checklistItemId);
-        } catch (cErr) {}
-      }
-    }
-
-    return true;
-  } catch (err) {
-    console.error('Error borrowing asset units:', err);
-    throw err;
-  }
+export async function borrowAssetUnitsSync() {
+  throw new Error('Deprecated: asset_loans and direct loan updates have been retired. Use warehouseService.borrowTools or createIssue.');
 }
 
-export async function returnAssetUnitsSync({ unitCodes }) {
-  const client = getActiveClient();
-  try {
-    for (const code of unitCodes) {
-      const unit = await db.asset_units.get(code);
-      if (unit) {
-        unit.status = 'AVAILABLE';
-        unit.borrowed_by = null;
-        unit.borrowed_at = null;
-        unit.project_id = null;
-        await db.asset_units.put(unit);
-      }
-      try {
-        await client.from('asset_units').update({
-          status: 'AVAILABLE',
-          borrowed_by: null,
-          borrowed_at: null,
-          project_id: null
-        }).eq('unit_code', code);
-      } catch (cErr) {}
-    }
-    return true;
-  } catch (err) {
-    console.error('Error returning asset units:', err);
-    throw err;
-  }
+export async function returnAssetUnitsSync() {
+  throw new Error('Deprecated: asset_loans and direct loan updates have been retired. Use warehouseService.returnTools.');
 }
 
-export async function reconcileProjectItemSync({ projectId, checklistItemId, itemId, returnedQty, damagedQty }) {
-  const client = getActiveClient();
-  try {
-    const ret = Number(returnedQty) || 0;
-    const dam = Number(damagedQty) || 0;
-
-    const chk = await db.project_checklist_items.get(checklistItemId);
-    if (chk) {
-      chk.returned_qty = ret;
-      chk.damaged_qty = dam;
-      chk.is_checked = true;
-      await db.project_checklist_items.put(chk);
-      try {
-        await client.from('project_checklist_items').update({
-          returned_qty: ret,
-          damaged_qty: dam,
-          is_checked: true
-        }).eq('id', checklistItemId);
-      } catch (cErr) {}
-    }
-
-    if (itemId) {
-      const inv = await db.inventory_items.get(itemId);
-      if (inv) {
-        inv.current_stock = (Number(inv.current_stock) || 0) + ret;
-        await db.inventory_items.put(inv);
-        try {
-          await client.from('inventory_items').update({
-            current_stock: inv.current_stock
-          }).eq('id', itemId);
-        } catch (cErr) {}
-      }
-    }
-
-    return true;
-  } catch (err) {
-    console.error('Error reconciling project item:', err);
-    throw err;
-  }
+export async function reconcileProjectItemSync() {
+  throw new Error('Deprecated: direct reconciliation on retired tables has been superseded by warehouse operations.');
 }
 
-// 14. ทะเบียนยืม-คืนอุปกรณ์ (Asset Loans) - Local-First + Zero-Egress Sync
+// 14. ทะเบียนยืม-คืนอุปกรณ์ (Asset Loans) - Read-Only Local Cache
 export async function loadAssetLoansLocalFirst(onUpdate) {
   try {
-    const cached = await db.asset_loans.toArray();
+    const cached = await db.asset_loans.toArray().catch(() => []);
     if (cached.length > 0 && onUpdate) {
       onUpdate(cached);
     }
-
-    const client = getActiveClient();
-    const { data: cloudLoans, error } = await client
-      .from('asset_loans')
-      .select(ASSET_LOAN_COLUMNS)
-      .order('borrowed_at', { ascending: false });
-
-    if (!error && Array.isArray(cloudLoans) && cloudLoans.length > 0) {
-      await db.asset_loans.bulkPut(cloudLoans);
-      if (onUpdate) onUpdate(cloudLoans);
-      return cloudLoans;
-    }
-
     return cached;
   } catch (err) {
     console.warn('Load asset loans notice:', err);
@@ -2155,71 +2055,12 @@ export async function loadAssetLoansLocalFirst(onUpdate) {
   }
 }
 
-export async function saveAssetLoanSync(loanData) {
-  const client = getActiveClient();
-  try {
-    const payload = {
-      item_id: loanData.item_id,
-      project_id: loanData.project_id || null,
-      borrower_name: loanData.borrower_name,
-      borrowed_at: loanData.borrowed_at || new Date().toISOString(),
-      expected_return_at: loanData.expected_return_at || null,
-      actual_returned_at: loanData.actual_returned_at || null,
-      status: loanData.status || 'borrowed',
-      notes: loanData.notes || ''
-    };
-
-    if (loanData.id && isValidUuid(loanData.id)) {
-      payload.id = loanData.id;
-    }
-
-    const { data, error } = await client
-      .from('asset_loans')
-      .upsert(payload)
-      .select(ASSET_LOAN_COLUMNS)
-      .single();
-
-    if (error) throw error;
-    if (data) {
-      await db.asset_loans.put(data);
-    }
-    return data;
-  } catch (err) {
-    console.error('Error saving asset loan:', err);
-    throw err;
-  }
+export async function saveAssetLoanSync() {
+  throw new Error('Deprecated: asset_loans table has been retired. Use warehouseService custody commands.');
 }
 
-export async function returnAssetLoanSync(loanId, notes = '') {
-  const client = getActiveClient();
-  try {
-    const payload = {
-      id: loanId,
-      status: 'returned',
-      actual_returned_at: new Date().toISOString(),
-      notes: notes
-    };
-
-    const { data, error } = await client
-      .from('asset_loans')
-      .update({
-        status: 'returned',
-        actual_returned_at: new Date().toISOString(),
-        notes: notes
-      })
-      .eq('id', loanId)
-      .select(ASSET_LOAN_COLUMNS)
-      .single();
-
-    if (error) throw error;
-    if (data) {
-      await db.asset_loans.put(data);
-    }
-    return data;
-  } catch (err) {
-    console.error('Error returning asset loan:', err);
-    throw err;
-  }
+export async function returnAssetLoanSync() {
+  throw new Error('Deprecated: use warehouseService.returnTools for confirmed custody returns.');
 }
 
 // 15. ราคากลางวัสดุ ตร.ม. (Material Rates) - Local-First + Zero-Egress Sync
@@ -3139,3 +2980,5 @@ export function subscribeToStaffRealtime(onStaffUpdate) {
     client.removeChannel(channel);
   };
 }
+
+export { resetWarehouseAuthSession } from './warehouseService.js';

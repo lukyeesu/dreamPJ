@@ -4,8 +4,10 @@ import { z } from 'zod';
  * Schema for Inventory Item UI Form (React Hook Form)
  */
 export const inventoryItemFormSchema = z.object({
+  id: z.string().optional(),
   code: z.string().trim().optional().default(''),
   name: z.string().trim().min(1, 'กรุณาระบุชื่อสิ่งของ/อุปกรณ์'),
+  category_id: z.string().nullable().optional(),
   item_type: z.enum(['consumable', 'asset', 'reusable', 'task', 'banknote', 'reusable_material']).default('consumable'),
   unit: z.string().trim().min(1, 'กรุณาระบุหน่วยนับ').default('ชิ้น'),
   current_stock: z.coerce.number().min(0, 'จำนวนสต็อกต้องไม่ติดลบ').default(0),
@@ -24,6 +26,7 @@ export const inventoryItemPayloadSchema = z.object({
   id: z.string().optional(),
   code: z.string().optional(),
   name: z.string().trim().min(1, 'ชื่อสิ่งของไม่สามารถเว้นว่างได้'),
+  category_id: z.string().nullable().optional(),
   item_type: z.string().default('consumable'),
   unit: z.string().default('ชิ้น'),
   current_stock: z.coerce.number().min(0).default(0),

@@ -37,6 +37,12 @@ db.version(5).stores({
   inventory_categories: 'id, name, type'
 });
 
+db.version(6).stores({
+  inventory_categories: 'id, name, type, is_active',
+  inventory_recipients: 'id, name, recipient_type, is_active',
+  inventory_field_rounds: 'id, round_code, status'
+});
+
 // ป้องกัน Safari / มือถือ ลบแคชทิ้งด้วย Storage Persistence
 if (typeof window !== 'undefined' && navigator.storage && navigator.storage.persist) {
   navigator.storage.persist().then(persistent => {
@@ -53,6 +59,11 @@ if (typeof window !== 'undefined') {
 // ฟังก์ชันล้างข้อมูลแคชทั้งหมดใน IndexedDB (เรียกใช้เมื่อผู้ใช้กด Logout หรือถูกระงับ เพื่อความปลอดภัยสูงสุด)
 export async function clearAllLocalDatabase() {
   try {
+    try {
+      const { resetWarehouseAuthSession } = await import('./warehouseService.js');
+      resetWarehouseAuthSession();
+    } catch (e) {}
+
     if (db && Array.isArray(db.tables)) {
       await Promise.allSettled(
         db.tables.map(table => table.clear().catch(e => console.warn(`Error clearing ${table.name}:`, e)))

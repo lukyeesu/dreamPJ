@@ -1,3 +1,4 @@
+import { loadWarehouseStock } from './services/warehouseService.js';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   FileText,
@@ -42,7 +43,6 @@ import {
   deleteQuotationSync,
   DEFAULT_MATERIAL_RATES,
   fetchLatest30ProjectsFromSupabase,
-  loadInventoryLocalFirst,
   saveProjectChecklistItemSync
 } from './services/syncService';
 import Toast from './components/common/Toast';
@@ -118,19 +118,17 @@ function Quotations({
   // Inventory Items State (Linked to Local-First Dexie Store)
   const [localInventory, setLocalInventory] = useState(inventoryItems);
 
+  const activeCatalogSearch = activeFloralDropdownIndex == null ? null : (floralItems[activeFloralDropdownIndex]?.name || '');
   useEffect(() => {
-    loadInventoryLocalFirst((items) => {
-      if (Array.isArray(items) && items.length > 0) {
-        setLocalInventory(items);
-      }
-    });
-  }, []);
-
-  useEffect(() => {
-    if (Array.isArray(inventoryItems) && inventoryItems.length > 0) {
-      setLocalInventory(inventoryItems);
-    }
-  }, [inventoryItems]);
+    if (activeCatalogSearch === null) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      loadWarehouseStock({search: activeCatalogSearch, limit: 50}).then(page => {
+        if (!cancelled && page) setLocalInventory(prev => [...new Map([...prev, ...(page.items || [])].map(item => [item.id, item])).values()]);
+      }).catch(() => {});
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [activeCatalogSearch]);
 
   // Click outside to close floral inventory dropdown
   useEffect(() => {

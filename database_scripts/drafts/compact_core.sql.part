@@ -1,0 +1,3388 @@
+-- ==============================================================================
+-- FLOWER2U (F2U) — COMPACT CORE TRANSACTIONAL ENGINE (Part 2 of 3)
+-- Target: 8 Compact Tables Architecture (Contract v2)
+-- Guard: flower.compact_build = 'v2' fail-closed
+-- Notice: No BEGIN / COMMIT in this part file. The final assembler wraps all parts.
+-- ==============================================================================
+
+DO $$
+BEGIN
+    IF current_setting('flower.compact_build', true) IS DISTINCT FROM 'v2' THEN
+        RAISE EXCEPTION 'flower.compact_build="v2" required to assemble compact_core.sql.part';
+    END IF;
+END $$;
+
+-- ------------------------------------------------------------------------------
+-- 1. SECURITY DEFINERS, PERMISSIONS & ANTI-ESCALATION
+-- ------------------------------------------------------------------------------
+
+-- Helper 1.1: Verify if authenticated user is Administrator
+CREATE OR REPLACE FUNCTION public.fn_is_admin(p_auth_uid UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_role_name TEXT;
+    v_curr_role TEXT;
+    v_sess_role TEXT;
+BEGIN
+    v_sess_role := session_user;
+    v_curr_role := coalesce(current_setting('role', true), v_sess_role);
+
+    IF v_sess_role IN ('authenticated', 'anon') OR v_curr_role IN ('authenticated', 'anon') THEN
+        IF p_auth_uid IS NULL THEN
+            RETURN FALSE;
+        END IF;
+    ELSIF p_auth_uid IS NULL THEN
+        -- Maintenance connection without web JWT (postgres, supabase_admin)
+        RETURN TRUE;
+    END IF;
+
+    IF p_auth_uid IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    SELECT r.name INTO v_role_name
+    FROM public.staff_users su
+    JOIN public.roles r ON su.role_id = r.id
+    WHERE su.auth_user_id = p_auth_uid
+      AND su.is_active = TRUE
+    LIMIT 1;
+
+    RETURN coalesce(v_role_name = 'admin', FALSE);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+-- Helper 1.2: Check if user has Inventory access
+CREATE OR REPLACE FUNCTION public.fn_can_access_inventory(p_auth_user_id UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_role RECORD;
+BEGIN
+    IF p_auth_user_id IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    SELECT r.name, r.allowed_pages, r.can_borrow_tools INTO v_role
+    FROM public.staff_users su
+    JOIN public.roles r ON su.role_id = r.id
+    WHERE su.auth_user_id = p_auth_user_id
+      AND su.is_active = TRUE
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+        RETURN FALSE;
+    END IF;
+
+    IF v_role.name = 'admin' THEN
+        RETURN TRUE;
+    END IF;
+
+    IF v_role.allowed_pages @> '{"Inventory"}' OR v_role.can_borrow_tools = TRUE THEN
+        RETURN TRUE;
+    END IF;
+
+    RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+-- Helper 1.3: Check if user has Cash management access (Admin or Accountant only)
+CREATE OR REPLACE FUNCTION public.fn_can_manage_cash(p_auth_user_id UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_role_name TEXT;
+BEGIN
+    IF p_auth_user_id IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    SELECT r.name INTO v_role_name
+    FROM public.staff_users su
+    JOIN public.roles r ON su.role_id = r.id
+    WHERE su.auth_user_id = p_auth_user_id
+      AND su.is_active = TRUE
+    LIMIT 1;
+
+    IF v_role_name IN ('admin', 'accountant') THEN
+        RETURN TRUE;
+    END IF;
+
+    RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+-- Helper 1.4: Canonical action + payload hash
+CREATE OR REPLACE FUNCTION public.fn_hash_action_payload(p_action TEXT, p_payload JSONB)
+RETURNS TEXT AS $$
+BEGIN
+    RETURN md5(coalesce(p_action, '') || '::' || coalesce(p_payload::text, ''));
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Trigger Guards: Anti-escalation protection for staff_users & roles
+CREATE OR REPLACE FUNCTION public.trg_guard_staff_users_escalation()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_caller_uid UUID;
+    v_caller_is_admin BOOLEAN;
+BEGIN
+    v_caller_uid := auth.uid();
+    v_caller_is_admin := coalesce(public.fn_is_admin(v_caller_uid), FALSE);
+
+    IF NOT v_caller_is_admin THEN
+        IF v_caller_uid IS NULL THEN
+            RAISE EXCEPTION 'Unauthorized: Unauthenticated callers cannot modify staff records';
+        END IF;
+
+        IF OLD.auth_user_id IS DISTINCT FROM v_caller_uid THEN
+            RAISE EXCEPTION 'Unauthorized: Non-admin staff cannot modify other staff records';
+        END IF;
+
+        IF NEW.role_id IS DISTINCT FROM OLD.role_id THEN
+            RAISE EXCEPTION 'Unauthorized: Non-admin staff cannot modify role_id';
+        END IF;
+        IF NEW.auth_user_id IS DISTINCT FROM OLD.auth_user_id THEN
+            RAISE EXCEPTION 'Unauthorized: Non-admin staff cannot modify auth_user_id';
+        END IF;
+        IF NEW.id::text IS DISTINCT FROM OLD.id::text THEN
+            RAISE EXCEPTION 'Unauthorized: Non-admin staff cannot modify user id';
+        END IF;
+        IF NEW.is_active IS DISTINCT FROM OLD.is_active THEN
+            RAISE EXCEPTION 'Unauthorized: Non-admin staff cannot modify active status';
+        END IF;
+
+        IF (to_jsonb(NEW) - ARRAY['nickname', 'phone', 'profile_image_url', 'address', 'emergency_contact', 'full_name', 'username', 'email', 'updated_at'])
+           IS DISTINCT FROM
+           (to_jsonb(OLD) - ARRAY['nickname', 'phone', 'profile_image_url', 'address', 'emergency_contact', 'full_name', 'username', 'email', 'updated_at'])
+        THEN
+            RAISE EXCEPTION 'Unauthorized: Non-admin staff cannot modify permissions or privileged fields';
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+DROP TRIGGER IF EXISTS trg_guard_staff_users_escalation ON public.staff_users;
+CREATE TRIGGER trg_guard_staff_users_escalation
+BEFORE UPDATE ON public.staff_users
+FOR EACH ROW
+EXECUTE FUNCTION public.trg_guard_staff_users_escalation();
+
+CREATE OR REPLACE FUNCTION public.trg_guard_staff_users_dml()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_caller_uid UUID;
+    v_caller_is_admin BOOLEAN;
+BEGIN
+    v_caller_uid := auth.uid();
+    v_caller_is_admin := coalesce(public.fn_is_admin(v_caller_uid), FALSE);
+
+    IF NOT v_caller_is_admin THEN
+        RAISE EXCEPTION 'Unauthorized: Only administrators can create or delete staff users';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+DROP TRIGGER IF EXISTS trg_guard_staff_users_dml ON public.staff_users;
+CREATE TRIGGER trg_guard_staff_users_dml
+BEFORE INSERT OR DELETE ON public.staff_users
+FOR EACH ROW
+EXECUTE FUNCTION public.trg_guard_staff_users_dml();
+
+CREATE OR REPLACE FUNCTION public.trg_guard_roles_dml()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_caller_uid UUID;
+    v_caller_is_admin BOOLEAN;
+BEGIN
+    v_caller_uid := auth.uid();
+    v_caller_is_admin := coalesce(public.fn_is_admin(v_caller_uid), FALSE);
+
+    IF NOT v_caller_is_admin THEN
+        RAISE EXCEPTION 'Unauthorized: Only administrators can modify roles';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+DROP TRIGGER IF EXISTS trg_guard_roles_dml ON public.roles;
+CREATE TRIGGER trg_guard_roles_dml
+BEFORE INSERT OR UPDATE OR DELETE ON public.roles
+FOR EACH ROW
+EXECUTE FUNCTION public.trg_guard_roles_dml();
+
+REVOKE ALL ON public.roles FROM anon, PUBLIC;
+REVOKE ALL ON public.staff_users FROM anon, PUBLIC;
+GRANT SELECT ON public.roles TO authenticated;
+GRANT SELECT, UPDATE ON public.staff_users TO authenticated;
+
+-- ------------------------------------------------------------------------------
+-- 2. ROW LEVEL SECURITY (RLS) & GRANTS ON 8 CANONICAL TABLES
+-- ------------------------------------------------------------------------------
+
+ALTER TABLE public.inventory_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inventory_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.asset_units ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inventory_recipients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inventory_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inventory_document_lines ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inventory_movements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cash_vault_denominations ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON public.inventory_categories FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON public.inventory_items FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON public.asset_units FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON public.inventory_recipients FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON public.inventory_documents FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON public.inventory_document_lines FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON public.inventory_movements FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON public.cash_vault_denominations FROM PUBLIC, anon, authenticated;
+
+GRANT SELECT ON public.inventory_categories TO authenticated;
+GRANT SELECT ON public.inventory_items TO authenticated;
+GRANT SELECT ON public.asset_units TO authenticated;
+GRANT SELECT ON public.inventory_recipients TO authenticated;
+GRANT SELECT ON public.inventory_documents TO authenticated;
+GRANT SELECT ON public.inventory_document_lines TO authenticated;
+GRANT SELECT ON public.inventory_movements TO authenticated;
+GRANT SELECT ON public.cash_vault_denominations TO authenticated;
+
+DROP POLICY IF EXISTS "Compact authenticated read" ON public.inventory_categories;
+CREATE POLICY "Compact authenticated read" ON public.inventory_categories
+    FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Compact authenticated read" ON public.inventory_items;
+CREATE POLICY "Compact authenticated read" ON public.inventory_items
+    FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Compact authenticated read" ON public.asset_units;
+CREATE POLICY "Compact authenticated read" ON public.asset_units
+    FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Compact authenticated read" ON public.inventory_recipients;
+CREATE POLICY "Compact authenticated read" ON public.inventory_recipients
+    FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Compact authenticated read" ON public.inventory_documents;
+CREATE POLICY "Compact authenticated read" ON public.inventory_documents
+    FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Compact authenticated read" ON public.inventory_document_lines;
+CREATE POLICY "Compact authenticated read" ON public.inventory_document_lines
+    FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Compact authenticated read" ON public.inventory_movements;
+CREATE POLICY "Compact authenticated read" ON public.inventory_movements
+    FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Compact authenticated read" ON public.cash_vault_denominations;
+CREATE POLICY "Compact authenticated read" ON public.cash_vault_denominations
+    FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Inventory access select inventory_categories" ON public.inventory_categories;
+CREATE POLICY "Inventory access select inventory_categories" ON public.inventory_categories
+    AS RESTRICTIVE FOR SELECT TO authenticated USING (public.fn_can_access_inventory(auth.uid()));
+
+DROP POLICY IF EXISTS "Inventory access select inventory_items" ON public.inventory_items;
+CREATE POLICY "Inventory access select inventory_items" ON public.inventory_items
+    AS RESTRICTIVE FOR SELECT TO authenticated USING (
+        public.fn_can_access_inventory(auth.uid())
+        AND (lower(item_type) != 'banknote' OR public.fn_can_manage_cash(auth.uid()))
+    );
+
+DROP POLICY IF EXISTS "Inventory access select asset_units" ON public.asset_units;
+CREATE POLICY "Inventory access select asset_units" ON public.asset_units
+    AS RESTRICTIVE FOR SELECT TO authenticated USING (public.fn_can_access_inventory(auth.uid()));
+
+DROP POLICY IF EXISTS "Inventory access select inventory_recipients" ON public.inventory_recipients;
+CREATE POLICY "Inventory access select inventory_recipients" ON public.inventory_recipients
+    AS RESTRICTIVE FOR SELECT TO authenticated USING (public.fn_can_access_inventory(auth.uid()));
+
+DROP POLICY IF EXISTS "Unified access select inventory_documents" ON public.inventory_documents;
+CREATE POLICY "Unified access select inventory_documents" ON public.inventory_documents
+    AS RESTRICTIVE FOR SELECT TO authenticated USING (
+        (NOT coalesce(is_cash, false) AND doc_type NOT LIKE 'CASH_%' AND public.fn_can_access_inventory(auth.uid()))
+        OR ((coalesce(is_cash, false) OR doc_type LIKE 'CASH_%') AND public.fn_can_manage_cash(auth.uid()))
+        OR public.fn_is_admin(auth.uid())
+    );
+
+DROP POLICY IF EXISTS "Unified access select inventory_document_lines" ON public.inventory_document_lines;
+CREATE POLICY "Unified access select inventory_document_lines" ON public.inventory_document_lines
+    AS RESTRICTIVE FOR SELECT TO authenticated USING (
+        EXISTS (SELECT 1 FROM public.inventory_documents d WHERE d.id = document_id
+            AND (((NOT coalesce(d.is_cash, false) AND d.doc_type NOT LIKE 'CASH_%'
+                    AND line_type NOT LIKE 'CASH_%' AND denomination IS NULL)
+                   AND public.fn_can_access_inventory(auth.uid()))
+              OR public.fn_can_manage_cash(auth.uid())))
+        OR public.fn_is_admin(auth.uid())
+    );
+
+DROP POLICY IF EXISTS "Unified access select inventory_movements" ON public.inventory_movements;
+CREATE POLICY "Unified access select inventory_movements" ON public.inventory_movements
+    AS RESTRICTIVE FOR SELECT TO authenticated USING (
+        (NOT coalesce(is_cash, false) AND denomination IS NULL AND movement_type NOT LIKE 'CASH_%'
+          AND (document_id IS NULL OR EXISTS (SELECT 1 FROM public.inventory_documents d WHERE d.id = document_id))
+          AND public.fn_can_access_inventory(auth.uid()))
+        OR ((coalesce(is_cash, false) OR movement_type LIKE 'CASH_%') AND public.fn_can_manage_cash(auth.uid()))
+        OR public.fn_is_admin(auth.uid())
+    );
+
+DROP POLICY IF EXISTS "Cash access select cash_vault_denominations" ON public.cash_vault_denominations;
+CREATE POLICY "Cash access select cash_vault_denominations" ON public.cash_vault_denominations
+    AS RESTRICTIVE FOR SELECT TO authenticated USING (public.fn_can_manage_cash(auth.uid()));
+
+-- ------------------------------------------------------------------------------
+-- 3. SHARED HELPER CONTRACTS (Core implements, Production consumes)
+-- ------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.warehouse_command_lookup(
+    p_action TEXT,
+    p_hash TEXT,
+    p_key UUID,
+    p_is_cash BOOLEAN DEFAULT false
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_doc RECORD;
+BEGIN
+    IF p_key IS NULL THEN
+        RAISE EXCEPTION 'Idempotency key (UUID) is strictly required';
+    END IF;
+
+    -- Serialize concurrent executions of identical request key
+    PERFORM pg_advisory_xact_lock(hashtext(p_key::text));
+
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required to execute warehouse actions';
+    END IF;
+
+    IF p_is_cash THEN
+        IF NOT public.fn_can_manage_cash(v_auth_uid) THEN
+            RAISE EXCEPTION 'Unauthorized: Cash management permissions required for %', p_action;
+        END IF;
+    ELSE
+        IF NOT public.fn_can_access_inventory(v_auth_uid) THEN
+            RAISE EXCEPTION 'Unauthorized: Inventory access permissions required for %', p_action;
+        END IF;
+    END IF;
+
+    -- Look up existing command or business document matching key
+    SELECT id, actor_auth_user_id, action_name, idempotency_payload_hash, response_payload, is_cash
+    INTO v_doc
+    FROM public.inventory_documents
+    WHERE idempotency_key = p_key
+    LIMIT 1;
+
+    IF FOUND THEN
+        IF v_doc.is_cash AND NOT public.fn_can_manage_cash(v_auth_uid) THEN
+            RAISE EXCEPTION 'Unauthorized access to cached cash transaction';
+        END IF;
+
+        IF v_doc.action_name = p_action 
+           AND v_doc.idempotency_payload_hash = p_hash 
+           AND v_doc.actor_auth_user_id = v_auth_uid 
+        THEN
+            RETURN v_doc.response_payload;
+        ELSE
+            RAISE EXCEPTION 'Idempotency key % reused with mismatched action, payload or actor', p_key;
+        END IF;
+    END IF;
+
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.warehouse_command_lookup(TEXT, TEXT, UUID, BOOLEAN) FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.warehouse_command_finish(
+    p_action TEXT,
+    p_hash TEXT,
+    p_key UUID,
+    p_response JSONB,
+    p_document_id UUID DEFAULT NULL,
+    p_is_cash BOOLEAN DEFAULT false
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_actor_name TEXT;
+    v_doc RECORD;
+    v_cmd_number TEXT;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required to finish warehouse command';
+    END IF;
+
+    SELECT coalesce(full_name, username) INTO v_actor_name
+    FROM public.staff_users
+    WHERE auth_user_id = v_auth_uid AND is_active = TRUE
+    LIMIT 1;
+
+    IF v_actor_name IS NULL THEN
+        RAISE EXCEPTION 'Active staff mapping not found. Fail closed.';
+    END IF;
+
+    IF p_document_id IS NOT NULL THEN
+        SELECT id, idempotency_key INTO v_doc
+        FROM public.inventory_documents
+        WHERE id = p_document_id
+        FOR UPDATE;
+
+        IF FOUND THEN
+            IF v_doc.idempotency_key IS NULL OR v_doc.idempotency_key = p_key THEN
+                -- Attach cached response directly to this new semantic business document
+                UPDATE public.inventory_documents
+                SET idempotency_key = p_key,
+                    idempotency_payload_hash = p_hash,
+                    action_name = p_action,
+                    response_payload = p_response,
+                    updated_at = timezone('utc'::text, now())
+                WHERE id = p_document_id;
+
+                RETURN p_response;
+            ELSE
+                -- Document already carries a DIFFERENT creation key; create child COMMAND header to avoid overwriting
+                v_cmd_number := 'CMD-' || to_char(now(), 'YYYYMMDD-HH24MISS-') || substring(gen_random_uuid()::text, 1, 6);
+                INSERT INTO public.inventory_documents (
+                    doc_number, doc_type, parent_document_id, idempotency_key, idempotency_payload_hash,
+                    action_name, response_payload, actor_auth_user_id, actor_name_snapshot, is_cash
+                ) VALUES (
+                    v_cmd_number, 'COMMAND', p_document_id, p_key, p_hash,
+                    p_action, p_response, v_auth_uid, v_actor_name, p_is_cash
+                ) ON CONFLICT (idempotency_key) DO UPDATE SET
+                    action_name = EXCLUDED.action_name,
+                    response_payload = EXCLUDED.response_payload;
+
+                RETURN p_response;
+            END IF;
+        END IF;
+    END IF;
+
+    -- Standalone command record (or legacy request lacking a primary business document)
+    v_cmd_number := 'CMD-' || to_char(now(), 'YYYYMMDD-HH24MISS-') || substring(gen_random_uuid()::text, 1, 6);
+    INSERT INTO public.inventory_documents (
+        doc_number, doc_type, idempotency_key, idempotency_payload_hash,
+        action_name, response_payload, actor_auth_user_id, actor_name_snapshot, is_cash
+    ) VALUES (
+        v_cmd_number, 'COMMAND', p_key, p_hash,
+        p_action, p_response, v_auth_uid, v_actor_name, p_is_cash
+    ) ON CONFLICT (idempotency_key) DO UPDATE SET
+        action_name = EXCLUDED.action_name,
+        response_payload = EXCLUDED.response_payload;
+
+    RETURN p_response;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.warehouse_command_finish(TEXT, TEXT, UUID, JSONB, UUID, BOOLEAN) FROM PUBLIC, anon, authenticated;
+
+-- Placeholder forward declarations for production hooks (production agent overrides in part 3)
+CREATE OR REPLACE FUNCTION public.warehouse_ensure_production_work(p_issue_document_id UUID)
+RETURNS UUID AS $$
+BEGIN
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+CREATE OR REPLACE FUNCTION public.warehouse_sync_cash_work(p_batch_document_id UUID)
+RETURNS VOID AS $$
+BEGIN
+    RETURN;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.warehouse_ensure_production_work(UUID) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.warehouse_sync_cash_work(UUID) FROM PUBLIC, anon, authenticated;
+
+-- ------------------------------------------------------------------------------
+-- 4. UNIFIED TRANSACTIONAL COMMAND DISPATCHER (warehouse_dispatch)
+-- ------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.warehouse_dispatch(
+    p_action TEXT,
+    p_payload JSONB,
+    p_idempotency_key UUID
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_actor_name TEXT;
+    v_payload_hash TEXT;
+    v_cached JSONB;
+    v_result JSONB;
+    v_is_cash BOOLEAN;
+
+    -- Identifiers and working variables
+    v_doc_id UUID;
+    v_doc_no TEXT;
+    v_move_id UUID;
+    v_line_id UUID;
+    v_round_id UUID;
+    v_batch_id UUID;
+    v_batch_code TEXT;
+    v_project_id TEXT;
+    v_recipient_name TEXT;
+    v_recipient_id UUID;
+    v_item_id UUID;
+    v_unit_code TEXT;
+
+    -- Records
+    v_item RECORD;
+    v_unit RECORD;
+    v_src_move RECORD;
+    v_vault RECORD;
+    v_batch RECORD;
+    v_prep RECORD;
+    v_custody RECORD;
+    v_rec RECORD;
+
+    -- Quantities and math
+    v_qty NUMERIC(12,2);
+    v_stock NUMERIC(12,2);
+    v_delta NUMERIC(12,2);
+    v_cum_returned NUMERIC(12,2);
+    v_good_qty NUMERIC(12,2);
+    v_damaged_qty NUMERIC(12,2);
+    v_denom INT;
+    v_note_count INT;
+    v_use_res BOOLEAN;
+    v_keep_res BOOLEAN;
+    v_bool BOOLEAN;
+    v_status TEXT;
+
+    -- Iteration & Sorting arrays
+    v_sorted_item_ids UUID[];
+    v_sorted_src_move_ids UUID[];
+    v_sorted_units TEXT[];
+    v_pid_elem TEXT;
+    v_arr_elem JSONB;
+    v_movements_json JSONB := '[]'::jsonb;
+    v_units_json JSONB := '[]'::jsonb;
+    v_recoveries_json JSONB := '[]'::jsonb;
+
+    -- Selective refresh sets
+    v_affected_items UUID[] := '{}';
+    v_affected_units TEXT[] := '{}';
+    v_affected_projects TEXT[] := '{}';
+    v_remaining_tools INT := 0;
+    v_tool_count INT := 0;
+BEGIN
+    -- 1. Idempotency Check & Advisory Lock
+    IF p_idempotency_key IS NULL THEN
+        RAISE EXCEPTION 'Idempotency key (UUID) is strictly required for mutating operations';
+    END IF;
+
+    v_is_cash := (p_action LIKE 'cash_%');
+    v_payload_hash := public.fn_hash_action_payload(p_action, p_payload);
+
+    v_cached := public.warehouse_command_lookup(p_action, v_payload_hash, p_idempotency_key, v_is_cash);
+    IF v_cached IS NOT NULL THEN
+        RETURN v_cached;
+    END IF;
+
+    v_auth_uid := auth.uid();
+    SELECT coalesce(full_name, username) INTO v_actor_name
+    FROM public.staff_users
+    WHERE auth_user_id = v_auth_uid AND is_active = TRUE
+    LIMIT 1;
+
+    IF v_actor_name IS NULL THEN
+        RAISE EXCEPTION 'Staff mapping not found or staff account is inactive. Fail closed.';
+    END IF;
+
+    -- 2. Dispatch Action
+    CASE p_action
+
+        -- =====================================================================
+        -- 2.1 ATOMIC MIXED ISSUE (Cart with materials and tools in ONE transaction)
+        -- =====================================================================
+        WHEN 'issue_create', 'material_issue', 'tool_borrow' THEN
+            v_recipient_name := trim(coalesce(p_payload->>'recipient_name', ''));
+            IF v_recipient_name = '' THEN
+                RAISE EXCEPTION 'Recipient name is required for issue';
+            END IF;
+
+            v_recipient_id := (p_payload->>'recipient_id')::uuid;
+            IF v_recipient_id IS NULL THEN
+                SELECT id INTO v_recipient_id
+                FROM public.inventory_recipients
+                WHERE lower(trim(name)) = lower(v_recipient_name) AND is_active = true
+                LIMIT 1;
+            END IF;
+
+            v_status := coalesce(p_payload->>'issue_type', 'PRODUCTION_ISSUE');
+            IF v_status NOT IN ('PRODUCTION_ISSUE', 'FIELD_ISSUE') THEN
+                RAISE EXCEPTION 'Invalid issue_type: % (must be PRODUCTION_ISSUE or FIELD_ISSUE)', v_status;
+            END IF;
+
+            IF v_status = 'FIELD_ISSUE' THEN
+                v_round_id := (p_payload->>'round_id')::uuid;
+                IF v_round_id IS NULL THEN
+                    IF trim(coalesce(p_payload->>'round_code', '')) = '' THEN
+                        RAISE EXCEPTION 'Round code is required for new field round';
+                    END IF;
+
+                    INSERT INTO public.inventory_documents (
+                        doc_number, doc_type, recipient_id, recipient_name_snapshot,
+                        team_members_snapshot, title, due_at, notes, actor_auth_user_id, actor_name_snapshot
+                    ) VALUES (
+                        trim(p_payload->>'round_code'),
+                        'FIELD_ROUND',
+                        v_recipient_id,
+                        v_recipient_name,
+                        coalesce((SELECT array_agg(trim(x)) FROM jsonb_array_elements_text(p_payload->'team_members') t(x) WHERE trim(x) != ''), '{}'),
+                        trim(coalesce(p_payload->>'round_title', 'Field Round ' || (p_payload->>'round_code'))),
+                        coalesce((p_payload->>'expected_return_at')::timestamptz, (p_payload->>'due_date')::timestamptz),
+                        p_payload->>'notes',
+                        v_auth_uid,
+                        v_actor_name
+                    ) RETURNING id INTO v_round_id;
+
+                    IF p_payload ? 'project_ids' THEN
+                        FOR v_pid_elem IN SELECT jsonb_array_elements_text(p_payload->'project_ids')
+                        LOOP
+                            IF NOT EXISTS (SELECT 1 FROM public.projects WHERE id = v_pid_elem) THEN
+                                RAISE EXCEPTION 'Project % does not exist', v_pid_elem;
+                            END IF;
+                            INSERT INTO public.inventory_document_lines (
+                                document_id, line_type, project_id, round_id, description
+                            ) VALUES (
+                                v_round_id, 'ROUND_PROJECT', v_pid_elem, v_round_id, 'Field round linked site'
+                            );
+                            v_affected_projects := array_append(v_affected_projects, v_pid_elem);
+                        END LOOP;
+                    END IF;
+                END IF;
+
+                v_doc_no := 'FLD-ISS-' || to_char(now(), 'YYYYMMDD-HH24MISS-') || substring(gen_random_uuid()::text, 1, 4);
+                INSERT INTO public.inventory_documents (
+                    doc_number, doc_type, round_id, recipient_id, recipient_name_snapshot,
+                    team_members_snapshot, notes, actor_auth_user_id, actor_name_snapshot
+                ) VALUES (
+                    v_doc_no, 'FIELD_ISSUE', v_round_id, v_recipient_id, v_recipient_name,
+                    coalesce((SELECT array_agg(trim(x)) FROM jsonb_array_elements_text(p_payload->'team_members') t(x) WHERE trim(x) != ''), '{}'),
+                    p_payload->>'notes', v_auth_uid, v_actor_name
+                ) RETURNING id INTO v_doc_id;
+
+            ELSE
+                v_project_id := p_payload->>'project_id';
+                IF v_project_id IS NULL OR NOT EXISTS (SELECT 1 FROM public.projects WHERE id = v_project_id) THEN
+                    RAISE EXCEPTION 'Valid project_id is required for production issue';
+                END IF;
+                v_affected_projects := array_append(v_affected_projects, v_project_id);
+
+                v_doc_no := 'PRD-ISS-' || to_char(now(), 'YYYYMMDD-HH24MISS-') || substring(gen_random_uuid()::text, 1, 4);
+                INSERT INTO public.inventory_documents (
+                    doc_number, doc_type, project_id, recipient_id, recipient_name_snapshot,
+                    notes, actor_auth_user_id, actor_name_snapshot
+                ) VALUES (
+                    v_doc_no, 'PRODUCTION_ISSUE', v_project_id, v_recipient_id, v_recipient_name,
+                    p_payload->>'notes', v_auth_uid, v_actor_name
+                ) RETURNING id INTO v_doc_id;
+            END IF;
+
+            -- Validate material_lines or tool_units presence
+            IF (NOT p_payload ? 'material_lines' OR jsonb_array_length(p_payload->'material_lines') = 0)
+               AND (NOT p_payload ? 'tool_units' OR jsonb_array_length(p_payload->'tool_units') = 0) THEN
+                RAISE EXCEPTION 'Issue must contain at least one material line or tool unit';
+            END IF;
+
+            -- Process Material Lines (Deterministic locking order on item_id)
+            IF p_payload ? 'material_lines' AND jsonb_array_length(p_payload->'material_lines') > 0 THEN
+                SELECT array_agg((elem->>'item_id')::uuid ORDER BY (elem->>'item_id')::uuid)
+                INTO v_sorted_item_ids
+                FROM jsonb_array_elements(p_payload->'material_lines') elem;
+
+                IF (SELECT count(DISTINCT x) FROM unnest(v_sorted_item_ids) x) < array_length(v_sorted_item_ids, 1) THEN
+                    RAISE EXCEPTION 'Duplicate item entries in issue cart are rejected';
+                END IF;
+
+                FOREACH v_item_id IN ARRAY v_sorted_item_ids
+                LOOP
+                    SELECT (elem->>'quantity') INTO v_status
+                    FROM jsonb_array_elements(p_payload->'material_lines') elem
+                    WHERE (elem->>'item_id')::uuid = v_item_id;
+
+                    IF v_status IS NULL OR v_status ~ '^[0-9]+(\.[0-9]+)?$' = FALSE THEN
+                        RAISE EXCEPTION 'Material quantity must be finite positive number';
+                    END IF;
+                    v_qty := v_status::numeric;
+                    IF v_qty <= 0 THEN
+                        RAISE EXCEPTION 'Material quantity must be strictly greater than 0';
+                    END IF;
+
+                    SELECT id, current_stock, name, item_type, is_active, color, size, unit INTO v_item
+                    FROM public.inventory_items
+                    WHERE id = v_item_id
+                    FOR UPDATE;
+
+                    IF NOT FOUND THEN
+                        RAISE EXCEPTION 'Item with ID % not found', v_item_id;
+                    END IF;
+
+                    IF NOT v_item.is_active THEN
+                        RAISE EXCEPTION 'Cannot issue inactive item %', v_item_id;
+                    END IF;
+
+                    IF lower(v_item.item_type) NOT IN ('consumable', 'reusable', 'reusable_material') THEN
+                        RAISE EXCEPTION 'Only consumable or reusable materials can be issued via material lines (item % is %)',
+                            v_item_id, v_item.item_type;
+                    END IF;
+
+                    IF v_item.current_stock < v_qty THEN
+                        RAISE EXCEPTION 'Insufficient stock for item % (Requested: %, Available: %)',
+                            v_item_id, v_qty, v_item.current_stock;
+                    END IF;
+
+                    UPDATE public.inventory_items
+                    SET current_stock = current_stock - v_qty,
+                        updated_at = timezone('utc'::text, now())
+                    WHERE id = v_item_id;
+
+                    INSERT INTO public.inventory_document_lines (
+                        document_id, line_type, item_id, project_id, round_id,
+                        description, unit, quantity, status
+                    ) VALUES (
+                        v_doc_id, 'ITEM', v_item_id, v_project_id, v_round_id,
+                        v_item.name, v_item.unit, v_qty, 'ISSUED'
+                    ) RETURNING id INTO v_line_id;
+
+                    INSERT INTO public.inventory_movements (
+                        document_id, line_id, item_id, movement_type, quantity, delta_stock,
+                        project_id, round_id, recipient_id, recipient_name_snapshot,
+                        source_item_variant_snapshot, actor_auth_user_id, actor_name_snapshot
+                    ) VALUES (
+                        v_doc_id, v_line_id, v_item_id, 'ISSUE', v_qty, -v_qty,
+                        v_project_id, v_round_id, v_recipient_id, v_recipient_name,
+                        jsonb_build_object('name', v_item.name, 'color', v_item.color, 'size', v_item.size, 'unit', v_item.unit),
+                        v_auth_uid, v_actor_name
+                    ) RETURNING id INTO v_move_id;
+
+                    v_movements_json := v_movements_json || jsonb_build_object('id', v_move_id, 'item_id', v_item_id, 'quantity', v_qty);
+                    v_affected_items := array_append(v_affected_items, v_item_id);
+                END LOOP;
+            END IF;
+
+            -- Process Tool Units (Deterministic locking order on unit_code)
+            IF p_payload ? 'tool_units' AND jsonb_array_length(p_payload->'tool_units') > 0 THEN
+                SELECT array_agg(elem ORDER BY elem)
+                INTO v_sorted_units
+                FROM jsonb_array_elements_text(p_payload->'tool_units') elem;
+
+                IF (SELECT count(DISTINCT x) FROM unnest(v_sorted_units) x) < array_length(v_sorted_units, 1) THEN
+                    RAISE EXCEPTION 'Duplicate tool unit entries in issue cart are rejected';
+                END IF;
+
+                FOREACH v_unit_code IN ARRAY v_sorted_units
+                LOOP
+                    SELECT u.unit_code, u.status, u.item_id, u.active_custody_line_id, i.item_type, i.is_active, i.name INTO v_unit
+                    FROM public.asset_units u
+                    JOIN public.inventory_items i ON u.item_id = i.id
+                    WHERE u.unit_code = v_unit_code
+                    FOR UPDATE;
+
+                    IF NOT FOUND THEN
+                        RAISE EXCEPTION 'Tool unit % does not exist', v_unit_code;
+                    END IF;
+
+                    IF lower(v_unit.item_type) != 'asset' OR NOT v_unit.is_active THEN
+                        RAISE EXCEPTION 'Tool unit % parent item must be an active asset', v_unit_code;
+                    END IF;
+
+                    IF upper(v_unit.status) != 'AVAILABLE' THEN
+                        RAISE EXCEPTION 'Unit % is not available (status: %)', v_unit_code, v_unit.status;
+                    END IF;
+
+                    IF v_unit.active_custody_line_id IS NOT NULL THEN
+                        RAISE EXCEPTION 'Unit % already has active custody line', v_unit_code;
+                    END IF;
+
+                    INSERT INTO public.inventory_document_lines (
+                        document_id, line_type, item_id, unit_code, project_id, round_id,
+                        recipient_id, description, quantity, due_at, is_active, status
+                    ) VALUES (
+                        v_doc_id, 'TOOL_CUSTODY', v_unit.item_id, v_unit_code, v_project_id, v_round_id,
+                        v_recipient_id, v_unit.name, 1,
+                        coalesce((p_payload->>'due_date')::timestamptz, (p_payload->>'expected_return_at')::timestamptz),
+                        true, 'BORROWED'
+                    ) RETURNING id INTO v_line_id;
+
+                    UPDATE public.asset_units
+                    SET status = 'BORROWED',
+                        active_recipient_id = v_recipient_id,
+                        active_custody_line_id = v_line_id,
+                        active_round_id = v_round_id,
+                        due_at = coalesce((p_payload->>'due_date')::timestamptz, (p_payload->>'expected_return_at')::timestamptz),
+                        borrowed_by = v_recipient_name,
+                        borrowed_at = timezone('utc'::text, now()),
+                        project_id = v_project_id,
+                        updated_at = timezone('utc'::text, now())
+                    WHERE unit_code = v_unit_code;
+
+                    INSERT INTO public.inventory_movements (
+                        document_id, line_id, item_id, unit_code, movement_type, quantity, delta_stock,
+                        project_id, round_id, recipient_id, recipient_name_snapshot,
+                        notes, actor_auth_user_id, actor_name_snapshot
+                    ) VALUES (
+                        v_doc_id, v_line_id, v_unit.item_id, v_unit_code, 'ISSUE', 1, 0,
+                        v_project_id, v_round_id, v_recipient_id, v_recipient_name,
+                        'Tool borrowed', v_auth_uid, v_actor_name
+                    );
+
+                    v_units_json := v_units_json || jsonb_build_object('unit_code', v_unit_code, 'custody_id', v_line_id);
+                    v_affected_units := array_append(v_affected_units, v_unit_code);
+                    v_affected_items := array_append(v_affected_items, v_unit.item_id);
+                END LOOP;
+            END IF;
+
+            -- Trigger linked production default work creation atomically if hook exists
+            IF EXISTS (SELECT 1 FROM public.inventory_documents WHERE id = v_doc_id AND doc_type = 'PRODUCTION_ISSUE') THEN
+                PERFORM public.warehouse_ensure_production_work(v_doc_id);
+            END IF;
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object(
+                    'document_id', v_doc_id,
+                    'doc_number', v_doc_no,
+                    'round_id', v_round_id,
+                    'material_movements', v_movements_json,
+                    'tool_custodies', v_units_json,
+                    'affected_item_ids', v_affected_items,
+                    'affected_unit_codes', v_affected_units,
+                    'affected_project_ids', v_affected_projects
+                )
+            );
+
+        -- =====================================================================
+        -- 2.2 Material Returns (Unused)
+        -- =====================================================================
+        WHEN 'material_return_unused' THEN
+            IF NOT p_payload ? 'items' OR jsonb_array_length(p_payload->'items') = 0 THEN
+                RAISE EXCEPTION 'Return items list cannot be empty';
+            END IF;
+
+            SELECT array_agg((elem->>'source_issue_movement_id')::uuid ORDER BY (elem->>'source_issue_movement_id')::uuid)
+            INTO v_sorted_src_move_ids
+            FROM jsonb_array_elements(p_payload->'items') elem;
+
+            IF (SELECT count(DISTINCT x) FROM unnest(v_sorted_src_move_ids) x) < array_length(v_sorted_src_move_ids, 1) THEN
+                RAISE EXCEPTION 'Duplicate source movement entries in return are rejected';
+            END IF;
+
+            v_doc_no := 'RET-' || to_char(now(), 'YYYYMMDD-HH24MISS-') || substring(gen_random_uuid()::text, 1, 4);
+            INSERT INTO public.inventory_documents (
+                doc_number, doc_type, project_id, recipient_name_snapshot,
+                notes, actor_auth_user_id, actor_name_snapshot
+            ) VALUES (
+                v_doc_no, 'RETURN_UNUSED', p_payload->>'project_id', coalesce(p_payload->>'recipient_name', 'Shop Return'),
+                p_payload->>'notes', v_auth_uid, v_actor_name
+            ) RETURNING id INTO v_doc_id;
+
+            FOREACH v_move_id IN ARRAY v_sorted_src_move_ids
+            LOOP
+                SELECT (elem->>'quantity') INTO v_status
+                FROM jsonb_array_elements(p_payload->'items') elem
+                WHERE (elem->>'source_issue_movement_id')::uuid = v_move_id;
+
+                IF v_status IS NULL OR v_status ~ '^[0-9]+(\.[0-9]+)?$' = FALSE THEN
+                    RAISE EXCEPTION 'Return quantity must be finite positive number';
+                END IF;
+                v_qty := v_status::numeric;
+                IF v_qty <= 0 THEN
+                    RAISE EXCEPTION 'Return quantity must be strictly greater than 0';
+                END IF;
+
+                -- Lock source issue movement row
+                SELECT m.id, m.item_id, m.quantity, d.project_id, d.round_id INTO v_src_move
+                FROM public.inventory_movements m
+                JOIN public.inventory_documents d ON m.document_id = d.id
+                WHERE m.id = v_move_id AND m.movement_type = 'ISSUE'
+                FOR UPDATE;
+
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'Source issue movement % not found or is not an ISSUE', v_move_id;
+                END IF;
+
+                IF p_payload->>'project_id' IS NOT NULL AND v_src_move.project_id IS NOT NULL AND v_src_move.project_id != p_payload->>'project_id' THEN
+                    RAISE EXCEPTION 'Return project context does not match source issue project';
+                END IF;
+
+                -- Calculate cumulative returns + recoveries across all statuses
+                SELECT coalesce(sum(quantity), 0) INTO v_cum_returned
+                FROM public.inventory_movements
+                WHERE source_issue_movement_id = v_move_id AND movement_type = 'RETURN_UNUSED';
+
+                SELECT v_cum_returned + coalesce(sum(quantity), 0) INTO v_cum_returned
+                FROM public.inventory_document_lines
+                WHERE source_issue_movement_id = v_move_id AND line_type = 'RECOVERY';
+
+                IF (v_cum_returned + v_qty) > v_src_move.quantity THEN
+                    RAISE EXCEPTION 'Cumulative return quantity (%) exceeds issued quantity (%)',
+                        (v_cum_returned + v_qty), v_src_move.quantity;
+                END IF;
+
+                UPDATE public.inventory_items
+                SET current_stock = current_stock + v_qty,
+                    updated_at = timezone('utc'::text, now())
+                WHERE id = v_src_move.item_id;
+
+                INSERT INTO public.inventory_document_lines (
+                    document_id, line_type, item_id, source_issue_movement_id,
+                    project_id, round_id, quantity, returned_qty, status
+                ) VALUES (
+                    v_doc_id, 'ITEM', v_src_move.item_id, v_move_id,
+                    v_src_move.project_id, v_src_move.round_id, v_qty, v_qty, 'RETURNED'
+                ) RETURNING id INTO v_line_id;
+
+                INSERT INTO public.inventory_movements (
+                    document_id, line_id, item_id, movement_type, quantity, delta_stock,
+                    source_issue_movement_id, actor_auth_user_id, actor_name_snapshot
+                ) VALUES (
+                    v_doc_id, v_line_id, v_src_move.item_id, 'RETURN_UNUSED', v_qty, v_qty,
+                    v_move_id, v_auth_uid, v_actor_name
+                );
+
+                v_affected_items := array_append(v_affected_items, v_src_move.item_id);
+            END LOOP;
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object(
+                    'document_id', v_doc_id,
+                    'doc_number', v_doc_no,
+                    'affected_item_ids', v_affected_items
+                )
+            );
+
+        -- =====================================================================
+        -- 2.3 Material Recoveries (Reusable items, pending or direct inspect)
+        -- =====================================================================
+        WHEN 'material_recovery' THEN
+            IF NOT p_payload ? 'items' OR jsonb_array_length(p_payload->'items') = 0 THEN
+                RAISE EXCEPTION 'Recovery items list cannot be empty';
+            END IF;
+
+            SELECT array_agg((elem->>'source_issue_movement_id')::uuid ORDER BY (elem->>'source_issue_movement_id')::uuid)
+            INTO v_sorted_src_move_ids
+            FROM jsonb_array_elements(p_payload->'items') elem;
+
+            IF (SELECT count(DISTINCT x) FROM unnest(v_sorted_src_move_ids) x) < array_length(v_sorted_src_move_ids, 1) THEN
+                RAISE EXCEPTION 'Duplicate source movement entries in recovery are rejected';
+            END IF;
+
+            v_doc_no := 'RCV-' || to_char(now(), 'YYYYMMDD-HH24MISS-') || substring(gen_random_uuid()::text, 1, 4);
+            INSERT INTO public.inventory_documents (
+                doc_number, doc_type, project_id, recipient_name_snapshot,
+                notes, actor_auth_user_id, actor_name_snapshot
+            ) VALUES (
+                v_doc_no, 'RECOVERY', p_payload->>'project_id', coalesce(p_payload->>'recipient_name', 'Recovery Team'),
+                p_payload->>'notes', v_auth_uid, v_actor_name
+            ) RETURNING id INTO v_doc_id;
+
+            FOREACH v_move_id IN ARRAY v_sorted_src_move_ids
+            LOOP
+                SELECT elem INTO v_arr_elem
+                FROM jsonb_array_elements(p_payload->'items') elem
+                WHERE (elem->>'source_issue_movement_id')::uuid = v_move_id;
+
+                IF (v_arr_elem->>'recovered_qty') ~ '^[0-9]+(\.[0-9]+)?$' = FALSE THEN
+                    RAISE EXCEPTION 'Recovered quantity must be finite positive number';
+                END IF;
+                v_qty := (v_arr_elem->>'recovered_qty')::numeric;
+                IF v_qty <= 0 THEN
+                    RAISE EXCEPTION 'Recovered quantity must be strictly greater than 0';
+                END IF;
+
+                SELECT m.id, m.item_id, m.quantity, d.project_id, d.round_id INTO v_src_move
+                FROM public.inventory_movements m
+                JOIN public.inventory_documents d ON m.document_id = d.id
+                WHERE m.id = v_move_id AND m.movement_type = 'ISSUE'
+                FOR UPDATE;
+
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'Source issue movement % not found', v_move_id;
+                END IF;
+
+                IF p_payload->>'project_id' IS NOT NULL AND v_src_move.project_id IS NOT NULL AND v_src_move.project_id != p_payload->>'project_id' THEN
+                    RAISE EXCEPTION 'Recovery project context does not match source issue project';
+                END IF;
+
+                SELECT item_type INTO v_status FROM public.inventory_items WHERE id = v_src_move.item_id;
+                IF lower(v_status) NOT IN ('reusable', 'reusable_material') THEN
+                    RAISE EXCEPTION 'Only reusable materials can be recovered (item % is %)', v_src_move.item_id, v_status;
+                END IF;
+
+                -- Cumulative cap validation
+                SELECT coalesce(sum(quantity), 0) INTO v_cum_returned
+                FROM public.inventory_movements
+                WHERE source_issue_movement_id = v_move_id AND movement_type = 'RETURN_UNUSED';
+
+                SELECT v_cum_returned + coalesce(sum(quantity), 0) INTO v_cum_returned
+                FROM public.inventory_document_lines
+                WHERE source_issue_movement_id = v_move_id AND line_type = 'RECOVERY';
+
+                IF (v_cum_returned + v_qty) > v_src_move.quantity THEN
+                    RAISE EXCEPTION 'Cumulative recovery quantity exceeds issued quantity';
+                END IF;
+
+                IF coalesce((v_arr_elem->>'inspect_now')::boolean, false) THEN
+                    v_good_qty := coalesce((v_arr_elem->>'good_qty')::numeric, 0);
+                    v_damaged_qty := coalesce((v_arr_elem->>'damaged_qty')::numeric, 0);
+
+                    IF v_good_qty < 0 OR v_damaged_qty < 0 THEN
+                        RAISE EXCEPTION 'Good and damaged quantities must be non-negative';
+                    END IF;
+                    IF (v_good_qty + v_damaged_qty) != v_qty THEN
+                        RAISE EXCEPTION 'Good quantity (%) + Damaged quantity (%) must equal recovered quantity (%)',
+                            v_good_qty, v_damaged_qty, v_qty;
+                    END IF;
+
+                    INSERT INTO public.inventory_document_lines (
+                        document_id, line_type, item_id, source_issue_movement_id,
+                        project_id, round_id, quantity, accepted_qty, rejected_qty, pending_qty, status
+                    ) VALUES (
+                        v_doc_id, 'RECOVERY', v_src_move.item_id, v_move_id,
+                        v_src_move.project_id, v_src_move.round_id, v_qty, v_good_qty, v_damaged_qty, 0, 'DIRECT_COMPLETED'
+                    ) RETURNING id INTO v_line_id;
+
+                    IF v_good_qty > 0 THEN
+                        UPDATE public.inventory_items
+                        SET current_stock = current_stock + v_good_qty,
+                            updated_at = timezone('utc'::text, now())
+                        WHERE id = v_src_move.item_id;
+
+                        INSERT INTO public.inventory_movements (
+                            document_id, line_id, item_id, movement_type, quantity, delta_stock,
+                            source_issue_movement_id, notes, actor_auth_user_id, actor_name_snapshot
+                        ) VALUES (
+                            v_doc_id, v_line_id, v_src_move.item_id, 'RECOVERY_INSPECTED', v_good_qty, v_good_qty,
+                            v_move_id, 'Directly inspected good recovery', v_auth_uid, v_actor_name
+                        );
+                    END IF;
+
+                    IF v_damaged_qty > 0 THEN
+                        INSERT INTO public.inventory_movements (
+                            document_id, line_id, item_id, movement_type, quantity, delta_stock,
+                            source_issue_movement_id, notes, actor_auth_user_id, actor_name_snapshot
+                        ) VALUES (
+                            v_doc_id, v_line_id, v_src_move.item_id, 'INSPECTION_REJECT_DAMAGED', v_damaged_qty, 0,
+                            v_move_id, 'Directly inspected damaged recovery', v_auth_uid, v_actor_name
+                        );
+                    END IF;
+
+                    v_recoveries_json := v_recoveries_json || jsonb_build_object('id', v_line_id, 'status', 'DIRECT_COMPLETED');
+                ELSE
+                    INSERT INTO public.inventory_document_lines (
+                        document_id, line_type, item_id, source_issue_movement_id,
+                        project_id, round_id, quantity, accepted_qty, rejected_qty, pending_qty, status, notes
+                    ) VALUES (
+                        v_doc_id, 'RECOVERY', v_src_move.item_id, v_move_id,
+                        v_src_move.project_id, v_src_move.round_id, v_qty, 0, 0, v_qty, 'PENDING', v_arr_elem->>'notes'
+                    ) RETURNING id INTO v_line_id;
+
+                    INSERT INTO public.inventory_movements (
+                        document_id, line_id, item_id, movement_type, quantity, delta_stock,
+                        source_issue_movement_id, notes, actor_auth_user_id, actor_name_snapshot
+                    ) VALUES (
+                        v_doc_id, v_line_id, v_src_move.item_id, 'RECOVERY_PENDING', v_qty, 0,
+                        v_move_id, 'Pending warehouse sorting/inspection', v_auth_uid, v_actor_name
+                    );
+
+                    v_recoveries_json := v_recoveries_json || jsonb_build_object('id', v_line_id, 'status', 'PENDING');
+                END IF;
+
+                v_affected_items := array_append(v_affected_items, v_src_move.item_id);
+            END LOOP;
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object(
+                    'document_id', v_doc_id,
+                    'doc_number', v_doc_no,
+                    'recoveries', v_recoveries_json,
+                    'affected_item_ids', v_affected_items
+                )
+            );
+
+        -- =====================================================================
+        -- 2.4 Material Inspection
+        -- =====================================================================
+        WHEN 'material_inspect_recovery' THEN
+            v_line_id := (p_payload->>'recovery_id')::uuid;
+            IF (p_payload->>'good_qty') ~ '^[0-9]+(\.[0-9]+)?$' = FALSE THEN
+                RAISE EXCEPTION 'good_qty must be finite non-negative number';
+            END IF;
+            v_good_qty := (p_payload->>'good_qty')::numeric;
+            v_damaged_qty := coalesce((p_payload->>'damaged_qty')::numeric, 0);
+
+            IF v_good_qty < 0 OR v_damaged_qty < 0 THEN
+                RAISE EXCEPTION 'Good and damaged quantities must be non-negative';
+            END IF;
+
+            SELECT * INTO v_rec
+            FROM public.inventory_document_lines
+            WHERE id = v_line_id AND line_type = 'RECOVERY'
+            FOR UPDATE;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Recovery line record % not found', v_line_id;
+            END IF;
+
+            IF v_rec.status != 'PENDING' THEN
+                RAISE EXCEPTION 'Recovery record % is already inspected (status: %)', v_line_id, v_rec.status;
+            END IF;
+
+            IF (v_good_qty + v_damaged_qty) != v_rec.quantity THEN
+                RAISE EXCEPTION 'Good quantity (%) + Damaged quantity (%) must equal total recovered quantity (%)',
+                    v_good_qty, v_damaged_qty, v_rec.quantity;
+            END IF;
+
+            UPDATE public.inventory_document_lines
+            SET status = 'INSPECTED',
+                accepted_qty = v_good_qty,
+                rejected_qty = v_damaged_qty,
+                pending_qty = 0,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_line_id;
+
+            IF v_good_qty > 0 THEN
+                UPDATE public.inventory_items
+                SET current_stock = current_stock + v_good_qty,
+                    updated_at = timezone('utc'::text, now())
+                WHERE id = v_rec.item_id;
+
+                INSERT INTO public.inventory_movements (
+                    document_id, line_id, item_id, movement_type, quantity, delta_stock,
+                    source_issue_movement_id, notes, actor_auth_user_id, actor_name_snapshot
+                ) VALUES (
+                    v_rec.document_id, v_line_id, v_rec.item_id, 'INSPECTION_ACCEPT', v_good_qty, v_good_qty,
+                    v_rec.source_issue_movement_id, 'Inspection accepted good quantity', v_auth_uid, v_actor_name
+                );
+            END IF;
+
+            IF v_damaged_qty > 0 THEN
+                INSERT INTO public.inventory_movements (
+                    document_id, line_id, item_id, movement_type, quantity, delta_stock,
+                    source_issue_movement_id, notes, actor_auth_user_id, actor_name_snapshot
+                ) VALUES (
+                    v_rec.document_id, v_line_id, v_rec.item_id, 'INSPECTION_REJECT_DAMAGED', v_damaged_qty, 0,
+                    v_rec.source_issue_movement_id, 'Damaged quantity isolated (zero stock increment)', v_auth_uid, v_actor_name
+                );
+            END IF;
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object(
+                    'recovery_id', v_line_id,
+                    'good_qty', v_good_qty,
+                    'damaged_qty', v_damaged_qty,
+                    'affected_item_ids', ARRAY[v_rec.item_id]
+                )
+            );
+
+        -- =====================================================================
+        -- 2.5 Tool Handover (Accepted handover without double active custody)
+        -- =====================================================================
+        WHEN 'tool_handover' THEN
+            v_recipient_name := trim(coalesce(p_payload->>'to_recipient_name', ''));
+            v_recipient_id := (p_payload->>'to_recipient_id')::uuid;
+
+            IF v_recipient_name = '' THEN
+                RAISE EXCEPTION 'Target recipient name is required for tool handover';
+            END IF;
+
+            IF v_recipient_id IS NULL THEN
+                SELECT id INTO v_recipient_id
+                FROM public.inventory_recipients
+                WHERE lower(trim(name)) = lower(v_recipient_name) AND is_active = true
+                LIMIT 1;
+            END IF;
+
+            IF NOT coalesce((p_payload->>'accepted')::boolean, false) THEN
+                RAISE EXCEPTION 'Handover must be explicitly accepted by the receiver';
+            END IF;
+
+            FOR v_unit_code IN SELECT jsonb_array_elements_text(p_payload->'unit_codes')
+            LOOP
+                SELECT u.*, l.id AS custody_line_id, l.document_id, l.project_id, l.round_id, l.due_at
+                INTO v_unit
+                FROM public.asset_units u
+                JOIN public.inventory_document_lines l ON u.active_custody_line_id = l.id
+                WHERE u.unit_code = v_unit_code AND l.is_active = true
+                FOR UPDATE OF u, l;
+
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'Active custody for unit % not found', v_unit_code;
+                END IF;
+
+                -- Deactivate prior custody line
+                UPDATE public.inventory_document_lines
+                SET is_active = false,
+                    status = 'TRANSFERRED',
+                    notes = coalesce(notes, '') || ' Handed over to ' || v_recipient_name,
+                    updated_at = timezone('utc'::text, now())
+                WHERE id = v_unit.custody_line_id;
+
+                -- Create new recipient custody line referencing source line
+                INSERT INTO public.inventory_document_lines (
+                    document_id, line_type, item_id, unit_code, project_id, round_id,
+                    recipient_id, source_line_id, quantity, due_at, is_active, status, notes
+                ) VALUES (
+                    v_unit.document_id, 'TOOL_CUSTODY', v_unit.item_id, v_unit_code,
+                    v_unit.project_id, v_unit.round_id, v_recipient_id, v_unit.custody_line_id,
+                    1, v_unit.due_at, true, 'BORROWED', p_payload->>'notes'
+                ) RETURNING id INTO v_line_id;
+
+                UPDATE public.asset_units
+                SET active_recipient_id = v_recipient_id,
+                    active_custody_line_id = v_line_id,
+                    borrowed_by = v_recipient_name,
+                    updated_at = timezone('utc'::text, now())
+                WHERE unit_code = v_unit_code;
+
+                INSERT INTO public.inventory_movements (
+                    document_id, line_id, item_id, unit_code, movement_type, quantity, delta_stock,
+                    project_id, round_id, recipient_id, recipient_name_snapshot,
+                    notes, actor_auth_user_id, actor_name_snapshot
+                ) VALUES (
+                    v_unit.document_id, v_line_id, v_unit.item_id, v_unit_code, 'TOOL_HANDOVER', 1, 0,
+                    v_unit.project_id, v_unit.round_id, v_recipient_id, v_recipient_name,
+                    'Accepted handover to ' || v_recipient_name, v_auth_uid, v_actor_name
+                );
+
+                v_affected_units := array_append(v_affected_units, v_unit_code);
+            END LOOP;
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object(
+                    'status', 'TRANSFERRED',
+                    'affected_unit_codes', v_affected_units
+                )
+            );
+
+        -- =====================================================================
+        -- 2.6 Tool Return & Condition Handling (Good / Broken / Lost)
+        -- =====================================================================
+        WHEN 'tool_return' THEN
+            FOR v_arr_elem IN SELECT * FROM jsonb_array_elements(p_payload->'returns')
+            LOOP
+                v_unit_code := v_arr_elem->>'unit_code';
+                v_status := lower(coalesce(v_arr_elem->>'condition', 'good'));
+
+                SELECT u.*, l.id AS custody_line_id, l.document_id, l.project_id, l.round_id, l.recipient_id
+                INTO v_unit
+                FROM public.asset_units u
+                LEFT JOIN public.inventory_document_lines l ON u.active_custody_line_id = l.id
+                WHERE u.unit_code = v_unit_code
+                FOR UPDATE OF u;
+
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'Unit % not found', v_unit_code;
+                END IF;
+
+                IF v_status = 'good' THEN
+                    UPDATE public.asset_units
+                    SET status = 'AVAILABLE',
+                        active_recipient_id = NULL,
+                        active_custody_line_id = NULL,
+                        active_round_id = NULL,
+                        borrowed_by = NULL,
+                        borrowed_at = NULL,
+                        due_at = NULL,
+                        project_id = NULL,
+                        updated_at = timezone('utc'::text, now())
+                    WHERE unit_code = v_unit_code;
+
+                    IF v_unit.custody_line_id IS NOT NULL THEN
+                        UPDATE public.inventory_document_lines
+                        SET is_active = false,
+                            status = 'RETURNED',
+                            notes = v_arr_elem->>'notes',
+                            updated_at = timezone('utc'::text, now())
+                        WHERE id = v_unit.custody_line_id;
+                    END IF;
+
+                    INSERT INTO public.inventory_movements (
+                        document_id, item_id, unit_code, movement_type, quantity, delta_stock,
+                        project_id, round_id, notes, actor_auth_user_id, actor_name_snapshot
+                    ) VALUES (
+                        v_unit.document_id, v_unit.item_id, v_unit_code, 'TOOL_RETURN', 1, 0,
+                        v_unit.project_id, v_unit.round_id, v_arr_elem->>'notes', v_auth_uid, v_actor_name
+                    );
+
+                ELSIF v_status = 'broken' THEN
+                    UPDATE public.asset_units
+                    SET status = 'BROKEN',
+                        active_custody_line_id = NULL,
+                        updated_at = timezone('utc'::text, now())
+                    WHERE unit_code = v_unit_code;
+
+                    IF v_unit.custody_line_id IS NOT NULL THEN
+                        UPDATE public.inventory_document_lines
+                        SET is_active = false,
+                            status = 'BROKEN',
+                            notes = v_arr_elem->>'notes',
+                            updated_at = timezone('utc'::text, now())
+                        WHERE id = v_unit.custody_line_id;
+                    END IF;
+
+                    v_doc_no := 'INC-BRK-' || substring(gen_random_uuid()::text, 1, 8);
+                    INSERT INTO public.inventory_documents (
+                        doc_number, doc_type, project_id, round_id, recipient_id, recipient_name_snapshot,
+                        status, notes, actor_auth_user_id, actor_name_snapshot
+                    ) VALUES (
+                        v_doc_no, 'INCIDENT', v_unit.project_id, v_unit.round_id, v_unit.recipient_id,
+                        v_unit.borrowed_by, 'OPEN', v_arr_elem->>'notes', v_auth_uid, v_actor_name
+                    ) RETURNING id INTO v_doc_id;
+
+                    INSERT INTO public.inventory_document_lines (
+                        document_id, line_type, item_id, unit_code, project_id, round_id,
+                        description, quantity, status, notes
+                    ) VALUES (
+                        v_doc_id, 'INCIDENT', v_unit.item_id, v_unit_code, v_unit.project_id, v_unit.round_id,
+                        'Tool broken during custody', 1, 'OPEN', v_arr_elem->>'notes'
+                    );
+
+                    INSERT INTO public.inventory_movements (
+                        document_id, item_id, unit_code, movement_type, quantity, delta_stock,
+                        project_id, round_id, notes, actor_auth_user_id, actor_name_snapshot
+                    ) VALUES (
+                        v_doc_id, v_unit.item_id, v_unit_code, 'TOOL_BROKEN', 1, 0,
+                        v_unit.project_id, v_unit.round_id, v_arr_elem->>'notes', v_auth_uid, v_actor_name
+                    );
+
+                ELSIF v_status IN ('missing', 'lost') THEN
+                    UPDATE public.asset_units
+                    SET status = 'LOST',
+                        active_custody_line_id = NULL,
+                        updated_at = timezone('utc'::text, now())
+                    WHERE unit_code = v_unit_code;
+
+                    IF v_unit.custody_line_id IS NOT NULL THEN
+                        UPDATE public.inventory_document_lines
+                        SET is_active = false,
+                            status = 'LOST',
+                            notes = v_arr_elem->>'notes',
+                            updated_at = timezone('utc'::text, now())
+                        WHERE id = v_unit.custody_line_id;
+                    END IF;
+
+                    v_doc_no := 'INC-LST-' || substring(gen_random_uuid()::text, 1, 8);
+                    INSERT INTO public.inventory_documents (
+                        doc_number, doc_type, project_id, round_id, recipient_id, recipient_name_snapshot,
+                        status, notes, actor_auth_user_id, actor_name_snapshot
+                    ) VALUES (
+                        v_doc_no, 'INCIDENT', v_unit.project_id, v_unit.round_id, v_unit.recipient_id,
+                        v_unit.borrowed_by, 'OPEN', v_arr_elem->>'notes', v_auth_uid, v_actor_name
+                    ) RETURNING id INTO v_doc_id;
+
+                    INSERT INTO public.inventory_document_lines (
+                        document_id, line_type, item_id, unit_code, project_id, round_id,
+                        description, quantity, status, notes
+                    ) VALUES (
+                        v_doc_id, 'INCIDENT', v_unit.item_id, v_unit_code, v_unit.project_id, v_unit.round_id,
+                        'Tool lost during custody', 1, 'OPEN', v_arr_elem->>'notes'
+                    );
+
+                    INSERT INTO public.inventory_movements (
+                        document_id, item_id, unit_code, movement_type, quantity, delta_stock,
+                        project_id, round_id, notes, actor_auth_user_id, actor_name_snapshot
+                    ) VALUES (
+                        v_doc_id, v_unit.item_id, v_unit_code, 'TOOL_LOST', 1, 0,
+                        v_unit.project_id, v_unit.round_id, v_arr_elem->>'notes', v_auth_uid, v_actor_name
+                    );
+                END IF;
+
+                -- Recompute Field Round status if unit belonged to a round
+                IF v_unit.active_round_id IS NOT NULL OR v_unit.round_id IS NOT NULL THEN
+                    v_round_id := coalesce(v_unit.active_round_id, v_unit.round_id);
+
+                    SELECT count(*) INTO v_remaining_tools
+                    FROM public.inventory_document_lines
+                    WHERE round_id = v_round_id AND line_type = 'TOOL_CUSTODY' AND is_active = true;
+
+                    SELECT count(*) INTO v_tool_count
+                    FROM public.inventory_document_lines
+                    WHERE round_id = v_round_id AND line_type = 'TOOL_CUSTODY';
+
+                    UPDATE public.inventory_documents
+                    SET status = CASE
+                            WHEN v_remaining_tools = 0 THEN 'RETURNED'
+                            WHEN v_remaining_tools < v_tool_count THEN 'PARTIAL_RETURNED'
+                            ELSE 'IN_PROGRESS'
+                        END,
+                        updated_at = timezone('utc'::text, now())
+                    WHERE id = v_round_id;
+                END IF;
+
+                v_affected_units := array_append(v_affected_units, v_unit_code);
+            END LOOP;
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object(
+                    'status', 'PROCESSED',
+                    'affected_unit_codes', v_affected_units
+                )
+            );
+
+        -- =====================================================================
+        -- 2.7 Tool Legacy Adoption or Return
+        -- =====================================================================
+        WHEN 'tool_legacy_adopt_or_return' THEN
+            v_unit_code := p_payload->>'unit_code';
+            v_status := lower(coalesce(p_payload->>'action', ''));
+
+            SELECT * INTO v_unit FROM public.asset_units WHERE unit_code = v_unit_code FOR UPDATE;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Legacy unit % not found', v_unit_code;
+            END IF;
+
+            IF v_status = 'return_available' THEN
+                UPDATE public.asset_units
+                SET status = 'AVAILABLE',
+                    active_recipient_id = NULL,
+                    active_custody_line_id = NULL,
+                    active_round_id = NULL,
+                    borrowed_by = NULL,
+                    borrowed_at = NULL,
+                    due_at = NULL,
+                    project_id = NULL,
+                    updated_at = timezone('utc'::text, now())
+                WHERE unit_code = v_unit_code;
+
+            ELSIF v_status = 'adopt_custody' THEN
+                v_doc_no := 'LEG-LOAN-' || substring(gen_random_uuid()::text, 1, 8);
+                INSERT INTO public.inventory_documents (
+                    doc_number, doc_type, project_id, recipient_name_snapshot,
+                    status, notes, actor_auth_user_id, actor_name_snapshot
+                ) VALUES (
+                    v_doc_no, 'LEGACY_LOAN', v_unit.project_id, coalesce(v_unit.borrowed_by, 'Legacy Custody'),
+                    'COMPLETED', 'Adopted legacy custody into compact schema', v_auth_uid, v_actor_name
+                ) RETURNING id INTO v_doc_id;
+
+                INSERT INTO public.inventory_document_lines (
+                    document_id, line_type, item_id, unit_code, project_id,
+                    description, quantity, is_active, status
+                ) VALUES (
+                    v_doc_id, 'TOOL_CUSTODY', v_unit.item_id, v_unit_code, v_unit.project_id,
+                    'Adopted legacy loan', 1, true, 'BORROWED'
+                ) RETURNING id INTO v_line_id;
+
+                UPDATE public.asset_units
+                SET active_custody_line_id = v_line_id,
+                    status = 'BORROWED',
+                    updated_at = timezone('utc'::text, now())
+                WHERE unit_code = v_unit_code;
+
+            ELSE
+                RAISE EXCEPTION 'Invalid legacy action: % (must be return_available or adopt_custody)', v_status;
+            END IF;
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object(
+                    'unit_code', v_unit_code,
+                    'action', v_status,
+                    'affected_unit_codes', ARRAY[v_unit_code]
+                )
+            );
+
+        -- =====================================================================
+        -- 2.8 Categories & Items Metadata CRUD & Audited Adjustments
+        -- =====================================================================
+        WHEN 'category_create' THEN
+            IF trim(coalesce(p_payload->>'name', '')) = '' THEN
+                RAISE EXCEPTION 'Category name cannot be empty';
+            END IF;
+
+            INSERT INTO public.inventory_categories (name, type, is_active)
+            VALUES (
+                trim(p_payload->>'name'),
+                coalesce(p_payload->>'type', 'consumable'),
+                coalesce((p_payload->>'is_active')::boolean, true)
+            ) RETURNING id INTO v_doc_id;
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object('id', v_doc_id, 'name', trim(p_payload->>'name'))
+            );
+
+        WHEN 'category_rename' THEN
+            v_doc_id := (p_payload->>'id')::uuid;
+            IF trim(coalesce(p_payload->>'name', '')) = '' THEN
+                RAISE EXCEPTION 'Category name cannot be empty';
+            END IF;
+
+            UPDATE public.inventory_categories
+            SET name = trim(p_payload->>'name')
+            WHERE id = v_doc_id;
+
+            v_result := jsonb_build_object('success', true, 'data', jsonb_build_object('id', v_doc_id));
+
+        WHEN 'category_retire' THEN
+            v_doc_id := (p_payload->>'id')::uuid;
+            UPDATE public.inventory_categories
+            SET is_active = coalesce((p_payload->>'is_active')::boolean, false)
+            WHERE id = v_doc_id;
+
+            v_result := jsonb_build_object('success', true, 'data', jsonb_build_object('id', v_doc_id));
+
+        WHEN 'item_create' THEN
+            IF nullif(p_payload->>'image_url', '') IS NOT NULL AND (
+                length(p_payload->>'image_url') > 2048 OR
+                (p_payload->>'image_url') !~ '^https://(drive[.]google[.]com|lh3[.]googleusercontent[.]com)/[A-Za-z0-9_/?=&.%-]+$'
+            ) THEN RAISE EXCEPTION 'Invalid Google Drive image URL'; END IF;
+            IF trim(coalesce(p_payload->>'name', '')) = '' THEN
+                RAISE EXCEPTION 'Item name cannot be empty';
+            END IF;
+
+            v_stock := coalesce((p_payload->>'initial_stock')::numeric, 0);
+            IF v_stock < 0 THEN
+                RAISE EXCEPTION 'Initial stock cannot be negative';
+            END IF;
+
+            v_status := lower(coalesce(p_payload->>'item_type', 'consumable'));
+            IF v_stock > 0 AND v_status IN ('asset', 'banknote', 'task') THEN
+                RAISE EXCEPTION 'Initial stock opening is forbidden for asset, banknote, or task items';
+            END IF;
+
+            INSERT INTO public.inventory_items (
+                code, name, category_id, item_type, unit, current_stock,
+                min_alert_threshold, average_cost, storage_location, color, size, status, is_active, image_url
+            ) VALUES (
+                NULLIF(trim(p_payload->>'code'), ''),
+                trim(p_payload->>'name'),
+                (p_payload->>'category_id')::uuid,
+                v_status,
+                coalesce(p_payload->>'unit', 'ชิ้น'),
+                v_stock,
+                coalesce((p_payload->>'min_alert_threshold')::numeric, 0),
+                coalesce((p_payload->>'average_cost')::numeric, 0),
+                p_payload->>'storage_location',
+                p_payload->>'color',
+                p_payload->>'size',
+                coalesce(p_payload->>'status', 'in_service'),
+                true,
+                nullif(p_payload->>'image_url', '')
+            ) RETURNING id INTO v_item_id;
+
+            IF v_stock > 0 THEN
+                v_doc_no := 'OPN-' || to_char(now(), 'YYYYMMDD-') || substring(gen_random_uuid()::text, 1, 4);
+                INSERT INTO public.inventory_documents (
+                    doc_number, doc_type, recipient_name_snapshot, notes, actor_auth_user_id, actor_name_snapshot
+                ) VALUES (
+                    v_doc_no, 'OPENING_STOCK', 'System Initial Stock',
+                    coalesce(p_payload->>'opening_stock_reason', 'Item registration initial stock'),
+                    v_auth_uid, v_actor_name
+                ) RETURNING id INTO v_doc_id;
+
+                INSERT INTO public.inventory_document_lines (
+                    document_id, line_type, item_id, quantity, status
+                ) VALUES (
+                    v_doc_id, 'ITEM', v_item_id, v_stock, 'COMPLETED'
+                ) RETURNING id INTO v_line_id;
+
+                INSERT INTO public.inventory_movements (
+                    document_id, line_id, item_id, movement_type, quantity, delta_stock,
+                    notes, actor_auth_user_id, actor_name_snapshot
+                ) VALUES (
+                    v_doc_id, v_line_id, v_item_id, 'OPENING_STOCK', v_stock, v_stock,
+                    coalesce(p_payload->>'opening_stock_reason', 'Initial stock opening'), v_auth_uid, v_actor_name
+                );
+            END IF;
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object(
+                    'id', v_item_id,
+                    'affected_item_ids', ARRAY[v_item_id]
+                )
+            );
+
+        WHEN 'item_save_metadata' THEN
+            IF nullif(p_payload->>'image_url', '') IS NOT NULL AND (
+                length(p_payload->>'image_url') > 2048 OR
+                (p_payload->>'image_url') !~ '^https://(drive[.]google[.]com|lh3[.]googleusercontent[.]com)/[A-Za-z0-9_/?=&.%-]+$'
+            ) THEN RAISE EXCEPTION 'Invalid Google Drive image URL'; END IF;
+            v_item_id := (p_payload->>'id')::uuid;
+
+            SELECT * INTO v_item FROM public.inventory_items WHERE id = v_item_id FOR UPDATE;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Item with ID % not found', v_item_id;
+            END IF;
+
+            -- Block identity changes after transactions exist
+            IF EXISTS (SELECT 1 FROM public.inventory_movements WHERE item_id = v_item_id)
+               OR EXISTS (SELECT 1 FROM public.asset_units WHERE item_id = v_item_id) THEN
+                IF (p_payload ? 'item_type' AND p_payload->>'item_type' != v_item.item_type)
+                   OR (p_payload ? 'unit' AND p_payload->>'unit' != v_item.unit)
+                   OR (p_payload ? 'color' AND p_payload->>'color' != coalesce(v_item.color, ''))
+                   OR (p_payload ? 'size' AND p_payload->>'size' != coalesce(v_item.size, '')) THEN
+                    RAISE EXCEPTION 'Cannot change item identity (type, unit, color, size) after transaction movements exist';
+                END IF;
+            END IF;
+
+            UPDATE public.inventory_items
+            SET name = trim(coalesce(p_payload->>'name', name)),
+                category_id = CASE WHEN p_payload ? 'category_id' THEN (p_payload->>'category_id')::uuid ELSE category_id END,
+                item_type = coalesce(p_payload->>'item_type', item_type),
+                unit = coalesce(p_payload->>'unit', unit),
+                min_alert_threshold = coalesce((p_payload->>'min_alert_threshold')::numeric, min_alert_threshold),
+                average_cost = coalesce((p_payload->>'average_cost')::numeric, average_cost),
+                storage_location = coalesce(p_payload->>'storage_location', storage_location),
+                color = coalesce(p_payload->>'color', color),
+                size = coalesce(p_payload->>'size', size),
+                image_url = CASE WHEN p_payload ? 'image_url' THEN nullif(p_payload->>'image_url', '') ELSE image_url END,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_item_id;
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object(
+                    'id', v_item_id,
+                    'affected_item_ids', ARRAY[v_item_id]
+                )
+            );
+
+        WHEN 'stock_adjust' THEN
+            v_item_id := (p_payload->>'item_id')::uuid;
+            IF (p_payload->>'delta_quantity') ~ '^-?[0-9]+(\.[0-9]+)?$' = FALSE THEN
+                RAISE EXCEPTION 'delta_quantity must be a finite non-zero number';
+            END IF;
+            v_delta := (p_payload->>'delta_quantity')::numeric;
+
+            IF v_delta = 0 THEN
+                RAISE EXCEPTION 'Stock adjustment delta must be non-zero';
+            END IF;
+            IF trim(coalesce(p_payload->>'reason', '')) = '' THEN
+                RAISE EXCEPTION 'Reason is strictly required for stock adjustment';
+            END IF;
+
+            SELECT * INTO v_item FROM public.inventory_items WHERE id = v_item_id FOR UPDATE;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Item with ID % not found', v_item_id;
+            END IF;
+
+            IF lower(v_item.item_type) NOT IN ('consumable', 'reusable', 'reusable_material') THEN
+                RAISE EXCEPTION 'Stock adjustment cannot alter item of type %', v_item.item_type;
+            END IF;
+
+            IF (v_item.current_stock + v_delta) < 0 THEN
+                RAISE EXCEPTION 'Adjustment would result in negative stock balance (%)', (v_item.current_stock + v_delta);
+            END IF;
+
+            UPDATE public.inventory_items
+            SET current_stock = current_stock + v_delta,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_item_id;
+
+            v_doc_no := 'ADJ-' || to_char(now(), 'YYYYMMDD-') || substring(gen_random_uuid()::text, 1, 4);
+            INSERT INTO public.inventory_documents (
+                doc_number, doc_type, recipient_name_snapshot, notes, actor_auth_user_id, actor_name_snapshot
+            ) VALUES (
+                v_doc_no, 'ADJUSTMENT', 'Stock Auditor', p_payload->>'reason', v_auth_uid, v_actor_name
+            ) RETURNING id INTO v_doc_id;
+
+            INSERT INTO public.inventory_document_lines (
+                document_id, line_type, item_id, quantity, notes, status
+            ) VALUES (
+                v_doc_id, 'ITEM', v_item_id, abs(v_delta), p_payload->>'reason', 'COMPLETED'
+            ) RETURNING id INTO v_line_id;
+
+            INSERT INTO public.inventory_movements (
+                document_id, line_id, item_id, movement_type, quantity, delta_stock,
+                notes, actor_auth_user_id, actor_name_snapshot
+            ) VALUES (
+                v_doc_id, v_line_id, v_item_id, 'ADJUSTMENT', abs(v_delta), v_delta,
+                p_payload->>'reason', v_auth_uid, v_actor_name
+            );
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object(
+                    'item_id', v_item_id,
+                    'new_stock', (v_item.current_stock + v_delta),
+                    'affected_item_ids', ARRAY[v_item_id]
+                )
+            );
+
+        WHEN 'unit_add' THEN
+            v_item_id := (p_payload->>'item_id')::uuid;
+            v_unit_code := trim(coalesce(p_payload->>'unit_code', ''));
+
+            IF v_unit_code = '' THEN
+                RAISE EXCEPTION 'Unit code is required';
+            END IF;
+
+            IF EXISTS (SELECT 1 FROM public.asset_units WHERE unit_code = v_unit_code) THEN
+                RAISE EXCEPTION 'Unit code % already exists', v_unit_code;
+            END IF;
+
+            SELECT item_type, is_active INTO v_status, v_bool FROM public.inventory_items WHERE id = v_item_id;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Item % not found', v_item_id;
+            END IF;
+            IF lower(v_status) != 'asset' OR NOT v_bool THEN
+                RAISE EXCEPTION 'Serialized units can only be added to an active asset item';
+            END IF;
+
+            INSERT INTO public.asset_units (unit_code, item_id, status, notes)
+            VALUES (v_unit_code, v_item_id, 'AVAILABLE', p_payload->>'notes');
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object(
+                    'unit_code', v_unit_code,
+                    'affected_unit_codes', ARRAY[v_unit_code],
+                    'affected_item_ids', ARRAY[v_item_id]
+                )
+            );
+
+        -- =====================================================================
+        -- 2.9 Recipients & Teams (Unified into inventory_recipients)
+        -- =====================================================================
+        WHEN 'recipient_create' THEN
+            IF trim(coalesce(p_payload->>'name', '')) = '' THEN
+                RAISE EXCEPTION 'Recipient name cannot be empty';
+            END IF;
+
+            INSERT INTO public.inventory_recipients (name, recipient_type, contact_info, is_active)
+            VALUES (
+                trim(p_payload->>'name'),
+                coalesce(p_payload->>'recipient_type', 'individual'),
+                p_payload->>'contact_info',
+                coalesce((p_payload->>'is_active')::boolean, true)
+            ) RETURNING id INTO v_recipient_id;
+
+            v_result := jsonb_build_object('success', true, 'data', jsonb_build_object('id', v_recipient_id));
+
+        WHEN 'recipient_update' THEN
+            v_recipient_id := (p_payload->>'id')::uuid;
+
+            UPDATE public.inventory_recipients
+            SET name = trim(coalesce(p_payload->>'name', name)),
+                recipient_type = coalesce(p_payload->>'recipient_type', recipient_type),
+                contact_info = coalesce(p_payload->>'contact_info', contact_info),
+                is_active = coalesce((p_payload->>'is_active')::boolean, is_active),
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_recipient_id;
+
+            v_result := jsonb_build_object('success', true, 'data', jsonb_build_object('id', v_recipient_id));
+
+        WHEN 'team_create' THEN
+            IF trim(coalesce(p_payload->>'name', '')) = '' OR trim(coalesce(p_payload->>'primary_receiver_name', '')) = '' THEN
+                RAISE EXCEPTION 'Team name and primary receiver name cannot be empty';
+            END IF;
+
+            INSERT INTO public.inventory_recipients (
+                name, recipient_type, primary_receiver_name, member_names, team_is_active, is_active
+            ) VALUES (
+                trim(p_payload->>'name'),
+                'team',
+                trim(p_payload->>'primary_receiver_name'),
+                coalesce((SELECT array_agg(trim(x)) FROM jsonb_array_elements_text(p_payload->'member_names') t(x) WHERE trim(x) != ''), '{}'),
+                true,
+                true
+            ) RETURNING id INTO v_recipient_id;
+
+            -- Returns both team_id and recipient_id for client backward compatibility
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object('team_id', v_recipient_id, 'recipient_id', v_recipient_id)
+            );
+
+        -- =====================================================================
+        -- 2.10 CASH VAULT & FINANCIAL OPERATIONS (Strict Server-enforced)
+        -- =====================================================================
+        WHEN 'cash_counted_opening' THEN
+            IF NOT p_payload ? 'counts' OR jsonb_array_length(p_payload->'counts') = 0 THEN
+                RAISE EXCEPTION 'Opening counts array cannot be empty';
+            END IF;
+
+            FOR v_arr_elem IN SELECT * FROM jsonb_array_elements(p_payload->'counts')
+            LOOP
+                IF (v_arr_elem->>'note_count') ~ '^[0-9]+$' = FALSE THEN
+                    RAISE EXCEPTION 'Banknote count must be an integer (received: %)', v_arr_elem->>'note_count';
+                END IF;
+
+                v_denom := (v_arr_elem->>'denomination')::int;
+                v_note_count := (v_arr_elem->>'note_count')::int;
+
+                IF v_denom NOT IN (20, 50, 100, 500, 1000) THEN
+                    RAISE EXCEPTION 'Invalid banknote denomination: %', v_denom;
+                END IF;
+
+                SELECT * INTO v_vault FROM public.cash_vault_denominations WHERE denomination = v_denom FOR UPDATE;
+                IF FOUND AND v_vault.is_initialized THEN
+                    RAISE EXCEPTION 'Denomination % already has counted baseline. Cannot reset opening.', v_denom;
+                END IF;
+
+                UPDATE public.cash_vault_denominations
+                SET physical_count = v_note_count,
+                    is_initialized = true,
+                    updated_at = timezone('utc'::text, now())
+                WHERE denomination = v_denom;
+
+                INSERT INTO public.inventory_movements (
+                    movement_type, denomination, quantity, delta_stock, is_cash,
+                    from_location, to_location, actor_auth_user_id, actor_name_snapshot, notes
+                ) VALUES (
+                    'COUNTED_OPENING', v_denom, v_note_count, v_note_count, true,
+                    'INSPECTION', 'VAULT', v_auth_uid, v_actor_name, p_payload->>'notes'
+                );
+            END LOOP;
+
+            v_result := jsonb_build_object('success', true, 'data', jsonb_build_object('status', 'COUNTED_OPENING_RECORDED'));
+
+        WHEN 'cash_deposit' THEN
+            IF (p_payload->>'note_count') ~ '^[0-9]+$' = FALSE THEN
+                RAISE EXCEPTION 'Banknote count must be a positive integer';
+            END IF;
+
+            v_denom := (p_payload->>'denomination')::int;
+            v_note_count := (p_payload->>'note_count')::int;
+
+            IF v_denom NOT IN (20, 50, 100, 500, 1000) OR v_note_count <= 0 THEN
+                RAISE EXCEPTION 'Invalid denomination or count for cash deposit';
+            END IF;
+
+            UPDATE public.cash_vault_denominations
+            SET physical_count = physical_count + v_note_count,
+                is_initialized = true,
+                updated_at = timezone('utc'::text, now())
+            WHERE denomination = v_denom;
+
+            INSERT INTO public.inventory_movements (
+                movement_type, denomination, quantity, delta_stock, is_cash,
+                from_location, to_location, actor_auth_user_id, actor_name_snapshot, notes
+            ) VALUES (
+                'DEPOSIT', v_denom, v_note_count, v_note_count, true,
+                'BANK/DRAWER', 'VAULT', v_auth_uid, v_actor_name, p_payload->>'notes'
+            );
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object('denomination', v_denom, 'added', v_note_count)
+            );
+
+        WHEN 'cash_reserve' THEN
+            IF (p_payload->>'note_count') ~ '^[0-9]+$' = FALSE THEN
+                RAISE EXCEPTION 'Banknote count must be an integer';
+            END IF;
+
+            v_project_id := p_payload->>'project_id';
+            v_denom := (p_payload->>'denomination')::int;
+            v_note_count := (p_payload->>'note_count')::int;
+
+            IF v_project_id IS NULL OR NOT EXISTS (SELECT 1 FROM public.projects WHERE id = v_project_id) THEN
+                RAISE EXCEPTION 'Valid project_id required for cash reservation';
+            END IF;
+            IF v_denom NOT IN (20, 50, 100, 500, 1000) OR v_note_count <= 0 THEN
+                RAISE EXCEPTION 'Invalid denomination or count';
+            END IF;
+
+            SELECT * INTO v_vault FROM public.cash_vault_denominations WHERE denomination = v_denom FOR UPDATE;
+            IF (v_vault.physical_count - v_vault.reserved_count) < v_note_count THEN
+                RAISE EXCEPTION 'Insufficient available vault cash for denomination % (Requested: %, Available: %)',
+                    v_denom, v_note_count, (v_vault.physical_count - v_vault.reserved_count);
+            END IF;
+
+            UPDATE public.cash_vault_denominations
+            SET reserved_count = reserved_count + v_note_count,
+                updated_at = timezone('utc'::text, now())
+            WHERE denomination = v_denom;
+
+            v_doc_no := 'CSH-RES-' || v_project_id || '-' || substring(gen_random_uuid()::text, 1, 4);
+            INSERT INTO public.inventory_documents (
+                doc_number, doc_type, project_id, is_cash, denomination,
+                notes, actor_auth_user_id, actor_name_snapshot
+            ) VALUES (
+                v_doc_no, 'CASH_RESERVATION', v_project_id, true, v_denom,
+                p_payload->>'notes', v_auth_uid, v_actor_name
+            ) RETURNING id INTO v_doc_id;
+
+            INSERT INTO public.inventory_document_lines (
+                document_id, line_type, project_id, denomination, quantity, status
+            ) VALUES (
+                v_doc_id, 'CASH_RESERVATION', v_project_id, v_denom, v_note_count, 'RESERVED'
+            ) RETURNING id INTO v_line_id;
+
+            INSERT INTO public.inventory_movements (
+                document_id, line_id, project_id, movement_type, denomination, quantity, delta_stock, is_cash,
+                from_location, to_location, actor_auth_user_id, actor_name_snapshot, notes
+            ) VALUES (
+                v_doc_id, v_line_id, v_project_id, 'RESERVE', v_denom, v_note_count, 0, true,
+                'VAULT', 'JOB_RESERVATION:' || v_project_id, v_auth_uid, v_actor_name, p_payload->>'notes'
+            );
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object('project_id', v_project_id, 'reserved', v_note_count, 'document_id', v_doc_id)
+            );
+
+        WHEN 'cash_release_reservation' THEN
+            IF (p_payload->>'note_count') ~ '^[0-9]+$' = FALSE THEN
+                RAISE EXCEPTION 'Banknote count must be an integer';
+            END IF;
+
+            v_project_id := p_payload->>'project_id';
+            v_denom := (p_payload->>'denomination')::int;
+            v_note_count := (p_payload->>'note_count')::int;
+
+            IF v_note_count <= 0 THEN
+                RAISE EXCEPTION 'Note count to release must be strictly greater than 0';
+            END IF;
+
+            -- Calculate total active reservation for project
+            SELECT coalesce(sum(quantity - returned_qty - delivered_qty), 0) INTO v_stock
+            FROM public.inventory_document_lines
+            WHERE line_type = 'CASH_RESERVATION'
+              AND project_id = v_project_id
+              AND denomination = v_denom
+              AND is_active = true;
+
+            IF v_stock < v_note_count THEN
+                RAISE EXCEPTION 'Cannot release % notes: only % reserved for project %',
+                    v_note_count, v_stock, v_project_id;
+            END IF;
+
+            -- Deduct across reservation lines
+            v_delta := v_note_count;
+            FOR v_rec IN 
+                SELECT id, (quantity - returned_qty - delivered_qty) AS rem
+                FROM public.inventory_document_lines
+                WHERE line_type = 'CASH_RESERVATION'
+                  AND project_id = v_project_id
+                  AND denomination = v_denom
+                  AND is_active = true
+                ORDER BY created_at ASC
+                FOR UPDATE
+            LOOP
+                IF v_delta <= 0 THEN EXIT; END IF;
+                IF v_rec.rem <= v_delta THEN
+                    UPDATE public.inventory_document_lines
+                    SET returned_qty = returned_qty + v_rec.rem,
+                        is_active = false,
+                        updated_at = timezone('utc'::text, now())
+                    WHERE id = v_rec.id;
+                    v_delta := v_delta - v_rec.rem;
+                ELSE
+                    UPDATE public.inventory_document_lines
+                    SET returned_qty = returned_qty + v_delta,
+                        updated_at = timezone('utc'::text, now())
+                    WHERE id = v_rec.id;
+                    v_delta := 0;
+                END IF;
+            END LOOP;
+
+            UPDATE public.cash_vault_denominations
+            SET reserved_count = reserved_count - v_note_count,
+                updated_at = timezone('utc'::text, now())
+            WHERE denomination = v_denom;
+
+            INSERT INTO public.inventory_movements (
+                project_id, movement_type, denomination, quantity, delta_stock, is_cash,
+                from_location, to_location, actor_auth_user_id, actor_name_snapshot, notes
+            ) VALUES (
+                v_project_id, 'RELEASE_RESERVATION', v_denom, v_note_count, 0, true,
+                'JOB_RESERVATION:' || v_project_id, 'VAULT', v_auth_uid, v_actor_name, p_payload->>'notes'
+            );
+
+            v_result := jsonb_build_object('success', true, 'data', jsonb_build_object('released', v_note_count));
+
+        WHEN 'cash_issue_batch' THEN
+            IF (p_payload->>'note_count') ~ '^[0-9]+$' = FALSE THEN
+                RAISE EXCEPTION 'note_count must be an integer';
+            END IF;
+
+            v_project_id := p_payload->>'project_id';
+            v_recipient_name := trim(coalesce(p_payload->>'recipient_name', ''));
+            v_recipient_id := (p_payload->>'recipient_id')::uuid;
+            v_denom := (p_payload->>'denomination')::int;
+            v_note_count := (p_payload->>'note_count')::int;
+            v_use_res := coalesce((p_payload->>'use_reservation')::boolean, false);
+
+            IF v_project_id IS NULL OR NOT EXISTS (SELECT 1 FROM public.projects WHERE id = v_project_id) THEN
+                RAISE EXCEPTION 'Valid project_id required for cash batch';
+            END IF;
+            IF v_recipient_name = '' OR v_note_count <= 0 THEN
+                RAISE EXCEPTION 'Recipient name and positive note count required';
+            END IF;
+
+            SELECT * INTO v_vault FROM public.cash_vault_denominations WHERE denomination = v_denom FOR UPDATE;
+
+            IF v_use_res THEN
+                SELECT coalesce(sum(quantity - returned_qty - delivered_qty), 0) INTO v_stock
+                FROM public.inventory_document_lines
+                WHERE line_type = 'CASH_RESERVATION' AND project_id = v_project_id AND denomination = v_denom AND is_active = true;
+
+                IF v_stock < v_note_count THEN
+                    RAISE EXCEPTION 'Insufficient job reservation for project % (Requested: %, Reserved: %)',
+                        v_project_id, v_note_count, v_stock;
+                END IF;
+
+                -- Deduct from reservation lines
+                v_delta := v_note_count;
+                FOR v_rec IN 
+                    SELECT id, (quantity - returned_qty - delivered_qty) AS rem
+                    FROM public.inventory_document_lines
+                    WHERE line_type = 'CASH_RESERVATION' AND project_id = v_project_id AND denomination = v_denom AND is_active = true
+                    ORDER BY created_at ASC
+                    FOR UPDATE
+                LOOP
+                    IF v_delta <= 0 THEN EXIT; END IF;
+                    IF v_rec.rem <= v_delta THEN
+                        UPDATE public.inventory_document_lines
+                        SET delivered_qty = delivered_qty + v_rec.rem, is_active = false, updated_at = timezone('utc'::text, now())
+                        WHERE id = v_rec.id;
+                        v_delta := v_delta - v_rec.rem;
+                    ELSE
+                        UPDATE public.inventory_document_lines
+                        SET delivered_qty = delivered_qty + v_delta, updated_at = timezone('utc'::text, now())
+                        WHERE id = v_rec.id;
+                        v_delta := 0;
+                    END IF;
+                END LOOP;
+
+                UPDATE public.cash_vault_denominations
+                SET physical_count = physical_count - v_note_count,
+                    reserved_count = reserved_count - v_note_count,
+                    updated_at = timezone('utc'::text, now())
+                WHERE denomination = v_denom;
+            ELSE
+                IF (v_vault.physical_count - v_vault.reserved_count) < v_note_count THEN
+                    RAISE EXCEPTION 'Insufficient available vault cash';
+                END IF;
+
+                UPDATE public.cash_vault_denominations
+                SET physical_count = physical_count - v_note_count,
+                    updated_at = timezone('utc'::text, now())
+                WHERE denomination = v_denom;
+            END IF;
+
+            v_batch_code := 'CSH-' || v_project_id || '-' || to_char(now(), 'MMDD-') || substring(gen_random_uuid()::text, 1, 4);
+
+            INSERT INTO public.inventory_documents (
+                doc_number, doc_type, project_id, recipient_id, recipient_name_snapshot,
+                is_cash, denomination, status, notes, actor_auth_user_id, actor_name_snapshot
+            ) VALUES (
+                v_batch_code, 'CASH_BATCH', v_project_id, v_recipient_id, v_recipient_name,
+                true, v_denom, 'ISSUED', p_payload->>'notes', v_auth_uid, v_actor_name
+            ) RETURNING id INTO v_doc_id;
+
+            INSERT INTO public.inventory_document_lines (
+                document_id, line_type, project_id, recipient_id, denomination,
+                quantity, accepted_qty, returned_qty, handed_over_qty, status, is_active
+            ) VALUES (
+                v_doc_id, 'CASH_BATCH', v_project_id, v_recipient_id, v_denom,
+                v_note_count, 0, 0, 0, 'ISSUED', true
+            ) RETURNING id INTO v_line_id;
+
+            INSERT INTO public.inventory_movements (
+                document_id, line_id, project_id, movement_type, denomination, quantity, delta_stock, is_cash,
+                from_location, to_location, actor_auth_user_id, actor_name_snapshot, notes
+            ) VALUES (
+                v_doc_id, v_line_id, v_project_id, 'ISSUE_HELPER_BATCH', v_denom, v_note_count, -v_note_count, true,
+                'VAULT', 'HELPER:' || v_recipient_name, v_auth_uid, v_actor_name, p_payload->>'notes'
+            );
+
+            -- Sync linked cash work task in production hub
+            PERFORM public.warehouse_sync_cash_work(v_doc_id);
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object(
+                    'batch', jsonb_build_object(
+                        'id', v_doc_id,
+                        'batch_code', v_batch_code,
+                        'issued_count', v_note_count,
+                        'line_id', v_line_id
+                    )
+                )
+            );
+
+        WHEN 'cash_receive_prepared' THEN
+            IF (p_payload->>'note_count') ~ '^[0-9]+$' = FALSE THEN
+                RAISE EXCEPTION 'note_count must be an integer';
+            END IF;
+            v_batch_id := (p_payload->>'batch_id')::uuid;
+            v_note_count := (p_payload->>'note_count')::int;
+
+            IF v_note_count <= 0 THEN
+                RAISE EXCEPTION 'Prepared note count must be strictly greater than 0';
+            END IF;
+
+            -- Locate batch header + primary cash batch line
+            SELECT d.id AS doc_id, d.project_id, d.recipient_name_snapshot, d.denomination,
+                   l.id AS line_id, l.quantity, l.accepted_qty, l.returned_qty, l.handed_over_qty
+            INTO v_batch
+            FROM public.inventory_documents d
+            JOIN public.inventory_document_lines l ON l.document_id = d.id AND l.line_type = 'CASH_BATCH'
+            WHERE (d.id = v_batch_id OR l.id = v_batch_id) AND d.doc_type = 'CASH_BATCH'
+            FOR UPDATE OF d, l;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Cash batch % not found', v_batch_id;
+            END IF;
+
+            IF (v_batch.quantity - v_batch.accepted_qty - v_batch.returned_qty - v_batch.handed_over_qty) < v_note_count THEN
+                RAISE EXCEPTION 'Note count exceeds remaining notes in helper custody';
+            END IF;
+
+            UPDATE public.inventory_document_lines
+            SET accepted_qty = accepted_qty + v_note_count,
+                status = CASE 
+                    WHEN (accepted_qty + v_note_count + returned_qty + handed_over_qty) >= quantity THEN 'FULLY_PREPARED'
+                    ELSE 'PARTIAL_PREPARED'
+                END,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_batch.line_id;
+
+            UPDATE public.inventory_documents
+            SET status = CASE 
+                    WHEN (v_batch.accepted_qty + v_note_count + v_batch.returned_qty + v_batch.handed_over_qty) >= v_batch.quantity THEN 'FULLY_PREPARED'
+                    ELSE 'PARTIAL_PREPARED'
+                END,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_batch.doc_id;
+
+            v_doc_no := 'CSH-PREP-' || v_batch.project_id || '-' || substring(gen_random_uuid()::text, 1, 4);
+            INSERT INTO public.inventory_documents (
+                doc_number, doc_type, project_id, source_document_id, is_cash, denomination,
+                status, notes, actor_auth_user_id, actor_name_snapshot
+            ) VALUES (
+                v_doc_no, 'CASH_PREPARED', v_batch.project_id, v_batch.doc_id, true, v_batch.denomination,
+                'COMPLETED', p_payload->>'notes', v_auth_uid, v_actor_name
+            ) RETURNING id INTO v_doc_id;
+
+            INSERT INTO public.inventory_document_lines (
+                document_id, line_type, project_id, source_line_id, denomination,
+                quantity, delivered_qty, status, is_active
+            ) VALUES (
+                v_doc_id, 'CASH_PREPARED', v_batch.project_id, v_batch.line_id, v_batch.denomination,
+                v_note_count, 0, 'PREPARED', true
+            ) RETURNING id INTO v_line_id;
+
+            INSERT INTO public.inventory_movements (
+                document_id, line_id, project_id, movement_type, denomination, quantity, delta_stock, is_cash,
+                from_location, to_location, actor_auth_user_id, actor_name_snapshot, notes
+            ) VALUES (
+                v_doc_id, v_line_id, v_batch.project_id, 'RECEIVE_PREPARED', v_batch.denomination, v_note_count, 0, true,
+                'HELPER:' || v_batch.recipient_name_snapshot, 'PREPARED_SET:' || v_batch.project_id,
+                v_auth_uid, v_actor_name, p_payload->>'notes'
+            );
+
+            PERFORM public.warehouse_sync_cash_work(v_batch.doc_id);
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object('batch_id', v_batch.doc_id, 'prepared', v_note_count)
+            );
+
+        WHEN 'cash_deliver_to_customer' THEN
+            IF (p_payload->>'note_count') ~ '^[0-9]+$' = FALSE THEN
+                RAISE EXCEPTION 'note_count must be an integer';
+            END IF;
+            v_project_id := p_payload->>'project_id';
+            v_denom := (p_payload->>'denomination')::int;
+            v_note_count := (p_payload->>'note_count')::int;
+
+            IF v_note_count <= 0 THEN
+                RAISE EXCEPTION 'Delivered note count must be strictly greater than 0';
+            END IF;
+
+            SELECT coalesce(sum(quantity - delivered_qty), 0) INTO v_stock
+            FROM public.inventory_document_lines
+            WHERE line_type = 'CASH_PREPARED' AND project_id = v_project_id AND denomination = v_denom AND is_active = true;
+
+            IF v_stock < v_note_count THEN
+                RAISE EXCEPTION 'Insufficient prepared banknotes to deliver (Available: %, Requested: %)',
+                    v_stock, v_note_count;
+            END IF;
+
+            v_delta := v_note_count;
+            FOR v_rec IN 
+                SELECT id, (quantity - delivered_qty) AS rem
+                FROM public.inventory_document_lines
+                WHERE line_type = 'CASH_PREPARED' AND project_id = v_project_id AND denomination = v_denom AND is_active = true
+                ORDER BY created_at ASC
+                FOR UPDATE
+            LOOP
+                IF v_delta <= 0 THEN EXIT; END IF;
+                IF v_rec.rem <= v_delta THEN
+                    UPDATE public.inventory_document_lines
+                    SET delivered_qty = delivered_qty + v_rec.rem, is_active = false, updated_at = timezone('utc'::text, now())
+                    WHERE id = v_rec.id;
+                    v_delta := v_delta - v_rec.rem;
+                ELSE
+                    UPDATE public.inventory_document_lines
+                    SET delivered_qty = delivered_qty + v_delta, updated_at = timezone('utc'::text, now())
+                    WHERE id = v_rec.id;
+                    v_delta := 0;
+                END IF;
+            END LOOP;
+
+            INSERT INTO public.inventory_movements (
+                project_id, movement_type, denomination, quantity, delta_stock, is_cash,
+                from_location, to_location, actor_auth_user_id, actor_name_snapshot, notes
+            ) VALUES (
+                v_project_id, 'DELIVER_TO_CUSTOMER', v_denom, v_note_count, 0, true,
+                'PREPARED_SET:' || v_project_id, 'CUSTOMER_DELIVERED',
+                v_auth_uid, v_actor_name, p_payload->>'notes'
+            );
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object('project_id', v_project_id, 'delivered', v_note_count)
+            );
+
+        WHEN 'cash_return_unused_raw' THEN
+            IF (p_payload->>'note_count') ~ '^[0-9]+$' = FALSE THEN
+                RAISE EXCEPTION 'note_count must be an integer';
+            END IF;
+            v_batch_id := (p_payload->>'batch_id')::uuid;
+            v_note_count := (p_payload->>'note_count')::int;
+            v_keep_res := coalesce((p_payload->>'keep_reservation')::boolean, true);
+
+            IF v_note_count <= 0 THEN
+                RAISE EXCEPTION 'Returned note count must be strictly greater than 0';
+            END IF;
+
+            SELECT d.id AS doc_id, d.project_id, d.recipient_name_snapshot, d.denomination,
+                   l.id AS line_id, l.quantity, l.accepted_qty, l.returned_qty, l.handed_over_qty
+            INTO v_batch
+            FROM public.inventory_documents d
+            JOIN public.inventory_document_lines l ON l.document_id = d.id AND l.line_type = 'CASH_BATCH'
+            WHERE (d.id = v_batch_id OR l.id = v_batch_id) AND d.doc_type = 'CASH_BATCH'
+            FOR UPDATE OF d, l;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Cash batch % not found', v_batch_id;
+            END IF;
+
+            IF (v_batch.quantity - v_batch.accepted_qty - v_batch.returned_qty - v_batch.handed_over_qty) < v_note_count THEN
+                RAISE EXCEPTION 'Return count exceeds remaining notes in helper custody';
+            END IF;
+
+            UPDATE public.inventory_document_lines
+            SET returned_qty = returned_qty + v_note_count,
+                status = CASE 
+                    WHEN (accepted_qty + returned_qty + v_note_count + handed_over_qty) >= quantity THEN 'RETURNED_UNUSED'
+                    ELSE 'PARTIAL_PREPARED'
+                END,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_batch.line_id;
+
+            UPDATE public.inventory_documents
+            SET status = CASE 
+                    WHEN (v_batch.accepted_qty + v_batch.returned_qty + v_note_count + v_batch.handed_over_qty) >= v_batch.quantity THEN 'RETURNED_UNUSED'
+                    ELSE 'PARTIAL_PREPARED'
+                END,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_batch.doc_id;
+
+            IF v_keep_res THEN
+                UPDATE public.cash_vault_denominations
+                SET physical_count = physical_count + v_note_count,
+                    reserved_count = reserved_count + v_note_count,
+                    updated_at = timezone('utc'::text, now())
+                WHERE denomination = v_batch.denomination;
+
+                v_doc_no := 'CSH-RES-' || v_batch.project_id || '-' || substring(gen_random_uuid()::text, 1, 4);
+                INSERT INTO public.inventory_documents (
+                    doc_number, doc_type, project_id, is_cash, denomination,
+                    notes, actor_auth_user_id, actor_name_snapshot
+                ) VALUES (
+                    v_doc_no, 'CASH_RESERVATION', v_batch.project_id, true, v_batch.denomination,
+                    'Restored from raw unused cash return', v_auth_uid, v_actor_name
+                ) RETURNING id INTO v_doc_id;
+
+                INSERT INTO public.inventory_document_lines (
+                    document_id, line_type, project_id, denomination, quantity, status
+                ) VALUES (
+                    v_doc_id, 'CASH_RESERVATION', v_batch.project_id, v_batch.denomination, v_note_count, 'RESERVED'
+                );
+            ELSE
+                UPDATE public.cash_vault_denominations
+                SET physical_count = physical_count + v_note_count,
+                    updated_at = timezone('utc'::text, now())
+                WHERE denomination = v_batch.denomination;
+            END IF;
+
+            INSERT INTO public.inventory_movements (
+                document_id, line_id, project_id, movement_type, denomination, quantity, delta_stock, is_cash,
+                from_location, to_location, actor_auth_user_id, actor_name_snapshot, notes
+            ) VALUES (
+                v_batch.doc_id, v_batch.line_id, v_batch.project_id, 'RETURN_UNUSED_RAW', v_batch.denomination, v_note_count, v_note_count, true,
+                'HELPER:' || v_batch.recipient_name_snapshot, 'VAULT',
+                v_auth_uid, v_actor_name, p_payload->>'notes'
+            );
+
+            PERFORM public.warehouse_sync_cash_work(v_batch.doc_id);
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object('batch_id', v_batch.doc_id, 'returned', v_note_count)
+            );
+
+        WHEN 'cash_handover_batch' THEN
+            IF (p_payload->>'note_count') ~ '^[0-9]+$' = FALSE THEN
+                RAISE EXCEPTION 'note_count must be an integer';
+            END IF;
+            v_batch_id := (p_payload->>'batch_id')::uuid;
+            v_note_count := (p_payload->>'note_count')::int;
+            v_recipient_name := trim(coalesce(p_payload->>'to_recipient_name', ''));
+            v_recipient_id := (p_payload->>'to_recipient_id')::uuid;
+
+            IF v_recipient_name = '' OR v_note_count <= 0 THEN
+                RAISE EXCEPTION 'Target recipient name and positive note count required for batch handover';
+            END IF;
+            IF NOT coalesce((p_payload->>'accepted')::boolean, false) THEN
+                RAISE EXCEPTION 'Handover must be explicitly accepted by the receiver';
+            END IF;
+
+            SELECT d.id AS doc_id, d.project_id, d.recipient_name_snapshot, d.denomination,
+                   l.id AS line_id, l.quantity, l.accepted_qty, l.returned_qty, l.handed_over_qty
+            INTO v_batch
+            FROM public.inventory_documents d
+            JOIN public.inventory_document_lines l ON l.document_id = d.id AND l.line_type = 'CASH_BATCH'
+            WHERE (d.id = v_batch_id OR l.id = v_batch_id) AND d.doc_type = 'CASH_BATCH'
+            FOR UPDATE OF d, l;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Cash batch % not found', v_batch_id;
+            END IF;
+
+            IF (v_batch.quantity - v_batch.accepted_qty - v_batch.returned_qty - v_batch.handed_over_qty) < v_note_count THEN
+                RAISE EXCEPTION 'Handover count exceeds remaining notes in helper custody';
+            END IF;
+
+            UPDATE public.inventory_document_lines
+            SET handed_over_count = handed_over_qty + v_note_count,
+                status = CASE 
+                    WHEN (accepted_qty + returned_qty + handed_over_qty + v_note_count) >= quantity THEN 'HANDED_OVER'
+                    ELSE 'PARTIAL_PREPARED'
+                END,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_batch.line_id;
+
+            -- Target batch document + line for receiver
+            v_batch_code := 'CSH-' || v_batch.project_id || '-XFER-' || substring(gen_random_uuid()::text, 1, 4);
+            INSERT INTO public.inventory_documents (
+                doc_number, doc_type, project_id, recipient_id, recipient_name_snapshot,
+                is_cash, denomination, status, notes, actor_auth_user_id, actor_name_snapshot
+            ) VALUES (
+                v_batch_code, 'CASH_BATCH', v_batch.project_id, v_recipient_id, v_recipient_name,
+                true, v_batch.denomination, 'ISSUED', 'Transferred from ' || v_batch.recipient_name_snapshot,
+                v_auth_uid, v_actor_name
+            ) RETURNING id INTO v_doc_id;
+
+            INSERT INTO public.inventory_document_lines (
+                document_id, line_type, project_id, recipient_id, source_line_id, denomination,
+                quantity, accepted_qty, returned_qty, handed_over_qty, status, is_active
+            ) VALUES (
+                v_doc_id, 'CASH_BATCH', v_batch.project_id, v_recipient_id, v_batch.line_id, v_batch.denomination,
+                v_note_count, 0, 0, 0, 'ISSUED', true
+            ) RETURNING id INTO v_line_id;
+
+            INSERT INTO public.inventory_movements (
+                document_id, line_id, project_id, movement_type, denomination, quantity, delta_stock, is_cash,
+                from_location, to_location, actor_auth_user_id, actor_name_snapshot, notes
+            ) VALUES (
+                v_doc_id, v_line_id, v_batch.project_id, 'HANDOVER_BATCH', v_batch.denomination, v_note_count, 0, true,
+                'HELPER:' || v_batch.recipient_name_snapshot, 'HELPER:' || v_recipient_name,
+                v_auth_uid, v_actor_name, p_payload->>'notes'
+            );
+
+            PERFORM public.warehouse_sync_cash_work(v_batch.doc_id);
+            PERFORM public.warehouse_sync_cash_work(v_doc_id);
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object('new_batch_id', v_doc_id, 'handed_over', v_note_count)
+            );
+
+        WHEN 'cash_update_thresholds' THEN
+            v_denom := (p_payload->>'denomination')::int;
+            IF v_denom NOT IN (20, 50, 100, 500, 1000) THEN
+                RAISE EXCEPTION 'Invalid banknote denomination: %', v_denom;
+            END IF;
+
+            UPDATE public.cash_vault_denominations
+            SET low_alert_threshold = coalesce((p_payload->>'low_alert_threshold')::int, low_alert_threshold),
+                target_available_count = coalesce((p_payload->>'target_available_count')::int, target_available_count),
+                updated_at = timezone('utc'::text, now())
+            WHERE denomination = v_denom;
+
+            v_result := jsonb_build_object('success', true, 'data', jsonb_build_object('denomination', v_denom));
+
+        WHEN 'cash_adjust_count' THEN
+            v_denom := (p_payload->>'denomination')::int;
+            IF v_denom NOT IN (20, 50, 100, 500, 1000) THEN
+                RAISE EXCEPTION 'Invalid banknote denomination: %', v_denom;
+            END IF;
+
+            IF (p_payload->>'delta_count') ~ '^-?[0-9]+$' = FALSE THEN
+                RAISE EXCEPTION 'delta_count must be an integer';
+            END IF;
+            v_delta := (p_payload->>'delta_count')::numeric;
+
+            IF v_delta = 0 THEN
+                RAISE EXCEPTION 'delta_count must be non-zero';
+            END IF;
+
+            IF trim(coalesce(p_payload->>'reason', '')) = '' THEN
+                RAISE EXCEPTION 'Reason is strictly required for cash count adjustment';
+            END IF;
+
+            SELECT * INTO v_vault FROM public.cash_vault_denominations WHERE denomination = v_denom FOR UPDATE;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Denomination % not found in vault', v_denom;
+            END IF;
+
+            IF (v_vault.physical_count + v_delta) < v_vault.reserved_count THEN
+                RAISE EXCEPTION 'Cash adjustment would cause physical count (%) to drop below reserved count (%)',
+                    (v_vault.physical_count + v_delta), v_vault.reserved_count;
+            END IF;
+
+            UPDATE public.cash_vault_denominations
+            SET physical_count = physical_count + v_delta::int,
+                is_initialized = true,
+                updated_at = timezone('utc'::text, now())
+            WHERE denomination = v_denom;
+
+            INSERT INTO public.inventory_movements (
+                movement_type, denomination, quantity, delta_stock, is_cash,
+                from_location, to_location, actor_auth_user_id, actor_name_snapshot, notes
+            ) VALUES (
+                'COUNT_ADJUSTMENT', v_denom, abs(v_delta::int), v_delta::int, true,
+                'AUDIT', 'VAULT', v_auth_uid, v_actor_name, p_payload->>'reason'
+            );
+
+            v_result := jsonb_build_object(
+                'success', true,
+                'data', jsonb_build_object('denomination', v_denom, 'new_physical_count', (v_vault.physical_count + v_delta::int))
+            );
+
+        -- =====================================================================
+        -- 2.11 Quotation / Legacy Checklist Save Action
+        -- =====================================================================
+        WHEN 'legacy_checklist_save' THEN
+            v_project_id := p_payload->>'project_id';
+            IF v_project_id IS NULL THEN
+                RAISE EXCEPTION 'project_id required for checklist';
+            END IF;
+
+            v_doc_no := 'CHK-' || v_project_id || '-' || substring(gen_random_uuid()::text, 1, 4);
+            INSERT INTO public.inventory_documents (
+                doc_number, doc_type, project_id, notes, actor_auth_user_id, actor_name_snapshot
+            ) VALUES (
+                v_doc_no, 'CHECKLIST', v_project_id, p_payload->>'notes', v_auth_uid, v_actor_name
+            ) RETURNING id INTO v_doc_id;
+
+            FOR v_arr_elem IN SELECT * FROM jsonb_array_elements(p_payload->'items')
+            LOOP
+                INSERT INTO public.inventory_document_lines (
+                    document_id, line_type, item_id, project_id, description,
+                    quantity, unit, notes, is_active
+                ) VALUES (
+                    v_doc_id, 'CHECKLIST', (v_arr_elem->>'item_id')::uuid, v_project_id,
+                    v_arr_elem->>'name', coalesce((v_arr_elem->>'quantity')::numeric, 1),
+                    coalesce(v_arr_elem->>'unit', 'ชิ้น'), v_arr_elem->>'notes', true
+                );
+            END LOOP;
+
+            v_result := jsonb_build_object('success', true, 'data', jsonb_build_object('document_id', v_doc_id));
+
+        ELSE
+            RAISE EXCEPTION 'Unknown warehouse action: %', p_action;
+    END CASE;
+
+    -- 3. Cache Result via Command Finish
+    PERFORM public.warehouse_command_finish(p_action, v_payload_hash, p_idempotency_key, v_result, v_doc_id, v_is_cash);
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.warehouse_dispatch(TEXT, JSONB, UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_dispatch(TEXT, JSONB, UUID) TO authenticated;
+
+-- ------------------------------------------------------------------------------
+-- 5. READ RPCS (BOUNDED MEMORY/NETWORK BUDGET)
+-- ------------------------------------------------------------------------------
+
+-- 5.1 Warehouse Schema Version
+CREATE OR REPLACE FUNCTION public.warehouse_schema_version()
+RETURNS INT AS $$
+BEGIN
+    RETURN 2;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+REVOKE ALL ON FUNCTION public.warehouse_schema_version() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_schema_version() TO authenticated;
+
+-- 5.2 Summary Projection (schema_version: 2, bounded 50 first stock page, no unbounded units)
+CREATE OR REPLACE FUNCTION public.warehouse_get_summary()
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_cats JSONB;
+    v_recipients JSONB;
+    v_teams JSONB;
+    v_rounds JSONB;
+    v_items JSONB;
+    v_total_items INT;
+    v_total_cats INT;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF NOT public.fn_can_access_inventory(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: inventory access permissions required';
+    END IF;
+
+    SELECT count(*) INTO v_total_cats FROM public.inventory_categories WHERE is_active = true;
+    SELECT count(*) INTO v_total_items FROM public.inventory_items WHERE is_active = true AND lower(item_type) != 'banknote';
+
+    -- Categories: max 100
+    SELECT coalesce(jsonb_agg(to_jsonb(c)), '[]'::jsonb) INTO v_cats
+    FROM (
+        SELECT id, name, type, is_active
+        FROM public.inventory_categories
+        WHERE is_active = true
+        ORDER BY name
+        LIMIT 100
+    ) c;
+
+    -- Recipients: max 100
+    SELECT coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) INTO v_recipients
+    FROM (
+        SELECT id, name, recipient_type, contact_info, is_active
+        FROM public.inventory_recipients
+        WHERE is_active = true
+        ORDER BY name
+        LIMIT 100
+    ) r;
+
+    -- Teams: max 50
+    SELECT coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb) INTO v_teams
+    FROM (
+        SELECT id, id AS team_recipient_id, primary_recipient_id, primary_receiver_name, member_names, team_is_active AS is_active
+        FROM public.inventory_recipients
+        WHERE recipient_type = 'team' AND team_is_active = true
+        ORDER BY primary_receiver_name
+        LIMIT 50
+    ) t;
+
+    -- Active Rounds: max 20
+    SELECT coalesce(jsonb_agg(to_jsonb(rd)), '[]'::jsonb) INTO v_rounds
+    FROM (
+        SELECT d.id, d.doc_number AS round_code, d.title, d.recipient_name_snapshot, d.status, d.due_at AS expected_return_at,
+               coalesce((SELECT array_agg(project_id) FROM public.inventory_document_lines WHERE document_id = d.id AND line_type = 'ROUND_PROJECT'), '{}') AS project_ids
+        FROM public.inventory_documents d
+        WHERE d.doc_type = 'FIELD_ROUND' AND d.status IN ('IN_PROGRESS', 'PARTIAL_RETURNED')
+        ORDER BY d.created_at DESC
+        LIMIT 20
+    ) rd;
+
+    -- First stock page only (50 items strictly bounded, banknotes segregated)
+    SELECT coalesce(jsonb_agg(to_jsonb(i)), '[]'::jsonb) INTO v_items
+    FROM (
+        SELECT id, code, name, category_id, item_type, unit, current_stock, min_alert_threshold, average_cost, storage_location, color, size, status, is_active, image_url,
+               (SELECT count(*) FROM public.asset_units u WHERE u.item_id = i.id) AS tool_total,
+               (SELECT count(*) FROM public.asset_units u WHERE u.item_id = i.id AND upper(u.status) = 'AVAILABLE') AS tool_available
+        FROM public.inventory_items i
+        WHERE is_active = true AND lower(item_type) != 'banknote'
+        ORDER BY name, id
+        LIMIT 50
+    ) i;
+
+    RETURN jsonb_build_object(
+        'schema_version', 2,
+        'capabilities', jsonb_build_object('item_images', true),
+        'total_items_count', v_total_items,
+        'total_categories_count', v_total_cats,
+        'pending_recovery_count', (SELECT count(*) FROM public.inventory_document_lines WHERE line_type = 'RECOVERY' AND pending_qty > 0),
+        'pending_recoveries', (SELECT count(*) FROM public.inventory_document_lines WHERE line_type = 'RECOVERY' AND pending_qty > 0),
+        'borrowed_tools', (SELECT count(*) FROM public.asset_units WHERE active_custody_line_id IS NOT NULL),
+        'facets', jsonb_build_object(
+            'colors', (SELECT coalesce(jsonb_agg(value), '[]'::jsonb) FROM (SELECT DISTINCT color AS value FROM public.inventory_items WHERE is_active AND lower(item_type) != 'banknote' AND nullif(color,'') IS NOT NULL ORDER BY value LIMIT 100) f),
+            'sizes', (SELECT coalesce(jsonb_agg(value), '[]'::jsonb) FROM (SELECT DISTINCT size AS value FROM public.inventory_items WHERE is_active AND lower(item_type) != 'banknote' AND nullif(size,'') IS NOT NULL ORDER BY value LIMIT 100) f),
+            'locations', (SELECT coalesce(jsonb_agg(value), '[]'::jsonb) FROM (SELECT DISTINCT storage_location AS value FROM public.inventory_items WHERE is_active AND lower(item_type) != 'banknote' AND nullif(storage_location,'') IS NOT NULL ORDER BY value LIMIT 100) f),
+            'type_counts', (SELECT coalesce(jsonb_object_agg(item_type, count), '{}'::jsonb) FROM (SELECT lower(item_type) AS item_type, count(*) FROM public.inventory_items WHERE is_active AND lower(item_type) != 'banknote' GROUP BY lower(item_type)) f)
+        ),
+        'categories', v_cats,
+        'recipients', v_recipients,
+        'teams', v_teams,
+        'rounds', v_rounds,
+        'items', v_items,
+        'asset_units', '[]'::jsonb,
+        'legacy_borrowed_units', '[]'::jsonb
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.warehouse_get_summary() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_get_summary() TO authenticated;
+
+-- 5.3 NEW: Server-Side Stock List & Filters (50 default, 100 max)
+CREATE OR REPLACE FUNCTION public.warehouse_list_stock(p_filters JSONB DEFAULT '{}'::jsonb)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_limit INT;
+    v_offset INT;
+    v_search TEXT;
+    v_type TEXT;
+    v_category_id UUID;
+    v_color TEXT;
+    v_size TEXT;
+    v_location TEXT;
+    v_item_status TEXT;
+    v_avail TEXT;
+    v_item_ids UUID[];
+    v_items JSONB;
+    v_total INT;
+    v_has_more BOOLEAN := false;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF NOT public.fn_can_access_inventory(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: inventory access permissions required';
+    END IF;
+
+    v_limit := LEAST(100, GREATEST(1, coalesce((p_filters->>'limit')::int, 50)));
+    v_offset := GREATEST(0, coalesce((p_filters->>'offset')::int, 0));
+    v_search := trim(coalesce(p_filters->>'search', ''));
+    v_type := lower(trim(coalesce(p_filters->>'item_type', '')));
+    v_category_id := (p_filters->>'category_id')::uuid;
+    v_color := trim(coalesce(p_filters->>'color', ''));
+    v_size := trim(coalesce(p_filters->>'size', ''));
+    v_location := trim(coalesce(p_filters->>'storage_location', p_filters->>'location', ''));
+    v_item_status := trim(coalesce(p_filters->>'status', ''));
+    v_avail := lower(trim(coalesce(p_filters->>'availability', '')));
+
+    IF p_filters ? 'item_ids' AND jsonb_array_length(p_filters->'item_ids') > 0 THEN
+        SELECT array_agg(x::uuid) INTO v_item_ids FROM jsonb_array_elements_text(p_filters->'item_ids') x;
+    END IF;
+
+    SELECT count(*) INTO v_total
+    FROM public.inventory_items i
+    WHERE i.is_active = true
+      AND lower(i.item_type) != 'banknote'
+      AND (v_search = '' OR (i.name ILIKE '%' || v_search || '%' OR coalesce(i.code, '') ILIKE '%' || v_search || '%'))
+      AND (v_type = '' OR lower(i.item_type) = v_type)
+      AND (v_category_id IS NULL OR i.category_id = v_category_id)
+      AND (v_color = '' OR i.color = v_color)
+      AND (v_size = '' OR i.size = v_size)
+      AND (v_location = '' OR i.storage_location = v_location)
+      AND (v_item_status = '' OR i.status = v_item_status)
+      AND (v_item_ids IS NULL OR i.id = ANY(v_item_ids))
+      AND (
+          v_avail = '' 
+          OR (v_avail = 'in_stock' AND i.current_stock > 0)
+          OR (v_avail = 'out_of_stock' AND i.current_stock <= 0)
+          OR (v_avail = 'low_stock' AND i.current_stock <= i.min_alert_threshold)
+      );
+
+    SELECT coalesce(jsonb_agg(to_jsonb(row)), '[]'::jsonb) INTO v_items
+    FROM (
+        SELECT id, code, name, category_id, item_type, unit, current_stock, min_alert_threshold, average_cost, storage_location, color, size, status, is_active, image_url,
+               (SELECT count(*) FROM public.asset_units u WHERE u.item_id = i.id) AS tool_total,
+               (SELECT count(*) FROM public.asset_units u WHERE u.item_id = i.id AND upper(u.status) = 'AVAILABLE') AS tool_available
+        FROM public.inventory_items i
+        WHERE i.is_active = true
+          AND lower(i.item_type) != 'banknote'
+          AND (v_search = '' OR (i.name ILIKE '%' || v_search || '%' OR coalesce(i.code, '') ILIKE '%' || v_search || '%'))
+          AND (v_type = '' OR lower(i.item_type) = v_type)
+          AND (v_category_id IS NULL OR i.category_id = v_category_id)
+          AND (v_color = '' OR i.color = v_color)
+          AND (v_size = '' OR i.size = v_size)
+      AND (v_location = '' OR i.storage_location = v_location)
+      AND (v_item_status = '' OR i.status = v_item_status)
+          AND (v_item_ids IS NULL OR i.id = ANY(v_item_ids))
+          AND (
+              v_avail = '' 
+              OR (v_avail = 'in_stock' AND i.current_stock > 0)
+              OR (v_avail = 'out_of_stock' AND i.current_stock <= 0)
+              OR (v_avail = 'low_stock' AND i.current_stock <= i.min_alert_threshold)
+          )
+        ORDER BY i.name, i.id
+        LIMIT v_limit OFFSET v_offset
+    ) row;
+
+    IF (v_offset + v_limit) < v_total THEN
+        v_has_more := true;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'items', v_items,
+        'facets', jsonb_build_object(
+            'colors', (SELECT coalesce(jsonb_agg(value), '[]'::jsonb) FROM (SELECT DISTINCT color AS value FROM public.inventory_items WHERE is_active AND lower(item_type) != 'banknote' AND nullif(color,'') IS NOT NULL ORDER BY value LIMIT 100) f),
+            'sizes', (SELECT coalesce(jsonb_agg(value), '[]'::jsonb) FROM (SELECT DISTINCT size AS value FROM public.inventory_items WHERE is_active AND lower(item_type) != 'banknote' AND nullif(size,'') IS NOT NULL ORDER BY value LIMIT 100) f),
+            'locations', (SELECT coalesce(jsonb_agg(value), '[]'::jsonb) FROM (SELECT DISTINCT storage_location AS value FROM public.inventory_items WHERE is_active AND lower(item_type) != 'banknote' AND nullif(storage_location,'') IS NOT NULL ORDER BY value LIMIT 100) f),
+            'type_counts', (SELECT coalesce(jsonb_object_agg(item_type, count), '{}'::jsonb) FROM (SELECT lower(item_type) AS item_type, count(*) FROM public.inventory_items WHERE is_active AND lower(item_type) != 'banknote' GROUP BY lower(item_type)) f)
+        ),
+        'total_count', v_total,
+        'has_more', v_has_more,
+        'limit', v_limit,
+        'offset', v_offset
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.warehouse_list_stock(JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_list_stock(JSONB) TO authenticated;
+
+-- 5.4 NEW: Unit Lookup & List (20 default, 50 max; joins item so QR scan finds off-page units)
+CREATE OR REPLACE FUNCTION public.warehouse_list_units(p_filters JSONB DEFAULT '{}'::jsonb)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_limit INT;
+    v_offset INT;
+    v_item_id UUID;
+    v_unit_code TEXT;
+    v_status TEXT;
+    v_search TEXT;
+    v_units JSONB;
+    v_total INT;
+    v_has_more BOOLEAN := false;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF NOT public.fn_can_access_inventory(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: inventory access permissions required';
+    END IF;
+
+    v_limit := LEAST(50, GREATEST(1, coalesce((p_filters->>'limit')::int, 20)));
+    v_offset := GREATEST(0, coalesce((p_filters->>'offset')::int, 0));
+    v_item_id := (p_filters->>'item_id')::uuid;
+    v_unit_code := trim(coalesce(p_filters->>'unit_code', ''));
+    v_status := upper(trim(coalesce(p_filters->>'status', '')));
+    v_search := trim(coalesce(p_filters->>'search', ''));
+
+    SELECT count(*) INTO v_total
+    FROM public.asset_units u
+    JOIN public.inventory_items i ON u.item_id = i.id
+    WHERE (v_item_id IS NULL OR u.item_id = v_item_id)
+      AND (v_unit_code = '' OR u.unit_code = v_unit_code)
+      AND (v_status = '' OR upper(u.status) = v_status)
+      AND (v_search = '' OR (u.unit_code ILIKE '%' || v_search || '%' OR i.name ILIKE '%' || v_search || '%'));
+
+    SELECT coalesce(jsonb_agg(to_jsonb(row)), '[]'::jsonb) INTO v_units
+    FROM (
+        SELECT u.unit_code, u.item_id, u.status, u.borrowed_by, u.borrowed_at, u.due_at, u.project_id, u.notes,
+               u.active_custody_line_id, u.active_round_id,
+               jsonb_build_object('id', i.id, 'name', i.name, 'code', i.code, 'unit', i.unit, 'image_url', i.image_url, 'item_type', i.item_type, 'color', i.color) AS item
+        FROM public.asset_units u
+        JOIN public.inventory_items i ON u.item_id = i.id
+        WHERE (v_item_id IS NULL OR u.item_id = v_item_id)
+          AND (v_unit_code = '' OR u.unit_code = v_unit_code)
+          AND (v_status = '' OR upper(u.status) = v_status)
+          AND (v_search = '' OR (u.unit_code ILIKE '%' || v_search || '%' OR i.name ILIKE '%' || v_search || '%'))
+        ORDER BY u.unit_code
+        LIMIT v_limit OFFSET v_offset
+    ) row;
+
+    IF (v_offset + v_limit) < v_total THEN
+        v_has_more := true;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'units', v_units,
+        'total_count', v_total,
+        'has_more', v_has_more,
+        'limit', v_limit,
+        'offset', v_offset
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.warehouse_list_units(JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_list_units(JSONB) TO authenticated;
+
+-- 5.5 Operational Read Projection (Issues, Recoveries, Custodies, Incidents - 20 default per section)
+CREATE OR REPLACE FUNCTION public.warehouse_get_operations(p_filters JSONB DEFAULT '{}'::jsonb)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_limit INT;
+    v_offset INT;
+    v_proj_id TEXT;
+    v_round_id UUID;
+    v_issue_lines JSONB := '[]'::jsonb;
+    v_recoveries JSONB := '[]'::jsonb;
+    v_custodies JSONB := '[]'::jsonb;
+    v_incidents JSONB := '[]'::jsonb;
+    v_has_more BOOLEAN := false;
+    v_c_issues INT := 0;
+    v_c_recovs INT := 0;
+    v_c_custodies INT := 0;
+    v_c_incidents INT := 0;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF NOT public.fn_can_access_inventory(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: inventory access permissions required';
+    END IF;
+
+    v_limit := LEAST(100, GREATEST(1, coalesce((p_filters->>'limit')::int, 20)));
+    v_offset := GREATEST(0, coalesce((p_filters->>'offset')::int, 0));
+    v_proj_id := p_filters->>'project_id';
+    v_round_id := (p_filters->>'round_id')::uuid;
+
+    -- 1. Outstanding Material Issue Lines (Remaining = Issued - Returned - Recovered > 0)
+    WITH outstanding AS (
+        SELECT 
+            m.id,
+            m.id AS source_issue_movement_id,
+            m.item_id,
+            d.project_id,
+            d.round_id,
+            d.recipient_name_snapshot,
+            coalesce(m.source_item_variant_snapshot->>'name', i.name) AS item_name,
+            coalesce(m.source_item_variant_snapshot->>'color', i.color) AS color,
+            coalesce(m.source_item_variant_snapshot->>'size', i.size) AS size,
+            coalesce(m.source_item_variant_snapshot->>'unit', i.unit) AS unit,
+            m.quantity AS issued_qty,
+            coalesce((SELECT sum(ret.quantity) FROM public.inventory_movements ret WHERE ret.source_issue_movement_id = m.id AND ret.movement_type = 'RETURN_UNUSED'), 0) AS returned_qty,
+            coalesce((SELECT sum(rcv.quantity) FROM public.inventory_document_lines rcv WHERE rcv.source_issue_movement_id = m.id AND rcv.line_type = 'RECOVERY'), 0) AS recovered_qty,
+            m.created_at
+        FROM public.inventory_movements m
+        JOIN public.inventory_documents d ON m.document_id = d.id
+        JOIN public.inventory_items i ON m.item_id = i.id
+        WHERE m.movement_type = 'ISSUE'
+          AND (v_proj_id IS NULL OR d.project_id = v_proj_id)
+          AND (v_round_id IS NULL OR d.round_id = v_round_id)
+    )
+    SELECT coalesce(jsonb_agg(to_jsonb(l)), '[]'::jsonb), count(*)
+    INTO v_issue_lines, v_c_issues
+    FROM (
+        SELECT *, (issued_qty - returned_qty - recovered_qty) AS remaining_qty
+        FROM outstanding
+        WHERE (issued_qty - returned_qty - recovered_qty) > 0
+        ORDER BY created_at DESC
+        LIMIT v_limit OFFSET v_offset
+    ) l;
+
+    -- 2. Pending Material Recoveries (Waiting for inspection)
+    SELECT coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb), count(*)
+    INTO v_recoveries, v_c_recovs
+    FROM (
+        SELECT 
+            l.id, l.item_id, l.source_issue_movement_id, l.document_id,
+            l.quantity AS recovered_qty, l.status,
+            i.name AS item_name, i.color, i.size, i.unit,
+            l.project_id, l.round_id, l.created_at
+        FROM public.inventory_document_lines l
+        JOIN public.inventory_items i ON l.item_id = i.id
+        WHERE l.line_type = 'RECOVERY' AND l.status = 'PENDING'
+          AND (v_proj_id IS NULL OR l.project_id = v_proj_id)
+          AND (v_round_id IS NULL OR l.round_id = v_round_id)
+        ORDER BY l.created_at DESC
+        LIMIT v_limit OFFSET v_offset
+    ) r;
+
+    -- 3. Active Tool Custodies
+    SELECT coalesce(jsonb_agg(to_jsonb(c)), '[]'::jsonb), count(*)
+    INTO v_custodies, v_c_custodies
+    FROM (
+        SELECT 
+            l.id, l.unit_code, l.project_id, l.round_id,
+            d.recipient_name_snapshot, l.due_at AS due_date, l.created_at AS borrowed_at,
+            l.notes, i.name AS item_name, u.status
+        FROM public.inventory_document_lines l
+        JOIN public.inventory_documents d ON l.document_id = d.id
+        JOIN public.asset_units u ON l.unit_code = u.unit_code
+        JOIN public.inventory_items i ON u.item_id = i.id
+        WHERE l.line_type = 'TOOL_CUSTODY' AND l.is_active = true
+          AND (v_proj_id IS NULL OR l.project_id = v_proj_id)
+          AND (v_round_id IS NULL OR l.round_id = v_round_id)
+        ORDER BY l.created_at DESC
+        LIMIT v_limit OFFSET v_offset
+    ) c;
+
+    -- 4. Open Incidents
+    SELECT coalesce(jsonb_agg(to_jsonb(inc)), '[]'::jsonb), count(*)
+    INTO v_incidents, v_c_incidents
+    FROM (
+        SELECT 
+            l.id, l.unit_code, l.status AS incident_type, l.project_id, l.round_id,
+            d.recipient_name_snapshot, l.status AS resolution_status, l.notes, l.created_at
+        FROM public.inventory_document_lines l
+        JOIN public.inventory_documents d ON l.document_id = d.id
+        WHERE l.line_type = 'INCIDENT' AND l.status IN ('OPEN', 'INVESTIGATING')
+          AND (v_round_id IS NULL OR l.round_id = v_round_id)
+        ORDER BY l.created_at DESC
+        LIMIT v_limit OFFSET v_offset
+    ) inc;
+
+    IF v_c_issues = v_limit OR v_c_recovs = v_limit OR v_c_custodies = v_limit OR v_c_incidents = v_limit THEN
+        v_has_more := true;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'issue_lines', v_issue_lines,
+        'recoveries', v_recoveries,
+        'custodies', v_custodies,
+        'incidents', v_incidents,
+        'has_more', v_has_more
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.warehouse_get_operations(JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_get_operations(JSONB) TO authenticated;
+
+-- 5.6 Paginated History (20 default, cash excluded unless authorized, no huge JSON)
+CREATE OR REPLACE FUNCTION public.warehouse_get_history(p_filters JSONB DEFAULT '{}'::jsonb)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_can_cash BOOLEAN;
+    v_docs JSONB;
+    v_moves JSONB;
+    v_cash_moves JSONB := '[]'::jsonb;
+    v_limit INT;
+    v_offset INT;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF NOT public.fn_can_access_inventory(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: inventory access permissions required';
+    END IF;
+
+    v_can_cash := public.fn_can_manage_cash(v_auth_uid) AND coalesce((p_filters->>'include_cash')::boolean, true);
+    v_limit := LEAST(50, GREATEST(1, coalesce((p_filters->>'limit')::int, 20)));
+    v_offset := GREATEST(0, coalesce((p_filters->>'offset')::int, 0));
+
+    SELECT coalesce(jsonb_agg(to_jsonb(d)), '[]'::jsonb) INTO v_docs
+    FROM (
+        SELECT id, doc_number, doc_type, project_id, round_id, recipient_name_snapshot,
+               due_at, metadata->>'borrowed_at' AS borrowed_at,
+               team_members_snapshot, status,
+               CASE 
+                   WHEN notes IS NOT NULL AND length(notes) > 256 THEN substring(notes, 1, 256) || '...'
+                   ELSE notes
+               END AS notes,
+               actor_name_snapshot, created_at
+        FROM public.inventory_documents
+        WHERE (NOT coalesce(is_cash, false) OR v_can_cash)
+          AND (p_filters->>'project_id' IS NULL OR project_id = p_filters->>'project_id')
+          AND doc_type != 'COMMAND'
+          AND (p_filters->>'doc_type' IS NULL OR doc_type = p_filters->>'doc_type')
+        ORDER BY created_at DESC
+        LIMIT v_limit OFFSET v_offset
+    ) d;
+
+    SELECT coalesce(jsonb_agg(to_jsonb(m)), '[]'::jsonb) INTO v_moves
+    FROM (
+        SELECT id, document_id, item_id, project_id, movement_type, quantity, delta_stock,
+               source_item_variant_snapshot->>'name' AS item_name_snapshot,
+               source_item_variant_snapshot->>'color' AS item_color_snapshot,
+               source_item_variant_snapshot->>'unit' AS unit,
+               CASE 
+                   WHEN notes IS NOT NULL AND length(notes) > 256 THEN substring(notes, 1, 256) || '...'
+                   ELSE notes
+               END AS notes,
+               actor_name_snapshot, created_at
+        FROM public.inventory_movements
+        WHERE NOT coalesce(is_cash, false)
+          AND (p_filters->>'project_id' IS NULL OR project_id = p_filters->>'project_id')
+          AND p_filters->>'doc_type' IS NULL
+        ORDER BY created_at DESC
+        LIMIT v_limit OFFSET v_offset
+    ) m;
+
+    IF v_can_cash AND coalesce((p_filters->>'include_cash')::boolean, true) THEN
+        SELECT coalesce(jsonb_agg(to_jsonb(cm)), '[]'::jsonb) INTO v_cash_moves
+        FROM (
+            SELECT id, movement_type AS action_type, project_id, denomination, quantity AS note_count,
+                   (denomination * quantity) AS total_value, from_location, to_location,
+                   actor_name_snapshot,
+                   CASE 
+                       WHEN notes IS NOT NULL AND length(notes) > 256 THEN substring(notes, 1, 256) || '...'
+                       ELSE notes
+                   END AS notes,
+                   created_at
+            FROM public.inventory_movements
+            WHERE is_cash = true
+              AND (p_filters->>'project_id' IS NULL OR project_id = p_filters->>'project_id')
+              AND p_filters->>'doc_type' IS NULL
+            ORDER BY created_at DESC
+            LIMIT v_limit OFFSET v_offset
+        ) cm;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'documents', v_docs,
+        'movements', v_moves,
+        'cash_movements', v_cash_moves,
+        'has_more', greatest(jsonb_array_length(v_docs), jsonb_array_length(v_moves), jsonb_array_length(v_cash_moves)) = v_limit
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.warehouse_get_history(JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_get_history(JSONB) TO authenticated;
+
+-- 5.7 Cash Summary (5 vault rows + first 20 per section + has_more)
+CREATE OR REPLACE FUNCTION public.warehouse_get_cash_summary()
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_denoms JSONB;
+    v_reservations JSONB;
+    v_batches JSONB;
+    v_prep JSONB;
+    v_legacy_banknotes JSONB;
+    v_has_more_batches BOOLEAN := false;
+    v_has_more_res BOOLEAN := false;
+    v_has_more_prep BOOLEAN := false;
+    v_cnt INT;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF NOT public.fn_can_manage_cash(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: cash permissions required';
+    END IF;
+
+    SELECT coalesce(jsonb_agg(to_jsonb(d)), '[]'::jsonb) INTO v_denoms
+    FROM (
+        SELECT 
+            denomination,
+            physical_count,
+            reserved_count,
+            (physical_count - reserved_count) AS available_count,
+            low_alert_threshold,
+            target_available_count,
+            GREATEST(0, target_available_count - (physical_count - reserved_count)) AS restock_needed,
+            (denomination * physical_count) AS total_physical_value,
+            (denomination * (physical_count - reserved_count)) AS total_available_value,
+            is_initialized
+        FROM public.cash_vault_denominations
+        ORDER BY denomination
+    ) d;
+
+    -- Reservations (active lines, max 20)
+    SELECT count(*) INTO v_cnt FROM public.inventory_document_lines WHERE line_type = 'CASH_RESERVATION' AND is_active = true;
+    IF v_cnt > 20 THEN v_has_more_res := true; END IF;
+
+    SELECT coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) INTO v_reservations
+    FROM (
+        SELECT id, project_id, denomination, (quantity - returned_qty - delivered_qty) AS reserved_count
+        FROM public.inventory_document_lines
+        WHERE line_type = 'CASH_RESERVATION' AND is_active = true
+        ORDER BY project_id, denomination
+        LIMIT 20
+    ) r;
+
+    -- Helper Batches (active, max 20)
+    SELECT count(*) INTO v_cnt FROM public.inventory_documents WHERE doc_type = 'CASH_BATCH' AND status NOT IN ('DELIVERED', 'CLOSED');
+    IF v_cnt > 20 THEN v_has_more_batches := true; END IF;
+
+    SELECT coalesce(jsonb_agg(to_jsonb(b)), '[]'::jsonb) INTO v_batches
+    FROM (
+        SELECT d.id, d.doc_number AS batch_code, d.project_id, d.recipient_name_snapshot, d.denomination,
+               l.quantity AS issued_count, l.accepted_qty AS prepared_count, l.returned_qty AS returned_raw_count, l.handed_over_qty AS handed_over_count,
+               (l.quantity - l.accepted_qty - l.returned_qty - l.handed_over_qty) AS remaining_count,
+               d.status
+        FROM public.inventory_documents d
+        JOIN public.inventory_document_lines l ON l.document_id = d.id AND l.line_type = 'CASH_BATCH'
+        WHERE d.doc_type = 'CASH_BATCH' AND d.status NOT IN ('DELIVERED', 'CLOSED')
+        ORDER BY d.created_at DESC
+        LIMIT 20
+    ) b;
+
+    -- Prepared Sets (ready for delivery, max 20)
+    SELECT count(*) INTO v_cnt FROM public.inventory_document_lines WHERE line_type = 'CASH_PREPARED' AND is_active = true;
+    IF v_cnt > 20 THEN v_has_more_prep := true; END IF;
+
+    SELECT coalesce(jsonb_agg(to_jsonb(p)), '[]'::jsonb) INTO v_prep
+    FROM (
+        SELECT id, project_id, denomination, quantity AS prepared_count, delivered_qty AS delivered_count,
+               (quantity - delivered_qty) AS ready_for_delivery_count
+        FROM public.inventory_document_lines
+        WHERE line_type = 'CASH_PREPARED' AND is_active = true
+        ORDER BY project_id, denomination
+        LIMIT 20
+    ) p;
+
+    SELECT coalesce(jsonb_agg(to_jsonb(lb)), '[]'::jsonb) INTO v_legacy_banknotes
+    FROM (
+        SELECT id, code, name, current_stock, storage_location
+        FROM public.inventory_items
+        WHERE is_active = true AND lower(item_type) = 'banknote'
+        ORDER BY code
+    ) lb;
+
+    RETURN jsonb_build_object(
+        'denominations', v_denoms,
+        'reservations', v_reservations,
+        'helper_batches', v_batches,
+        'prepared_sets', v_prep,
+        'legacy_banknotes', v_legacy_banknotes,
+        'has_more_batches', v_has_more_batches,
+        'has_more_reservations', v_has_more_res,
+        'has_more_prepared', v_has_more_prep
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.warehouse_get_cash_summary() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_get_cash_summary() TO authenticated;
+
+-- 5.8 NEW: Paginated Cash List RPC (20 default, section filtered)
+CREATE OR REPLACE FUNCTION public.warehouse_list_cash(p_filters JSONB DEFAULT '{}'::jsonb)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_limit INT;
+    v_offset INT;
+    v_section TEXT;
+    v_project_id TEXT;
+    v_data JSONB;
+    v_total INT;
+    v_has_more BOOLEAN := false;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF NOT public.fn_can_manage_cash(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: cash permissions required';
+    END IF;
+
+    v_limit := LEAST(50, GREATEST(1, coalesce((p_filters->>'limit')::int, 20)));
+    v_offset := GREATEST(0, coalesce((p_filters->>'offset')::int, 0));
+    v_section := lower(trim(coalesce(p_filters->>'section', 'batches')));
+    v_project_id := p_filters->>'project_id';
+
+    IF v_section = 'batches' THEN
+        SELECT count(*) INTO v_total
+        FROM public.inventory_documents d
+        WHERE d.doc_type = 'CASH_BATCH'
+          AND (v_project_id IS NULL OR d.project_id = v_project_id);
+
+        SELECT coalesce(jsonb_agg(to_jsonb(b)), '[]'::jsonb) INTO v_data
+        FROM (
+            SELECT d.id, d.doc_number AS batch_code, d.project_id, d.recipient_name_snapshot, d.denomination,
+                   l.quantity AS issued_count, l.accepted_qty AS prepared_count, l.returned_qty AS returned_raw_count, l.handed_over_qty AS handed_over_count,
+                   (l.quantity - l.accepted_qty - l.returned_qty - l.handed_over_qty) AS remaining_count,
+                   d.status, d.created_at
+            FROM public.inventory_documents d
+            JOIN public.inventory_document_lines l ON l.document_id = d.id AND l.line_type = 'CASH_BATCH'
+            WHERE d.doc_type = 'CASH_BATCH'
+              AND (v_project_id IS NULL OR d.project_id = v_project_id)
+            ORDER BY d.created_at DESC
+            LIMIT v_limit OFFSET v_offset
+        ) b;
+
+    ELSIF v_section = 'reservations' THEN
+        SELECT count(*) INTO v_total
+        FROM public.inventory_document_lines l
+        WHERE l.line_type = 'CASH_RESERVATION'
+          AND (v_project_id IS NULL OR l.project_id = v_project_id);
+
+        SELECT coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) INTO v_data
+        FROM (
+            SELECT l.id, l.document_id, l.project_id, l.denomination,
+                   l.quantity AS reserved_count, l.returned_qty, l.delivered_qty,
+                   (l.quantity - l.returned_qty - l.delivered_qty) AS active_reserved_count,
+                   l.is_active, l.created_at
+            FROM public.inventory_document_lines l
+            WHERE l.line_type = 'CASH_RESERVATION'
+              AND (v_project_id IS NULL OR l.project_id = v_project_id)
+            ORDER BY l.created_at DESC
+            LIMIT v_limit OFFSET v_offset
+        ) r;
+
+    ELSIF v_section = 'prepared' THEN
+        SELECT count(*) INTO v_total
+        FROM public.inventory_document_lines l
+        WHERE l.line_type = 'CASH_PREPARED'
+          AND (v_project_id IS NULL OR l.project_id = v_project_id);
+
+        SELECT coalesce(jsonb_agg(to_jsonb(p)), '[]'::jsonb) INTO v_data
+        FROM (
+            SELECT l.id, l.document_id, l.project_id, l.denomination,
+                   l.quantity AS prepared_count, l.delivered_qty AS delivered_count,
+                   (l.quantity - l.delivered_qty) AS ready_for_delivery_count,
+                   l.is_active, l.created_at
+            FROM public.inventory_document_lines l
+            WHERE l.line_type = 'CASH_PREPARED'
+              AND (v_project_id IS NULL OR l.project_id = v_project_id)
+            ORDER BY l.created_at DESC
+            LIMIT v_limit OFFSET v_offset
+        ) p;
+
+    ELSE -- movements
+        SELECT count(*) INTO v_total
+        FROM public.inventory_movements m
+        WHERE m.is_cash = true
+          AND (v_project_id IS NULL OR m.project_id = v_project_id);
+
+        SELECT coalesce(jsonb_agg(to_jsonb(m)), '[]'::jsonb) INTO v_data
+        FROM (
+            SELECT id, movement_type AS action_type, project_id, denomination, quantity AS note_count,
+                   (denomination * quantity) AS total_value, from_location, to_location,
+                   actor_name_snapshot, notes, created_at
+            FROM public.inventory_movements
+            WHERE is_cash = true
+              AND (v_project_id IS NULL OR project_id = v_project_id)
+            ORDER BY created_at DESC
+            LIMIT v_limit OFFSET v_offset
+        ) m;
+    END IF;
+
+    IF (v_offset + v_limit) < v_total THEN
+        v_has_more := true;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'section', v_section,
+        'data', v_data,
+        'total_count', v_total,
+        'has_more', v_has_more,
+        'limit', v_limit,
+        'offset', v_offset
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.warehouse_list_cash(JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_list_cash(JSONB) TO authenticated;
+
+-- 5.9 NEW: Quotation Checklists Reader (20 default)
+CREATE OR REPLACE FUNCTION public.warehouse_get_checklists(p_filters JSONB DEFAULT '{}'::jsonb)
+RETURNS JSONB AS $$
+DECLARE
+    v_auth_uid UUID;
+    v_limit INT;
+    v_offset INT;
+    v_proj_id TEXT;
+    v_lines JSONB;
+    v_total INT;
+    v_has_more BOOLEAN := false;
+BEGIN
+    v_auth_uid := auth.uid();
+    IF NOT public.fn_can_access_inventory(v_auth_uid) THEN
+        RAISE EXCEPTION 'Unauthorized: inventory access permissions required';
+    END IF;
+
+    v_limit := LEAST(100, GREATEST(1, coalesce((p_filters->>'limit')::int, 20)));
+    v_offset := GREATEST(0, coalesce((p_filters->>'offset')::int, 0));
+    v_proj_id := p_filters->>'project_id';
+
+    SELECT count(*) INTO v_total
+    FROM public.inventory_document_lines l
+    WHERE l.line_type = 'CHECKLIST'
+      AND (v_proj_id IS NULL OR l.project_id = v_proj_id);
+
+    SELECT coalesce(jsonb_agg(to_jsonb(row)), '[]'::jsonb) INTO v_lines
+    FROM (
+        SELECT l.id, l.document_id, l.project_id, l.item_id, l.description AS name,
+               l.quantity, l.unit, l.notes, l.is_active, l.created_at,
+               i.code AS item_code
+        FROM public.inventory_document_lines l
+        LEFT JOIN public.inventory_items i ON l.item_id = i.id
+        WHERE l.line_type = 'CHECKLIST'
+          AND (v_proj_id IS NULL OR l.project_id = v_proj_id)
+        ORDER BY l.created_at DESC
+        LIMIT v_limit OFFSET v_offset
+    ) row;
+
+    IF (v_offset + v_limit) < v_total THEN
+        v_has_more := true;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'checklists', v_lines,
+        'total_count', v_total,
+        'has_more', v_has_more,
+        'limit', v_limit,
+        'offset', v_offset
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.warehouse_get_checklists(JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.warehouse_get_checklists(JSONB) TO authenticated;
+
+-- 5.10 Analytics Compatibility (returns JSON, preserves all master keys, no asset_loans)
+CREATE OR REPLACE FUNCTION public.get_inventory_analytics()
+RETURNS JSON AS $$
+DECLARE
+    v_result JSON;
+BEGIN
+    SELECT json_build_object(
+        'total_items_count', COUNT(*),
+        'total_asset_value', COALESCE(SUM(CASE WHEN lower(item_type) != 'banknote' THEN current_stock * average_cost ELSE 0 END), 0),
+        'low_stock_count', COUNT(*) FILTER (WHERE current_stock <= min_alert_threshold AND lower(item_type) = 'consumable'),
+        'active_loans_count', (SELECT COUNT(*) FROM public.asset_units WHERE upper(status) = 'BORROWED'),
+        'overdue_loans_count', (SELECT COUNT(*) FROM public.asset_units WHERE upper(status) = 'BORROWED' AND due_at IS NOT NULL AND due_at < now()),
+        'total_assets', (SELECT COUNT(*) FROM public.asset_units),
+        'borrowed_assets', (SELECT COUNT(*) FROM public.asset_units WHERE upper(status) = 'BORROWED'),
+        'broken_assets', (SELECT COUNT(*) FROM public.asset_units WHERE upper(status) = 'BROKEN'),
+        'lost_assets', (SELECT COUNT(*) FROM public.asset_units WHERE upper(status) = 'LOST'),
+        'low_stock_items', COUNT(*) FILTER (WHERE current_stock <= min_alert_threshold AND lower(item_type) != 'banknote')
+    ) INTO v_result
+    FROM public.inventory_items
+    WHERE is_active = true AND lower(item_type) != 'banknote';
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql STABLE SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.get_inventory_analytics() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_inventory_analytics() TO authenticated;
+
+-- ------------------------------------------------------------------------------
+-- 6. INDEXES & REALTIME SUBSCRIPTION PUBLICATION
+-- ------------------------------------------------------------------------------
+
+CREATE INDEX IF NOT EXISTS idx_inventory_docs_idempotency ON public.inventory_documents(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_inventory_docs_type_status ON public.inventory_documents(doc_type, status);
+CREATE INDEX IF NOT EXISTS idx_inventory_docs_project ON public.inventory_documents(project_id) WHERE project_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_inventory_docs_round ON public.inventory_documents(round_id) WHERE round_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_inventory_docs_created ON public.inventory_documents(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_lines_doc ON public.inventory_document_lines(document_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_lines_type_active ON public.inventory_document_lines(line_type, is_active);
+CREATE INDEX IF NOT EXISTS idx_inventory_lines_item ON public.inventory_document_lines(item_id) WHERE item_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_inventory_lines_unit ON public.inventory_document_lines(unit_code) WHERE unit_code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_inventory_lines_source_move ON public.inventory_document_lines(source_issue_movement_id) WHERE source_issue_movement_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_inventory_moves_doc ON public.inventory_movements(document_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_moves_item ON public.inventory_movements(item_id) WHERE item_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_inventory_moves_type ON public.inventory_movements(movement_type);
+CREATE INDEX IF NOT EXISTS idx_inventory_moves_source ON public.inventory_movements(source_issue_movement_id) WHERE source_issue_movement_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_inventory_moves_cash ON public.inventory_movements(is_cash) WHERE is_cash = true;
+
+CREATE INDEX IF NOT EXISTS idx_asset_units_custody_line ON public.asset_units(active_custody_line_id) WHERE active_custody_line_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_asset_units_status ON public.asset_units(status);
+
+-- REPLICA IDENTITY DEFAULT on inventory_documents to save uncacheable egress
+ALTER TABLE public.inventory_documents REPLICA IDENTITY DEFAULT;
+
+-- Register inventory_documents into existing supabase_realtime publication only if exists and not member
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_publication_tables 
+            WHERE pubname = 'supabase_realtime' 
+              AND schemaname = 'public' 
+              AND tablename = 'inventory_documents'
+        ) THEN
+            ALTER PUBLICATION supabase_realtime ADD TABLE public.inventory_documents;
+        END IF;
+    ELSE
+        RAISE NOTICE 'supabase_realtime publication does not exist; skipping realtime publication registration in local environment';
+    END IF;
+END $$;

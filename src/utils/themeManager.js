@@ -26,6 +26,8 @@ export function ensureThemeStylesheet() {
         --theme-logo-bg: linear-gradient(135deg, #8b5cf6, #7c3aed);
         --theme-gradient-image: linear-gradient(to right, #8b5cf6, #7c3aed);
         --theme-gradient-fallback-bg: transparent;
+        --theme-on-main: #000000;
+        --theme-ink: #4c1d95;
       }
       
       /* Backgrounds */
@@ -94,7 +96,43 @@ export function broadcastShopInfoSync(shopInfo) {
       }
       syncBc.postMessage({ type: 'SHOP_INFO_SYNC', shopInfo });
     }
-  } catch (e) {}
+  } catch { /* Theme synchronization is optional when browser storage is unavailable. */ }
+}
+
+function parseHexColor(value) {
+  if (typeof value !== 'string') return null;
+  let hex = value.trim().replace(/^#/, '');
+  if (/^[\da-f]{3}$/i.test(hex)) hex = [...hex].map(char => char + char).join('');
+  if (!/^[\da-f]{6}$/i.test(hex)) return null;
+  return [0, 2, 4].map(offset => parseInt(hex.slice(offset, offset + 2), 16));
+}
+
+function luminance(channels) {
+  const [red, green, blue] = channels.map(channel => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+}
+
+// Keep the exported name for existing callers; use WCAG luminance instead of YIQ.
+export function getContrastYIQ(hexcolor) {
+  const channels = parseHexColor(hexcolor);
+  if (!channels) return '#ffffff';
+  const value = luminance(channels);
+  return (value + 0.05) / 0.05 >= 1.05 / (value + 0.05) ? '#000000' : '#ffffff';
+}
+
+/**
+ * Derives a darkened legible ink color for colored text on white/light backgrounds.
+ */
+export function computeThemeInk(mainColor) {
+  let channels = parseHexColor(mainColor);
+  if (!channels) return '#0f172a';
+  while (1.05 / (luminance(channels) + 0.05) < 4.5) {
+    channels = channels.map(channel => Math.floor(channel * 0.9));
+  }
+  return '#' + channels.map(channel => channel.toString(16).padStart(2, '0')).join('');
 }
 
 /**
@@ -119,6 +157,14 @@ export function computeThemeColors(themeColor, themeMode, customColorValue) {
     theme = themeColors[themeColor] || themeColors.violet;
   }
 
+  const onMain = getContrastYIQ(theme.main);
+  const ink = computeThemeInk(theme.main);
+  const enrichedTheme = {
+    ...theme,
+    onMain,
+    ink
+  };
+
   const logoBg = !isGradient
     ? theme.main
     : (theme.isRainbow
@@ -133,7 +179,7 @@ export function computeThemeColors(themeColor, themeMode, customColorValue) {
 
   const gradientFallbackBg = !isGradient ? theme.main : 'transparent';
 
-  return { theme, logoBg, gradientImage, gradientFallbackBg };
+  return { theme: enrichedTheme, logoBg, gradientImage, gradientFallbackBg, onMain, ink };
 }
 
 /**
@@ -151,6 +197,8 @@ export function applyThemeVariables(themeColor, themeMode, customColorValue) {
   root.style.setProperty('--theme-light', theme.light);
   root.style.setProperty('--theme-text-light', theme.textLight);
   root.style.setProperty('--theme-shadow', theme.shadow);
+  root.style.setProperty('--theme-on-main', theme.onMain || '#ffffff');
+  root.style.setProperty('--theme-ink', theme.ink || '#0f172a');
   root.style.setProperty('--theme-gradient-from', theme.gradientFrom);
   root.style.setProperty('--theme-gradient-to', theme.gradientTo);
   root.style.setProperty('--theme-logo-bg', logoBg);
