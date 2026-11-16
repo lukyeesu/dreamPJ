@@ -209,7 +209,35 @@ export default function AddAssetUnitModal({
           <div className="p-4 sm:p-5 space-y-3.5 flex-1 overflow-y-auto min-w-0">
             {/* Tool Item */}
             <div>
-              {onSearchItems && <input type="search" aria-label="ค้นหารายการเครื่องมือ" placeholder="ค้นหาชื่อหรือรหัสเครื่องมือ…" value={search} onChange={e => {setSearch(e.target.value); setSelectedItemId('');}} className="mb-2 w-full min-h-[44px] px-3 border border-slate-200 rounded-xl text-sm" />}
+              {onSearchItems && (
+                <div className="relative mb-2">
+                  <input
+                    type="text"
+                    aria-label="ค้นหารายการเครื่องมือ"
+                    placeholder="ค้นหาชื่อหรือรหัสเครื่องมือ…"
+                    value={search}
+                    onChange={(e) => {
+                      setSearch(e.target.value);
+                      setSelectedItemId('');
+                    }}
+                    className="w-full min-h-[44px] pl-3 pr-9 border border-slate-200 rounded-xl text-sm outline-hidden focus:border-[var(--theme-main,#8b5cf6)]"
+                  />
+                  {search && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearch('');
+                        setSelectedItemId('');
+                      }}
+                      aria-label="ล้างคำค้นหา"
+                      title="ล้างคำค้นหา"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
               <label className="block text-sm font-bold text-slate-700 mb-1">
                 รายการเครื่องมือ: <span className="text-rose-600">*</span>
               </label>

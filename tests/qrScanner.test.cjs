@@ -598,4 +598,126 @@ test('QrScanner Component - Comprehensive Real DOM Regression Suite', async (t) 
 
     unmount();
   });
+
+  await t.test('12. Full-screen mobile scanner autoStart=true starts environment camera immediately on open', async () => {
+    let constraintsPassed = null;
+    const mockReader = {
+      decodeFromConstraints: async (constraints) => {
+        constraintsPassed = constraints;
+        return { stop: () => {} };
+      }
+    };
+
+    const { unmount } = render(
+      React.createElement(QrScanner, {
+        isOpen: true,
+        autoStart: true,
+        codeReaderInstance: mockReader,
+        onScan: () => {},
+        onClose: () => {}
+      })
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    assert.ok(constraintsPassed, 'autoStart=true must invoke decodeFromConstraints immediately');
+    assert.deepEqual(constraintsPassed.video?.facingMode, { ideal: 'environment' });
+    assert.ok(document.body.textContent.includes('วาง QR หรือ บาร์โค้ดให้อยู่ในจอ'));
+    assert.ok(document.body.textContent.includes('เลือกรูปจากอัลบั้ม'));
+
+    unmount();
+  });
+
+  await t.test('13. Top-right Torch / Flashlight button toggles hardware torch via scanner controls', async () => {
+    const torchStates = [];
+    const mockReader = {
+      decodeFromConstraints: async () => ({
+        stop: () => {},
+        switchTorch: async (onOff) => {
+          torchStates.push(onOff);
+        }
+      })
+    };
+
+    const { unmount } = render(
+      React.createElement(QrScanner, {
+        isOpen: true,
+        autoStart: true,
+        codeReaderInstance: mockReader,
+        onScan: () => {},
+        onClose: () => {}
+      })
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const torchBtn = document.body.querySelector('button[aria-label="เปิดหรือปิดไฟฉาย"]');
+    assert.ok(torchBtn, 'Torch button must be rendered in top-right AppBar');
+    assert.equal(torchBtn.getAttribute('aria-pressed'), 'false');
+
+    await act(async () => {
+      fireEvent.click(torchBtn);
+    });
+    assert.deepEqual(torchStates, [true]);
+    assert.equal(torchBtn.getAttribute('aria-pressed'), 'true');
+
+    await act(async () => {
+      fireEvent.click(torchBtn);
+    });
+    assert.deepEqual(torchStates, [true, false]);
+    assert.equal(torchBtn.getAttribute('aria-pressed'), 'false');
+
+    unmount();
+  });
+
+  await t.test('14. Choose photo from album decodes QR / Barcode image and invokes onScan', async () => {
+    const origCreateObjectURL = global.URL.createObjectURL;
+    const origRevokeObjectURL = global.URL.revokeObjectURL;
+    let revokedUrl = null;
+    global.URL.createObjectURL = () => 'blob:mock-qr-photo';
+    global.URL.revokeObjectURL = (u) => {
+      revokedUrl = u;
+    };
+
+    try {
+      let decodedUrl = null;
+      const mockReader = {
+        decodeFromImageUrl: async (url) => {
+          decodedUrl = url;
+          return { getText: () => 'F2U:T:SC-777' };
+        }
+      };
+
+      const scanned = [];
+      const { unmount } = render(
+        React.createElement(QrScanner, {
+          isOpen: true,
+          codeReaderInstance: mockReader,
+          onScan: (code) => scanned.push(code),
+          onClose: () => {}
+        })
+      );
+
+      const fileInput = document.body.querySelector('#qr-album-file-input');
+      assert.ok(fileInput, 'Hidden album file input must exist');
+
+      const fakeFile = new dom.window.File(['fake-img'], 'qr.png', { type: 'image/png' });
+      await act(async () => {
+        fireEvent.change(fileInput, { target: { files: [fakeFile] } });
+      });
+
+      assert.equal(decodedUrl, 'blob:mock-qr-photo');
+      assert.equal(revokedUrl, 'blob:mock-qr-photo', 'Object URL must be revoked in finally');
+      assert.deepEqual(scanned, ['SC-777']);
+
+      unmount();
+    } finally {
+      global.URL.createObjectURL = origCreateObjectURL;
+      global.URL.revokeObjectURL = origRevokeObjectURL;
+    }
+  });
 });

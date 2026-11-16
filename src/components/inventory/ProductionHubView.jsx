@@ -922,19 +922,21 @@ export default function ProductionHubView({
 
         {/* Search Helper or Task */}
         <div className="relative min-w-[240px]">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             value={searchPersonQuery}
             onChange={(e) => setSearchPersonQuery(e.target.value)}
             placeholder="ค้นหาผู้ช่วย, ชื่องาน, สิ่งที่ส่ง..."
-            className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 outline-hidden focus:border-[var(--theme-main,#8b5cf6)] min-h-[44px]"
+            className="w-full pl-9 pr-9 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 outline-hidden focus:border-[var(--theme-main,#8b5cf6)] min-h-[44px]"
           />
           {searchPersonQuery && (
             <button
               type="button"
               onClick={() => setSearchPersonQuery('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+              aria-label="ล้างคำค้นหา"
+              title="ล้างคำค้นหา"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200/70 rounded-full transition-colors cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>

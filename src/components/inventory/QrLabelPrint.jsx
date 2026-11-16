@@ -1,19 +1,25 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  ArrowLeft,
   Printer,
   X,
   Search,
-  CheckSquare,
-  Square,
+  Check,
+  Plus,
+  Minus,
   AlertTriangle,
-  FileText,
-  Sliders,
-  Ruler
+  QrCode,
+  Barcode,
+  ChevronDown,
+  Ruler,
+  Package,
+  Wrench
 } from 'lucide-react';
 import {
   LABEL_PRESETS,
   LABEL_FORMATS,
+  BARCODE_DENSITIES,
   validateBarcodeDimensions,
   generateBarcodeSvgString,
   PRINT_MODES,
@@ -26,26 +32,28 @@ import {
   generateQrSvgString,
   generateQrDataUrl,
   buildPrintHtml,
-  encodeQrPayload
+  encodeQrPayload,
+  decodeQrPayload
 } from '../../utils/qrLabels.js';
 import Toast from '../common/Toast.jsx';
 
+function makeIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 /**
- * QrLabelPrint Component
+ * QrLabelPrint — Visual Sticker Studio (16pt uniform spacing)
  *
- * Dedicated full-screen print workspace for warehouse asset tool labels.
- * Provides preset sizing (scissor-handle 18x24mm, normal 30x40mm, custom mm),
- * A4 sheet sticker grid or thermal roll printing, peeled sticker start offsets,
- * real-time actual-size preview, calibration sheet with 10mm ruler, and
- * completely local, safe printing via an isolated hidden iframe.
- *
- * Props:
- *   - units: Array of asset unit objects ({ unit_code, item_id, status, notes })
- *   - items: Array of catalog item objects ({ id, name, code, color, size, category_id })
- *   - categories: Array of category objects ({ id, name, type })
- *   - onClose: () => void
- *   - initialSelectedUnitCodes: Array<string> (Default selection; does NOT select whole warehouse by default)
- *   - onPrintSuccess: () => void (optional callback after print trigger)
+ * Effortless 2-step sticker printing for serialized tools & material boxes:
+ * 1. Tap cards on the left to pick items & set copy counts inline (or generate a tool code in 1 click).
+ * 2. Pick QR (30x40mm) vs Narrow Barcode (50x15mm) on the right, preview actual proportions, and print.
  */
 export default function QrLabelPrint({
   units = [],
@@ -54,26 +62,29 @@ export default function QrLabelPrint({
   onClose,
   initialSelectedUnitCodes = [],
   onPrintSuccess,
-  onAddUnitRequest
+  onAddUnitRequest,
+  onQuickCreateUnit
 }) {
-  // Selection state (empty by default unless explicitly provided via initialSelectedUnitCodes)
   const [selectedCodes, setSelectedCodes] = useState(() => new Set(initialSelectedUnitCodes));
   const [copiesPerUnit, setCopiesPerUnit] = useState({});
-
-  // Filter states
+  const [activeSource, setActiveSource] = useState('units'); // 'units' | 'boxes'
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterCategory, setFilterCategory] = useState('ALL');
-  const [filterColor, setFilterColor] = useState('ALL');
-  const [filterStatus, setFilterStatus] = useState('ALL');
+
+  // Inline quick unit code generator state (collapsed by default to keep UI clean)
+  const [showQuickCreate, setShowQuickCreate] = useState(false);
+  const [quickToolId, setQuickToolId] = useState('');
+  const [quickUnitCode, setQuickUnitCode] = useState('');
+  const [isCreatingQuickUnit, setIsCreatingQuickUnit] = useState(false);
+  const quickUnitIdemRef = useRef(null);
 
   // Print format & layout states
   const [labelFormat, setLabelFormat] = useState(LABEL_FORMATS.QR);
-  const [selectedPresetKey, setSelectedPresetKey] = useState('normal'); // 'scissor' | 'normal' | 'custom'
-  const [customWidthMm, setCustomWidthMm] = useState(35);
-  const [customHeightMm, setCustomHeightMm] = useState(35);
-  const [printMode, setPrintMode] = useState(PRINT_MODES.SHEET_A4); // 'sheet_a4' | 'roll'
+  const [barDensity, setBarDensity] = useState(BARCODE_DENSITIES.FINE);
+  const [selectedPresetKey, setSelectedPresetKey] = useState('normal');
+  const [customWidthMm, setCustomWidthMm] = useState(15);
+  const [customHeightMm, setCustomHeightMm] = useState(10);
+  const [printMode, setPrintMode] = useState(PRINT_MODES.SHEET_A4);
 
-  // A4 sheet parameters
   const [sheetParams, setSheetParams] = useState({
     marginTopMm: 10,
     marginBottomMm: 10,
@@ -84,7 +95,6 @@ export default function QrLabelPrint({
     startOffset: 0
   });
 
-  // UI feedback states
   const [toastMessage, setToastMessage] = useState(null);
   const [isGeneratingPrint, setIsGeneratingPrint] = useState(false);
   const [previewSvg, setPreviewSvg] = useState('');
@@ -96,49 +106,57 @@ export default function QrLabelPrint({
   const isMountedRef = useRef(true);
   const dialogRef = useRef(null);
 
-  // Restore focus on close and cleanup iframe/blobs
   useEffect(() => {
     isMountedRef.current = true;
-    previousFocusRef.current = document.activeElement;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    dialogRef.current?.focus();
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      isMountedRef.current = false;
-      printCleanupRef.current?.();
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
-      if (printIframeRef.current) {
-        try {
-          printIframeRef.current.remove();
-        } catch {
-          // Ignore
+    if (typeof document !== 'undefined') {
+      previousFocusRef.current = document.activeElement;
+      const previousOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      dialogRef.current?.focus();
+      return () => {
+        document.body.style.overflow = previousOverflow;
+        isMountedRef.current = false;
+        printCleanupRef.current?.();
+        if (blobUrlRef.current) {
+          URL.revokeObjectURL(blobUrlRef.current);
+          blobUrlRef.current = null;
         }
-        printIframeRef.current = null;
-      }
-      if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
-        previousFocusRef.current.focus();
-      }
-    };
+        if (printIframeRef.current) {
+          try {
+            printIframeRef.current.remove();
+          } catch {
+            // Ignore cleanup error
+          }
+          printIframeRef.current = null;
+        }
+        if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
+          previousFocusRef.current.focus();
+        }
+      };
+    }
+    return undefined;
   }, []);
 
-  // Keyboard escape
   useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
     const handleKeyDown = (e) => {
       if (e.key === 'Escape' && onClose) {
         onClose();
       }
       if (e.key === 'Tab') {
-        const controls = [...(dialogRef.current?.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]') || [])];
+        const controls = [
+          ...(dialogRef.current?.querySelectorAll(
+            'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]'
+          ) || [])
+        ];
         const first = controls[0];
         const last = controls.at(-1);
         if (e.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
-          e.preventDefault(); last?.focus();
+          e.preventDefault();
+          last?.focus();
         } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault(); first?.focus();
+          e.preventDefault();
+          first?.focus();
         }
       }
     };
@@ -146,12 +164,11 @@ export default function QrLabelPrint({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  // Lookup maps for fast item and category resolving
   const itemMap = useMemo(() => {
     const map = new Map();
     items.forEach((item) => {
-      if (item.id) map.set(item.id, item);
-      if (item.code) map.set(item.code, item);
+      if (item?.id) map.set(item.id, item);
+      if (item?.code) map.set(item.code, item);
     });
     return map;
   }, [items]);
@@ -159,63 +176,94 @@ export default function QrLabelPrint({
   const categoryMap = useMemo(() => {
     const map = new Map();
     categories.forEach((cat) => {
-      if (cat.id) map.set(cat.id, cat);
+      if (cat?.id) map.set(cat.id, cat);
     });
     return map;
   }, [categories]);
 
-  // Enriched unit list
-  const enrichedUnits = useMemo(() => {
-    return units.filter((u) => typeof u.unit_code === 'string' && u.unit_code.trim()).map((u) => {
-      const item = itemMap.get(u.item_id);
-      const category = item ? categoryMap.get(item.category_id) : null;
-      return {
-        unit_code: u.unit_code,
-        item_id: u.item_id,
-        status: u.status || 'AVAILABLE',
-        notes: u.notes || '',
-        itemName: item?.name || 'เครื่องมือ',
-        color: item?.color || '',
-        size: item?.size || '',
-        categoryName: category?.name || 'ทั่วไป',
-        categoryId: item?.category_id || ''
-      };
+  const toolItems = useMemo(() => {
+    return items.filter((it) => {
+      if (!it || it.is_active === false) return false;
+      const t = String(it.item_type || '').toLowerCase();
+      return t === 'asset' || t === 'tool' || t === 'equipment';
     });
+  }, [items]);
+
+  useEffect(() => {
+    if (!quickToolId && toolItems.length > 0) {
+      setQuickToolId(String(toolItems[0].id));
+    }
+  }, [toolItems, quickToolId]);
+
+  // 1. Serialized tool units
+  const enrichedUnits = useMemo(() => {
+    return units
+      .filter((u) => typeof u?.unit_code === 'string' && u.unit_code.trim())
+      .map((u) => {
+        const item = itemMap.get(u.item_id);
+        const category = item ? categoryMap.get(item.category_id) : null;
+        return {
+          unit_code: u.unit_code.trim(),
+          item_id: u.item_id,
+          status: u.status || 'AVAILABLE',
+          notes: u.notes || '',
+          itemName: item?.name || 'เครื่องมือ',
+          color: item?.color || '',
+          size: item?.size || '',
+          categoryName: category?.name || 'อุปกรณ์',
+          categoryId: item?.category_id || '',
+          sourceKind: 'unit'
+        };
+      });
   }, [units, itemMap, categoryMap]);
 
-  // Unique colors for filter dropdown
-  const availableColors = useMemo(() => {
-    const colors = new Set();
-    enrichedUnits.forEach((u) => {
-      if (u.color) colors.add(u.color);
-    });
-    return Array.from(colors);
-  }, [enrichedUnits]);
+  // 2. Catalog box/shelf labels (items with valid printable `code`, excluding codes already in enrichedUnits)
+  const boxCatalogUnits = useMemo(() => {
+    const existingCodes = new Set(enrichedUnits.map((u) => u.unit_code));
+    return items
+      .filter((it) => {
+        if (!it || it.is_active === false) return false;
+        const code = typeof it.code === 'string' ? it.code.trim() : '';
+        if (!code || existingCodes.has(code)) return false;
+        const parsed = decodeQrPayload(code);
+        return parsed.success && parsed.unitCode === code;
+      })
+      .map((it) => {
+        const category = categoryMap.get(it.category_id);
+        return {
+          unit_code: it.code.trim(),
+          item_id: it.id,
+          status: 'BOX',
+          notes: it.storage_location || '',
+          itemName: it.name || 'พัสดุคลัง',
+          color: it.color || '',
+          size: it.size || '',
+          categoryName: category?.name || 'ป้ายติดกล่อง',
+          categoryId: it.category_id || '',
+          sourceKind: 'box'
+        };
+      });
+  }, [items, enrichedUnits, categoryMap]);
 
-  // Filtered unit list
+  const allPrintableUnits = useMemo(() => {
+    return [...enrichedUnits, ...boxCatalogUnits];
+  }, [enrichedUnits, boxCatalogUnits]);
+
+  const activeSourceUnits = activeSource === 'boxes' ? boxCatalogUnits : enrichedUnits;
+
   const filteredUnits = useMemo(() => {
-    return enrichedUnits.filter((u) => {
-      if (filterCategory !== 'ALL' && u.categoryId !== filterCategory) {
-        return false;
-      }
-      if (filterColor !== 'ALL' && u.color !== filterColor) {
-        return false;
-      }
-      if (filterStatus !== 'ALL' && u.status !== filterStatus) {
-        return false;
-      }
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const codeMatch = u.unit_code.toLowerCase().includes(q);
-        const nameMatch = u.itemName.toLowerCase().includes(q);
-        const colorMatch = u.color.toLowerCase().includes(q);
-        if (!codeMatch && !nameMatch && !colorMatch) return false;
-      }
-      return true;
+    if (!searchQuery.trim()) return activeSourceUnits;
+    const q = searchQuery.toLowerCase().trim();
+    return activeSourceUnits.filter((u) => {
+      return (
+        u.unit_code.toLowerCase().includes(q) ||
+        u.itemName.toLowerCase().includes(q) ||
+        u.color.toLowerCase().includes(q) ||
+        u.categoryName.toLowerCase().includes(q)
+      );
     });
-  }, [enrichedUnits, filterCategory, filterColor, filterStatus, searchQuery]);
+  }, [activeSourceUnits, searchQuery]);
 
-  // Current active label dimensions
   const activePreset = useMemo(() => {
     if (selectedPresetKey === 'custom') {
       const w = Number(customWidthMm);
@@ -227,43 +275,50 @@ export default function QrLabelPrint({
         heightMm: h,
         description: 'ขนาดกำหนดเองโดยผู้ใช้',
         experimental: false,
-        showItemName: h >= 26
+        showItemName: false
       };
     }
     return LABEL_PRESETS[selectedPresetKey] || LABEL_PRESETS.normal;
   }, [selectedPresetKey, customWidthMm, customHeightMm]);
 
-  // Live preview sample unit
   const previewSampleUnit = useMemo(() => {
-    const firstSelected = enrichedUnits.find((u) => selectedCodes.has(u.unit_code));
-    return firstSelected || enrichedUnits[0] || null;
-  }, [enrichedUnits, selectedCodes]);
+    const firstSelected = allPrintableUnits.find((u) => selectedCodes.has(u.unit_code));
+    if (firstSelected) return firstSelected;
+    if (activeSource === 'boxes') return boxCatalogUnits[0] || null;
+    return enrichedUnits[0] || null;
+  }, [allPrintableUnits, selectedCodes, activeSource, boxCatalogUnits, enrichedUnits]);
 
-  // Dimension validation across ACTUAL selected payloads (worst-case evaluated)
   const dimensionCheck = useMemo(() => {
-    const codes = enrichedUnits.filter((u) => selectedCodes.has(u.unit_code)).map((u) => u.unit_code);
+    const codes = allPrintableUnits
+      .filter((u) => selectedCodes.has(u.unit_code))
+      .map((u) => u.unit_code);
     if (!codes.length && previewSampleUnit) codes.push(previewSampleUnit.unit_code);
-    if (labelFormat === LABEL_FORMATS.BARCODE) return validateBarcodeDimensions({ widthMm: activePreset.widthMm, heightMm: activePreset.heightMm, unitCodes: codes });
+    if (labelFormat === LABEL_FORMATS.BARCODE) {
+      return validateBarcodeDimensions({
+        widthMm: activePreset.widthMm,
+        heightMm: activePreset.heightMm,
+        unitCodes: codes
+      });
+    }
     const targetPayloads = codes.map((c) => encodeQrPayload(c));
-
     return validateLabelDimensions({
       widthMm: activePreset.widthMm,
       heightMm: activePreset.heightMm,
+      qrGraphicMm: activePreset.qrGraphicMm,
       payloads: targetPayloads
     });
-  }, [activePreset, selectedCodes, previewSampleUnit, enrichedUnits, labelFormat]);
+  }, [activePreset, selectedCodes, previewSampleUnit, allPrintableUnits, labelFormat]);
 
-  // Total label copies to print
   const totalLabelsCount = useMemo(() => {
     let sum = 0;
-    enrichedUnits.filter((u) => selectedCodes.has(u.unit_code)).forEach(({ unit_code: code }) => {
-      const copies = validateCopyCount(copiesPerUnit[code] ?? 1);
-      sum += copies;
-    });
+    allPrintableUnits
+      .filter((u) => selectedCodes.has(u.unit_code))
+      .forEach(({ unit_code: code }) => {
+        sum += validateCopyCount(copiesPerUnit[code] ?? 1);
+      });
     return sum;
-  }, [selectedCodes, copiesPerUnit, enrichedUnits]);
+  }, [selectedCodes, copiesPerUnit, allPrintableUnits]);
 
-  // Calculated Sheet layout
   const sheetLayout = useMemo(() => {
     if (printMode === PRINT_MODES.ROLL) {
       return calculateRollLayout({
@@ -288,17 +343,22 @@ export default function QrLabelPrint({
     });
   }, [printMode, activePreset, sheetParams, totalLabelsCount]);
 
-  // Generate live preview QR code
   useEffect(() => {
     let isCurrent = true;
     const generatePreview = async () => {
       try {
-        if (!previewSampleUnit) { if (isCurrent) setPreviewSvg(''); return; }
+        if (!previewSampleUnit) {
+          if (isCurrent) setPreviewSvg('');
+          return;
+        }
         const payload = encodeQrPayload(previewSampleUnit.unit_code);
-        const svg = labelFormat === LABEL_FORMATS.BARCODE ? generateBarcodeSvgString(previewSampleUnit.unit_code, activePreset) : await generateQrSvgString(payload, {
-          margin: 4,
-          errorCorrectionLevel: 'M'
-        });
+        const svg =
+          labelFormat === LABEL_FORMATS.BARCODE
+            ? generateBarcodeSvgString(previewSampleUnit.unit_code, { ...activePreset, barDensity })
+            : await generateQrSvgString(payload, {
+                margin: 0,
+                errorCorrectionLevel: 'M'
+              });
         if (isCurrent) setPreviewSvg(svg);
       } catch {
         if (isCurrent) setPreviewSvg('');
@@ -308,17 +368,24 @@ export default function QrLabelPrint({
     return () => {
       isCurrent = false;
     };
-  }, [previewSampleUnit, labelFormat, activePreset]);
+  }, [previewSampleUnit, labelFormat, activePreset, barDensity]);
 
-  // Selection handlers
+  const selectFormatMode = (nextFormat) => {
+    setLabelFormat(nextFormat);
+    if (nextFormat === LABEL_FORMATS.BARCODE) {
+      if (!['micro_barcode', 'small_barcode', 'handle', 'custom'].includes(selectedPresetKey)) {
+        setSelectedPresetKey('handle');
+      }
+    } else if (!['micro_qr', 'scissor', 'normal', 'custom'].includes(selectedPresetKey)) {
+      setSelectedPresetKey('normal');
+    }
+  };
+
   const toggleUnit = (unitCode) => {
     setSelectedCodes((prev) => {
       const next = new Set(prev);
-      if (next.has(unitCode)) {
-        next.delete(unitCode);
-      } else {
-        next.add(unitCode);
-      }
+      if (next.has(unitCode)) next.delete(unitCode);
+      else next.add(unitCode);
       return next;
     });
   };
@@ -346,14 +413,66 @@ export default function QrLabelPrint({
     selectedCodes.forEach((code) => {
       updated[code] = valid;
     });
-    setCopiesPerUnit(updated);
-    setToastMessage({ message: `ปรับจำนวนพิมพ์เป็น ${valid} ชุดทุกรายการ`, type: 'success' });
+    setCopiesPerUnit((prev) => ({ ...prev, ...updated }));
+    setToastMessage({ message: `ตั้งจำนวนพิมพ์ ${valid} ดวงต่อรหัสแล้ว`, type: 'success' });
   };
 
-  // Print execution via isolated hidden iframe with lifecycle cleanup
+  const suggestNextCodeForTool = () => {
+    const existingNums = enrichedUnits
+      .filter((u) => String(u.item_id) === String(quickToolId))
+      .map((u) => {
+        const match = u.unit_code.match(/(\d+)$/);
+        return match ? Number(match[1]) : 0;
+      });
+    const nextSeq = Math.max(0, ...existingNums) + 1;
+    const padded = String(nextSeq).padStart(3, '0');
+    setQuickUnitCode(`EQ-${padded}`);
+  };
+
+  const handleQuickGenerateUnit = async (e) => {
+    e.preventDefault();
+    if (!onQuickCreateUnit || !quickToolId || isCreatingQuickUnit) return;
+    const cleanCode = quickUnitCode.trim().toUpperCase();
+    if (!cleanCode) {
+      setToastMessage({ message: 'กรุณาระบุรหัสประจำชิ้นก่อนสร้าง', type: 'warning' });
+      return;
+    }
+    const check = decodeQrPayload(cleanCode);
+    if (!check.success) {
+      setToastMessage({
+        message: 'รหัสต้องเป็นภาษาอังกฤษ ตัวเลข หรือขีด (-) เท่านั้น เช่น EQ-001',
+        type: 'error'
+      });
+      return;
+    }
+
+    setIsCreatingQuickUnit(true);
+    try {
+      if (!quickUnitIdemRef.current) {
+        quickUnitIdemRef.current = makeIdempotencyKey();
+      }
+      await onQuickCreateUnit({
+        itemId: quickToolId,
+        unitCode: cleanCode,
+        idempotencyKey: quickUnitIdemRef.current
+      });
+      quickUnitIdemRef.current = null;
+      setQuickUnitCode('');
+      setSelectedCodes((prev) => {
+        const next = new Set(prev);
+        next.add(cleanCode);
+        return next;
+      });
+    } catch {
+      // Parent handles error toast
+    } finally {
+      setIsCreatingQuickUnit(false);
+    }
+  };
+
   const handlePrint = async (isCalibration = false) => {
     if (!isCalibration && (selectedCodes.size === 0 || totalLabelsCount === 0)) {
-      setToastMessage({ message: 'กรุณาเลือกครุภัณฑ์ที่ต้องการพิมพ์อย่างน้อย 1 รายการ', type: 'warning' });
+      setToastMessage({ message: 'กรุณาแตะเลือกรหัสที่ต้องการพิมพ์อย่างน้อย 1 รายการ', type: 'warning' });
       return;
     }
 
@@ -366,7 +485,7 @@ export default function QrLabelPrint({
     }
 
     if (!isCalibration && (dimensionCheck.blocked || !sheetLayout.valid)) {
-      setToastMessage({ message: 'ไม่สามารถพิมพ์ได้เนื่องจากขนาดฉลากเล็กเกินไป', type: 'error' });
+      setToastMessage({ message: 'ไม่สามารถพิมพ์ได้เนื่องจากขนาดฉลากไม่พอดีกับรหัส', type: 'error' });
       return;
     }
 
@@ -375,12 +494,18 @@ export default function QrLabelPrint({
     try {
       const labelItems = [];
 
+      const qrPrintOpts = { margin: 0, errorCorrectionLevel: 'M' };
+
       if (isCalibration && previewSampleUnit && !dimensionCheck.blocked) {
         const sampleCode = previewSampleUnit.unit_code;
         const payload = encodeQrPayload(sampleCode);
-        const [svg, dataUrl] = labelFormat === LABEL_FORMATS.BARCODE
-          ? [generateBarcodeSvgString(sampleCode, activePreset), '']
-          : await Promise.all([generateQrSvgString(payload), generateQrDataUrl(payload)]);
+        const [svg, dataUrl] =
+          labelFormat === LABEL_FORMATS.BARCODE
+            ? [generateBarcodeSvgString(sampleCode, { ...activePreset, barDensity }), '']
+            : await Promise.all([
+                generateQrSvgString(payload, qrPrintOpts),
+                generateQrDataUrl(payload, qrPrintOpts)
+              ]);
         labelItems.push({
           unitCode: sampleCode,
           itemName: previewSampleUnit.itemName,
@@ -389,16 +514,19 @@ export default function QrLabelPrint({
           dataUrl
         });
       } else if (!isCalibration) {
-        // Collect all selected units according to copies
-        for (const unit of enrichedUnits) {
+        for (const unit of allPrintableUnits) {
           if (!isMountedRef.current) return;
           if (!selectedCodes.has(unit.unit_code)) continue;
 
           const count = validateCopyCount(copiesPerUnit[unit.unit_code] ?? 1);
           const payload = encodeQrPayload(unit.unit_code);
-          const [svg, dataUrl] = labelFormat === LABEL_FORMATS.BARCODE
-            ? [generateBarcodeSvgString(unit.unit_code, activePreset), '']
-            : await Promise.all([generateQrSvgString(payload), generateQrDataUrl(payload)]);
+          const [svg, dataUrl] =
+            labelFormat === LABEL_FORMATS.BARCODE
+              ? [generateBarcodeSvgString(unit.unit_code, { ...activePreset, barDensity }), '']
+              : await Promise.all([
+                  generateQrSvgString(payload, qrPrintOpts),
+                  generateQrDataUrl(payload, qrPrintOpts)
+                ]);
 
           for (let i = 0; i < count; i++) {
             labelItems.push({
@@ -414,7 +542,6 @@ export default function QrLabelPrint({
 
       if (!isMountedRef.current) return;
 
-      // Generate secure isolated HTML
       const html = buildPrintHtml({
         labels: labelItems,
         preset: activePreset,
@@ -425,13 +552,11 @@ export default function QrLabelPrint({
       });
 
       printCleanupRef.current?.();
-      // Cleanup prior Blob URL if any
       if (blobUrlRef.current) {
         URL.revokeObjectURL(blobUrlRef.current);
         blobUrlRef.current = null;
       }
 
-      // Write to hidden print iframe via Blob URL to avoid document.write and injection
       const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
       const blobUrl = URL.createObjectURL(blob);
       blobUrlRef.current = blobUrl;
@@ -451,6 +576,14 @@ export default function QrLabelPrint({
         printIframeRef.current = iframe;
       }
 
+      const finishPrint = () => {
+        iframe.contentWindow?.removeEventListener('afterprint', finishPrint);
+        URL.revokeObjectURL(blobUrl);
+        if (blobUrlRef.current === blobUrl) blobUrlRef.current = null;
+        if (printCleanupRef.current === finishPrint) printCleanupRef.current = null;
+        if (isMountedRef.current) setIsGeneratingPrint(false);
+      };
+
       iframe.onload = async () => {
         if (!isMountedRef.current) {
           if (blobUrlRef.current) {
@@ -461,16 +594,14 @@ export default function QrLabelPrint({
         }
 
         try {
-          // Ensure any images inside the iframe are fully decoded/loaded before print dialog
           const images = Array.from(iframe.contentDocument?.images || []);
           await Promise.all(
-            images.map(
-              (img) =>
-                img.complete
-                  ? Promise.resolve()
-                  : new Promise((r) => {
-                      img.onload = img.onerror = r;
-                    })
+            images.map((img) =>
+              img.complete
+                ? Promise.resolve()
+                : new Promise((r) => {
+                    img.onload = img.onerror = r;
+                  })
             )
           );
 
@@ -480,31 +611,28 @@ export default function QrLabelPrint({
 
           if (!isMountedRef.current || blobUrlRef.current !== blobUrl) return;
           const printWindow = iframe.contentWindow;
-          if (!printWindow || typeof printWindow.print !== 'function') throw new Error('เบราว์เซอร์ไม่รองรับการพิมพ์');
+          if (!printWindow || typeof printWindow.print !== 'function') {
+            throw new Error('เบราว์เซอร์ไม่รองรับการพิมพ์');
+          }
           printWindow.addEventListener('afterprint', finishPrint, { once: true });
           printWindow.focus();
           printWindow.print();
           if (onPrintSuccess && !isCalibration) onPrintSuccess();
-          // Some mobile browsers omit afterprint; release the busy state after the dialog starts.
           if (isMountedRef.current) setIsGeneratingPrint(false);
         } catch (error) {
           finishPrint();
-          if (isMountedRef.current) setToastMessage({ message: `เปิดหน้าต่างพิมพ์ไม่สำเร็จ: ${error.message}`, type: 'error' });
+          if (isMountedRef.current) {
+            setToastMessage({ message: `เปิดหน้าต่างพิมพ์ไม่สำเร็จ: ${error.message}`, type: 'error' });
+          }
         }
       };
 
-      // Cleanup belongs to this job so old events cannot revoke the next job's URL.
-      const finishPrint = () => {
-        iframe.contentWindow?.removeEventListener('afterprint', finishPrint);
-        URL.revokeObjectURL(blobUrl);
-        if (blobUrlRef.current === blobUrl) blobUrlRef.current = null;
-        if (printCleanupRef.current === finishPrint) printCleanupRef.current = null;
-        if (isMountedRef.current) setIsGeneratingPrint(false);
-      };
       printCleanupRef.current = finishPrint;
       iframe.onerror = () => {
         finishPrint();
-        if (isMountedRef.current) setToastMessage({ message: 'โหลดเอกสารพิมพ์ไม่สำเร็จ กรุณาลองอีกครั้ง', type: 'error' });
+        if (isMountedRef.current) {
+          setToastMessage({ message: 'โหลดเอกสารพิมพ์ไม่สำเร็จ กรุณาลองอีกครั้ง', type: 'error' });
+        }
       };
 
       iframe.src = blobUrl;
@@ -517,641 +645,677 @@ export default function QrLabelPrint({
   };
 
   const isExcessive = totalLabelsCount > MAX_TOTAL_LABELS;
+  const isPrintDisabled =
+    isGeneratingPrint ||
+    totalLabelsCount === 0 ||
+    dimensionCheck.blocked ||
+    !sheetLayout.valid ||
+    isExcessive;
 
-  return createPortal(
+  const dialogNode = (
     <div
       ref={dialogRef}
       tabIndex={-1}
-      className="fixed inset-0 z-[110] h-[100dvh] flex flex-col bg-[#f7f8fa] text-[#26374a] font-sans overflow-hidden animate-in fade-in duration-200 [&_button]:min-h-11 [&_input]:min-h-11 [&_select]:min-h-11 [&_button]:text-sm [&_input]:text-sm [&_select]:text-sm"
       role="dialog"
       aria-modal="true"
       aria-label="พิมพ์ฉลาก QR ครุภัณฑ์"
+      className="fixed inset-0 z-[110] h-[100dvh] flex flex-col bg-[#F8FAFC] text-slate-900 font-sans overflow-hidden"
     >
-      {/* Top Navigation Bar */}
-      <header className="px-3 sm:px-6 pt-[max(0.5rem,env(safe-area-inset-top))] pb-2 bg-white border-b border-[#e0e6ee] grid grid-cols-[minmax(0,1fr)_auto] gap-2 shrink-0 lg:flex lg:items-center lg:justify-between">
-        <div className="flex items-center gap-3 min-w-0 pr-12 lg:pr-0">
-          <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center font-bold transition-colors"
-            style={{
-              backgroundColor: 'var(--theme-light, #f5f3ff)',
-              color: 'var(--theme-ink, #4c1d95)'
-            }}
-          >
-            <Printer className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-base font-bold text-[#2e445d] leading-snug">พิมพ์ฉลาก QR / บาร์โค้ด</h1>
-            <p className="hidden lg:block text-sm text-[#5a7087] mt-0.5">
-              จัดหน้าและพิมพ์ฉลากมาตรฐานสำหรับติดเครื่องมือและอุปกรณ์
-            </p>
-          </div>
+      {/* ===================================================================== */}
+      {/* UNIFIED 3-ZONE STUDIO APPBAR (16pt = 16px base padding on all sides)  */}
+      {/* ===================================================================== */}
+      <header className="bg-white/95 backdrop-blur-xl border-b border-slate-200/75 px-4 pt-[calc(16px+env(safe-area-inset-top,0px))] pb-4 min-h-[calc(72px+env(safe-area-inset-top,0px))] grid grid-cols-[40px_minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:gap-4 shrink-0">
+        {/* Zone 1: Left Navigation Action ([←] Back) */}
+        <div className="justify-self-start flex items-center">
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-10 h-10 -ml-1.5 rounded-full text-slate-900 hover:bg-slate-100 flex items-center justify-center transition active:scale-95 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
+              title="กลับคลังสินค้า"
+              aria-label="ปิดหน้าต่างพิมพ์ฉลาก"
+            >
+              <ArrowLeft aria-hidden="true" className="w-[21px] h-[21px] stroke-[2.2]" />
+            </button>
+          )}
         </div>
 
-        <div className="col-span-2 flex flex-wrap items-center gap-2 lg:col-auto">
-          {/* 10mm Calibration Print Button */}
-          <button
-            type="button"
-            onClick={() => handlePrint(true)}
-            disabled={isGeneratingPrint}
-            className="min-h-[44px] px-3.5 py-2 text-xs font-semibold text-slate-700 bg-white border border-[#d8e1ea] rounded-xl hover:bg-slate-50 transition flex items-center gap-1.5 cursor-pointer"
-            title="พิมพ์แผ่นเทียบขนาด 10 มม. เพื่อตรวจว่าเครื่องพิมพ์พิมพ์ขนาด 100% ตรงตามจริงหรือไม่"
-          >
-            <Ruler className="w-4 h-4" style={{ color: 'var(--theme-ink, #4c1d95)' }} />
-            <span>เทียบขนาด 10 มม.</span>
-          </button>
+        {/* Zone 2: Center Title & Live Selection Summary */}
+        <div className="min-w-0 text-center">
+          <h2 className="text-sm sm:text-lg font-extrabold text-slate-900 tracking-[-0.02em] truncate">
+            พิมพ์สติกเกอร์ QR / Barcode
+          </h2>
+          <p className="text-[11px] sm:text-xs text-slate-500 truncate tabular-nums">
+            เลือก {selectedCodes.size} รายการ · รวม {totalLabelsCount} ดวง
+          </p>
+        </div>
 
-          {/* Main Print Button with Theme Accents */}
+        {/* Zone 3: Right Primary Action */}
+        <div className="justify-self-end flex items-center gap-2 shrink-0">
           <button
             type="button"
+            disabled={isPrintDisabled}
             onClick={() => handlePrint(false)}
-            disabled={isGeneratingPrint || totalLabelsCount === 0 || dimensionCheck.blocked || !sheetLayout.valid || isExcessive}
-            style={{
-              backgroundColor:
-                isGeneratingPrint || totalLabelsCount === 0 || dimensionCheck.blocked || !sheetLayout.valid || isExcessive
-                  ? undefined
-                  : 'var(--theme-main, #8b5cf6)',
-              color: 'var(--theme-on-main, #ffffff)',
-              boxShadow: '0 8px 16px -2px var(--theme-shadow, rgba(139, 92, 246, 0.35))'
-            }}
-            className="min-h-[44px] px-3 sm:px-5 py-2 text-sm font-semibold disabled:bg-slate-300 disabled:cursor-not-allowed rounded-xl shadow-sm transition flex flex-1 lg:flex-none items-center justify-center gap-2 cursor-pointer active:scale-95"
+            className={`h-10 px-3.5 sm:px-4 rounded-full text-xs sm:text-sm font-bold transition flex items-center gap-1.5 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600 ${
+              isPrintDisabled
+                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                : 'bg-violet-600 hover:bg-violet-700 text-white active:scale-95 cursor-pointer'
+            }`}
           >
-            <Printer className="w-4 h-4" />
-            {isGeneratingPrint
-              ? 'กำลังเตรียมพิมพ์...'
-              : `พิมพ์ฉลาก (${totalLabelsCount} ดวง)`}
-          </button>
-
-          {/* Close Workspace Button */}
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="ปิดหน้าต่างพิมพ์ฉลาก"
-            className="absolute top-[max(0.5rem,env(safe-area-inset-top))] right-3 lg:static min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition ml-1 cursor-pointer"
-          >
-            <X className="w-5 h-5" />
+            <Printer aria-hidden="true" className="w-4 h-4 shrink-0" />
+            <span>{isGeneratingPrint ? 'กำลังเตรียมพิมพ์...' : `พิมพ์ฉลาก (${totalLabelsCount} ดวง)`}</span>
           </button>
         </div>
       </header>
 
-      {/* Main Content Workspace (Responsive Split Columns: Stacks on mobile, Side-by-side on desktop) */}
-      <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden pb-[env(safe-area-inset-bottom)]">
-        {/* Left Column: Preset, Options & Unit Selection Table */}
-        <section className="shrink-0 lg:flex-1 flex flex-col border-b lg:border-b-0 lg:border-r border-[#e0e6ee] bg-white lg:overflow-y-auto min-h-0 min-w-0">
-          {/* Preset & Mode Selection Tabs */}
-          <div className="p-4 border-b border-[#e4eaf1] bg-slate-50/50 space-y-3 shrink-0">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
-                <Sliders className="w-3.5 h-3.5" style={{ color: 'var(--theme-ink, #4c1d95)' }} />
-                รูปแบบและขนาดฉลาก
-              </span>
-              <div className="flex items-center gap-1 bg-slate-200/70 p-0.5 rounded-xl text-xs font-medium">
-                <button
-                  type="button"
-                  onClick={() => setPrintMode(PRINT_MODES.SHEET_A4)}
-                  style={
-                    printMode === PRINT_MODES.SHEET_A4
-                      ? { color: 'var(--theme-ink, #4c1d95)' }
-                      : {}
-                  }
-                  className={`min-h-[44px] px-3.5 py-1 rounded-lg transition cursor-pointer ${
-                    printMode === PRINT_MODES.SHEET_A4
-                      ? 'bg-white shadow-xs font-bold'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  สติ๊กเกอร์แผ่น A4
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPrintMode(PRINT_MODES.ROLL)}
-                  style={
-                    printMode === PRINT_MODES.ROLL
-                      ? { color: 'var(--theme-ink, #4c1d95)' }
-                      : {}
-                  }
-                  className={`min-h-[44px] px-3.5 py-1 rounded-lg transition cursor-pointer ${
-                    printMode === PRINT_MODES.ROLL
-                      ? 'bg-white shadow-xs font-bold'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  เครื่องพิมพ์ม้วน (Roll)
-                </button>
-              </div>
-            </div>
-
-            {/* Presets Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              {/* Scissor Preset */}
+      {/* ===================================================================== */}
+      {/* MAIN 2-STEP WORKSPACE (16pt = p-4 / gap-4)                            */}
+      {/* ===================================================================== */}
+      <div className="flex-1 overflow-y-auto lg:overflow-hidden flex flex-col lg:flex-row">
+        {/* LEFT PANEL: เลือกของที่จะติดสติกเกอร์ */}
+        <section className="flex-1 lg:overflow-y-auto p-4 space-y-4">
+          {/* Source Switcher (Serialized Units vs Material Box Codes) */}
+          {boxCatalogUnits.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setSelectedPresetKey('scissor')}
-                style={
-                  selectedPresetKey === 'scissor'
-                    ? {
-                        borderColor: 'var(--theme-main, #8b5cf6)',
-                        backgroundColor: 'var(--theme-light, #f5f3ff)',
-                        boxShadow: '0 0 0 1px var(--theme-main, #8b5cf6)'
-                      }
-                    : {}
-                }
-                className={`p-3 rounded-xl border text-left transition cursor-pointer ${
-                  selectedPresetKey === 'scissor'
-                    ? ''
-                    : 'border-slate-200 hover:border-slate-300 bg-white'
+                onClick={() => setActiveSource('units')}
+                className={`h-10 px-4 rounded-xl text-xs sm:text-sm font-bold border transition flex items-center gap-2 cursor-pointer tabular-nums ${
+                  activeSource === 'units'
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
                 }`}
               >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-bold text-slate-800">
-                    {LABEL_PRESETS.scissor.name}
-                  </span>
-                  <span
-                    className="text-xs font-bold px-1.5 py-0.5 rounded"
-                    style={{
-                      backgroundColor: 'var(--theme-light, #f5f3ff)',
-                      color: 'var(--theme-ink, #4c1d95)'
-                    }}
-                  >
-                    18 × 24 มม.
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500">สำหรับด้ามกรรไกร / คีม (ขนาดทดลอง)</p>
+                <Wrench className="w-4 h-4 shrink-0" />
+                <span>อุปกรณ์รายชิ้น ({enrichedUnits.length})</span>
               </button>
-
-              {/* Normal Preset */}
               <button
                 type="button"
-                onClick={() => setSelectedPresetKey('normal')}
-                style={
-                  selectedPresetKey === 'normal'
-                    ? {
-                        borderColor: 'var(--theme-main, #8b5cf6)',
-                        backgroundColor: 'var(--theme-light, #f5f3ff)',
-                        boxShadow: '0 0 0 1px var(--theme-main, #8b5cf6)'
-                      }
-                    : {}
-                }
-                className={`p-3 rounded-xl border text-left transition cursor-pointer ${
-                  selectedPresetKey === 'normal'
-                    ? ''
-                    : 'border-slate-200 hover:border-slate-300 bg-white'
+                onClick={() => setActiveSource('boxes')}
+                className={`h-10 px-4 rounded-xl text-xs sm:text-sm font-bold border transition flex items-center gap-2 cursor-pointer tabular-nums ${
+                  activeSource === 'boxes'
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
                 }`}
               >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-bold text-slate-800">
-                    {LABEL_PRESETS.normal.name}
-                  </span>
-                  <span className="text-xs font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">
-                    30 × 40 มม.
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500">สว่าน, แท่นตัดเทป, กล่องเครื่องมือ</p>
-              </button>
-
-              {/* Custom Preset */}
-              <button
-                type="button"
-                onClick={() => setSelectedPresetKey('custom')}
-                style={
-                  selectedPresetKey === 'custom'
-                    ? {
-                        borderColor: 'var(--theme-main, #8b5cf6)',
-                        backgroundColor: 'var(--theme-light, #f5f3ff)',
-                        boxShadow: '0 0 0 1px var(--theme-main, #8b5cf6)'
-                      }
-                    : {}
-                }
-                className={`p-3 rounded-xl border text-left transition cursor-pointer ${
-                  selectedPresetKey === 'custom'
-                    ? ''
-                    : 'border-slate-200 hover:border-slate-300 bg-white'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-bold text-slate-800">กำหนดขนาดเอง</span>
-                  <span className="text-xs font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">
-                    {customWidthMm} × {customHeightMm} มม.
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500">ระบุความกว้างและความสูงอิสระ</p>
+                <Package className="w-4 h-4 shrink-0" />
+                <span>ป้ายติดกล่องวัสดุ ({boxCatalogUnits.length})</span>
               </button>
             </div>
+          )}
 
-            <label className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-700">
-              รูปแบบรหัส
-              <select aria-label="รูปแบบรหัส" value={labelFormat} onChange={(e) => {
-                setLabelFormat(e.target.value);
-                if (e.target.value === LABEL_FORMATS.BARCODE) setSelectedPresetKey('handle');
-                else if (selectedPresetKey === 'handle') setSelectedPresetKey('normal');
-              }} className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-3">
-                <option value={LABEL_FORMATS.QR}>QR Code</option>
-                <option value={LABEL_FORMATS.BARCODE}>บาร์โค้ดแนวนอน (Code 128)</option>
-              </select>
-            </label>
-            <button type="button" onClick={() => setSelectedPresetKey('handle')} aria-pressed={selectedPresetKey === 'handle'} className="min-h-[44px] rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-700">
-              ด้ามเครื่องมือแนวยาว 50 × 15 มม.
-            </button>
-            {/* Custom Inputs */}
-            {selectedPresetKey === 'custom' && (
-              <div className="flex flex-wrap items-center gap-3 pt-1 text-sm">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-slate-600 font-medium">กว้าง (มม.):</span>
-                  <input
-                    type="number"
-                    min="12"
-                    max="200"
-                    value={customWidthMm}
-                    onChange={(e) => setCustomWidthMm(Number(e.target.value))}
-                    className="w-16 px-2 py-1 border border-slate-300 rounded text-center text-sm font-semibold"
-                  />
-                </div>
-                <span className="text-slate-400">×</span>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-slate-600 font-medium">สูง (มม.):</span>
-                  <input
-                    type="number"
-                    min="14"
-                    max="200"
-                    value={customHeightMm}
-                    onChange={(e) => setCustomHeightMm(Number(e.target.value))}
-                    className="w-16 px-2 py-1 border border-slate-300 rounded text-center text-sm font-semibold"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* A4 Sheet Start Offset Controls */}
-            {printMode === PRINT_MODES.SHEET_A4 && (
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-200/60 text-xs">
-                <div className="flex flex-wrap items-center gap-2 min-w-0">
-                  <span className="text-slate-600 font-medium">
-                    ข้ามฉลากที่ลอกไปแล้ว (เริ่มพิมพ์ช่องที่):
-                  </span>
-                  <select
-                    value={sheetParams.startOffset}
-                    onChange={(e) =>
-                      setSheetParams((prev) => ({
-                        ...prev,
-                        startOffset: Math.floor(Number(e.target.value)) || 0
-                      }))
-                    }
-                    className="border border-slate-300 rounded px-2 py-1 bg-white font-semibold min-h-[44px]"
-                  >
-                    {Array.from({ length: Math.min(30, sheetLayout.labelsPerPage || 20) }).map(
-                      (_, i) => (
-                        <option key={i} value={i}>
-                          {i === 0 ? 'ตำแหน่งที่ 1 (เริ่มจากบนซ้าย)' : `เว้นว่าง ${i} ดวงแรก`}
-                        </option>
-                      )
-                    )}
-                  </select>
-                </div>
-                <span className="text-slate-500">
-                  {sheetLayout.labelsPerPage} ดวง/หน้า · ต้องการพิมพ์{' '}
-                  <strong className="text-slate-800">{sheetLayout.totalPages}</strong> หน้า A4
-                </span>
-              </div>
-            )}
+          {/* Step 1 Heading + Search + Bulk Select */}
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-extrabold text-slate-900">
+              1. เลือกรหัสที่ต้องการพิมพ์ ({selectedCodes.size} รายการ)
+            </h3>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {activeSource === 'units' && onQuickCreateUnit && toolItems.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowQuickCreate((v) => !v)}
+                  className={`h-9 px-3 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 cursor-pointer ${
+                    showQuickCreate
+                      ? 'bg-violet-600 text-white border-violet-600'
+                      : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-200'
+                  }`}
+                >
+                  <Plus className="w-3.5 h-3.5 shrink-0" />
+                  <span>สร้างรหัสใหม่ด่วน</span>
+                </button>
+              )}
+              {onAddUnitRequest && activeSourceUnits.length > 0 && !onQuickCreateUnit && (
+                <button
+                  type="button"
+                  onClick={onAddUnitRequest}
+                  className="h-9 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 shrink-0" />
+                  <span>เพิ่มรหัสใหม่</span>
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Filter Bar */}
-          <div className="p-3 border-b border-[#e4eaf1] flex flex-wrap items-center gap-2 bg-white shrink-0">
-            {/* Search Input */}
-            <div className="flex-1 min-w-[180px] relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="ค้นหารหัส, ชื่อเครื่องมือ หรือสี..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-[var(--theme-main)] min-h-[44px]"
-              />
-            </div>
-
-            {/* Category Filter */}
-            <select
-              value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
-              aria-label="กรองตามหมวดหมู่"
-              className="text-xs text-slate-700 border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white min-h-[44px]"
+          {/* Collapsible 1-Tap Quick Code Generator (only visible when toggled open) */}
+          {showQuickCreate && activeSource === 'units' && onQuickCreateUnit && toolItems.length > 0 && (
+            <form
+              onSubmit={handleQuickGenerateUnit}
+              className="bg-white border border-violet-200 rounded-2xl p-3.5 flex flex-col md:flex-row md:items-center gap-2.5 shadow-sm"
             >
-              <option value="ALL">ทุกหมวดหมู่</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-
-            {/* Color Filter */}
-            {availableColors.length > 0 && (
               <select
-                value={filterColor}
-                onChange={(e) => setFilterColor(e.target.value)}
-                aria-label="กรองตามสี"
-                className="text-xs text-slate-700 border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white min-h-[44px]"
+                value={quickToolId}
+                onChange={(e) => setQuickToolId(e.target.value)}
+                aria-label="เลือกอุปกรณ์เพื่อสร้างรหัส"
+                className="h-10 px-3 rounded-xl bg-slate-50 border border-slate-200 text-xs sm:text-sm font-semibold text-slate-900 focus:outline-none focus:border-violet-500"
               >
-                <option value="ALL">ทุกสี</option>
-                {availableColors.map((color) => (
-                  <option key={color} value={color}>
-                    {color}
+                {toolItems.map((it) => (
+                  <option key={it.id} value={it.id}>
+                    {it.name}
                   </option>
                 ))}
               </select>
-            )}
-
-            {/* Status Filter */}
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              aria-label="กรองตามสถานะ"
-              className="text-xs text-slate-700 border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white min-h-[44px]"
-            >
-              <option value="ALL">ทุกสถานะ</option>
-              <option value="AVAILABLE">พร้อมใช้</option>
-              <option value="BORROWED">ยืมอยู่</option>
-              <option value="BROKEN">ชำรุด</option>
-              <option value="LOST">สูญหาย</option>
-            </select>
-          </div>
-
-          {/* Batch Actions Bar */}
-          <div className="px-3 py-2 border-b border-[#e4eaf1] bg-slate-50/70 flex flex-wrap items-center justify-between gap-2 text-sm shrink-0">
-            <div className="flex flex-wrap items-center gap-1">
-              <button
-                type="button"
-                onClick={selectAllFiltered}
-                className="text-slate-700 font-semibold flex items-center gap-1.5 min-h-[44px] px-2 rounded hover:bg-slate-200/50 cursor-pointer"
-              >
-                <CheckSquare className="w-3.5 h-3.5" style={{ color: 'var(--theme-ink, #4c1d95)' }} />
-                <span>เลือกที่แสดงทั้งหมด ({filteredUnits.length})</span>
-              </button>
-              <span className="text-slate-300">|</span>
-              <button
-                type="button"
-                onClick={deselectAll}
-                className="text-slate-500 hover:text-rose-600 font-medium min-h-[44px] px-2 rounded hover:bg-slate-200/50 cursor-pointer"
-              >
-                ล้างการเลือก
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-slate-500 hidden sm:inline">ตั้งจำนวนพิมพ์ทั้งหมด:</span>
-              <button
-                type="button"
-                onClick={() => setAllCopies(1)}
-                className="px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-100 font-medium cursor-pointer"
-              >
-                1
-              </button>
-              <button
-                type="button"
-                onClick={() => setAllCopies(2)}
-                className="px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-100 font-medium cursor-pointer"
-              >
-                2
-              </button>
-              <button
-                type="button"
-                onClick={() => setAllCopies(3)}
-                className="px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-100 font-medium cursor-pointer"
-              >
-                3
-              </button>
-            </div>
-          </div>
-
-          {/* Unit List Table */}
-          <div className="shrink-0 overflow-x-auto lg:min-h-[200px]">
-            {filteredUnits.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-sm">
-                {enrichedUnits.length === 0 ? (
-                  <div className="space-y-3 text-sm">
-                    <p className="font-semibold text-slate-700">ยังไม่มีรหัสประจำชิ้นสำหรับพิมพ์ฉลาก</p>
-                    <p>จำนวนคงคลังรวมยังใช้พิมพ์ฉลากรายชิ้นไม่ได้ กรุณาเพิ่มครุภัณฑ์รายชิ้นพร้อมรหัสก่อน</p>
-                    {onAddUnitRequest && <button type="button" onClick={onAddUnitRequest} className="min-h-[44px] rounded-xl px-4 py-2 font-semibold" style={{ backgroundColor: 'var(--theme-main)', color: 'var(--theme-on-main, #fff)' }}>เพิ่มครุภัณฑ์รายชิ้น</button>}
-                  </div>
-                ) : 'ไม่พบรายการครุภัณฑ์ตรงตามตัวกรอง'}
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <input
+                  type="text"
+                  value={quickUnitCode}
+                  onChange={(e) => setQuickUnitCode(e.target.value.toUpperCase())}
+                  placeholder="ระบุรหัสสั้นๆ เช่น SC-01, ITEM0001"
+                  className="flex-1 min-w-0 h-10 px-3 bg-slate-50 focus:bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-900 placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
+                />
+                <button
+                  type="button"
+                  onClick={suggestNextCodeForTool}
+                  className="h-10 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 transition cursor-pointer shrink-0"
+                >
+                  รันอัตโนมัติ
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingQuickUnit}
+                  className="h-10 px-4 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-xs font-bold transition cursor-pointer shrink-0"
+                >
+                  {isCreatingQuickUnit ? 'กำลังสร้าง...' : 'บันทึก'}
+                </button>
               </div>
-            ) : (
-              <table className="w-full min-w-[600px] text-left border-collapse text-sm">
-                <thead className="sticky top-0 bg-slate-100/90 backdrop-blur-xs text-slate-600 font-semibold border-b border-slate-200 z-10">
-                  <tr>
-                    <th className="py-2 px-3 w-10 text-center">เลือก</th>
-                    <th className="py-2 px-3">รหัสครุภัณฑ์</th>
-                    <th className="py-2 px-3">รายการ / หมวด</th>
-                    <th className="py-2 px-3">สี / ขนาด</th>
-                    <th className="py-2 px-3 text-center">สถานะ</th>
-                    <th className="py-2 px-3 w-24 text-center">จำนวนชุด</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredUnits.map((u) => {
-                    const isSelected = selectedCodes.has(u.unit_code);
-                    const copies = copiesPerUnit[u.unit_code] ?? 1;
+            </form>
+          )}
 
-                    return (
-                      <tr
-                        key={u.unit_code}
-                        onClick={() => toggleUnit(u.unit_code)}
-                        style={
+          {/* Search + Bulk Select */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="relative flex-1 min-w-0">
+              <Search className="w-4 h-4 text-slate-500 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="ค้นหารหัส, ชื่อเครื่องมือ หรือสี..."
+                className="w-full h-11 pl-11 pr-9 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-900 placeholder:text-slate-500 focus:outline-none focus:border-violet-500 transition"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-800 rounded-lg cursor-pointer"
+                  aria-label="ล้างคำค้นหา"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {filteredUnits.length > 0 && (
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={selectAllFiltered}
+                  className="h-11 px-3.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 transition cursor-pointer"
+                >
+                  เลือกทั้งหมด
+                </button>
+                {selectedCodes.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={deselectAll}
+                    className="h-11 px-3.5 rounded-xl bg-white hover:bg-rose-50 border border-slate-200 text-xs font-bold text-slate-700 hover:text-rose-700 transition cursor-pointer"
+                  >
+                    ล้างที่เลือก
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Printable Sticker Card Grid or Empty State */}
+          {activeSourceUnits.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-4">
+              <div className="w-12 h-12 rounded-2xl bg-violet-50 text-violet-700 flex items-center justify-center mx-auto">
+                <QrCode className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900">
+                  ยังไม่มีรหัสประจำชิ้นสำหรับพิมพ์ฉลาก
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-600 max-w-md mx-auto">
+                  เพิ่มรหัสให้เครื่องมือแต่ละชิ้นก่อน เพื่อให้สแกนหยิบและคืนได้แม่นยำโดยไม่ปนกัน
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                {onAddUnitRequest && (
+                  <button
+                    type="button"
+                    onClick={onAddUnitRequest}
+                    className="h-11 px-5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold transition inline-flex items-center gap-2 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>เพิ่มครุภัณฑ์รายชิ้น</span>
+                  </button>
+                )}
+                {boxCatalogUnits.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveSource('boxes')}
+                    className="h-11 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs sm:text-sm font-bold transition inline-flex items-center gap-2 cursor-pointer"
+                  >
+                    <Package className="w-4 h-4" />
+                    <span>พิมพ์ป้ายติดกล่องวัสดุแทน ({boxCatalogUnits.length})</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : filteredUnits.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-sm font-semibold text-slate-600">
+              ไม่พบรหัสที่ตรงกับคำค้นหา "{searchQuery}"
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+              {filteredUnits.map((u) => {
+                const isSelected = selectedCodes.has(u.unit_code);
+                const copies = copiesPerUnit[u.unit_code] ?? 1;
+
+                return (
+                  <div
+                    key={u.unit_code}
+                    onClick={() => toggleUnit(u.unit_code)}
+                    className={`rounded-2xl border p-3.5 flex flex-col justify-between gap-2.5 transition select-none cursor-pointer ${
+                      isSelected
+                        ? 'bg-violet-50/50 border-violet-600 ring-2 ring-violet-600'
+                        : 'bg-white border-slate-200 hover:border-violet-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2.5">
+                      <div className="min-w-0">
+                        <div className="font-mono text-sm sm:text-base font-extrabold text-slate-900 truncate">
+                          {u.unit_code}
+                        </div>
+                        <div className="text-xs font-medium text-slate-600 truncate mt-0.5">
+                          {u.itemName}
+                          {u.color ? ` · สี${u.color}` : ''}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleUnit(u.unit_code);
+                        }}
+                        aria-label={`เลือก ${u.unit_code}`}
+                        aria-pressed={isSelected}
+                        className={`w-7 h-7 rounded-lg border flex items-center justify-center transition shrink-0 cursor-pointer ${
                           isSelected
-                            ? { backgroundColor: 'var(--theme-light, rgba(139, 92, 246, 0.08))' }
-                            : {}
-                        }
-                        className={`cursor-pointer transition ${
-                          isSelected ? '' : 'hover:bg-slate-50'
+                            ? 'bg-violet-600 border-violet-600 text-white'
+                            : 'bg-slate-50 border-slate-300 text-transparent hover:border-violet-400'
                         }`}
                       >
-                        <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        <Check className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {isSelected && (
+                      <div
+                        className="pt-2 border-t border-violet-200/80 flex items-center justify-between gap-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <span className="text-xs font-bold text-violet-950">จำนวนดวง</span>
+                        <div className="flex items-center gap-1 bg-white border border-violet-300 rounded-xl p-0.5">
                           <button
                             type="button"
-                            onClick={() => toggleUnit(u.unit_code)}
-                            aria-label={`เลือก ${u.unit_code}`}
-                            aria-pressed={isSelected}
-                            className="min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer"
-                            style={{ color: 'var(--theme-ink, #4c1d95)' }}
+                            onClick={() => handleCopyChange(u.unit_code, Math.max(1, Number(copies) - 1))}
+                            className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-800 cursor-pointer"
+                            aria-label={`ลดจำนวนพิมพ์ ${u.unit_code}`}
                           >
-                            {isSelected ? (
-                              <CheckSquare className="w-4 h-4" />
-                            ) : (
-                              <Square className="w-4 h-4 text-slate-300" />
-                            )}
+                            <Minus className="w-3.5 h-3.5" />
                           </button>
-                        </td>
-                        <td className="py-2 px-3 font-bold text-slate-800 tracking-wide">
-                          {u.unit_code}
-                        </td>
-                        <td className="py-2 px-3">
-                          <p className="font-semibold text-slate-800">{u.itemName}</p>
-                          <p className="text-[11px] text-slate-400">{u.categoryName}</p>
-                        </td>
-                        <td className="py-2 px-3 text-slate-600">
-                          {u.color || '-'} {u.size ? `(${u.size})` : ''}
-                        </td>
-                        <td className="py-2 px-3 text-center">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                              u.status === 'AVAILABLE'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : u.status === 'BORROWED'
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-rose-100 text-rose-800'
-                            }`}
-                          >
-                            {u.status === 'AVAILABLE'
-                              ? 'พร้อมใช้'
-                              : u.status === 'BORROWED'
-                              ? 'ยืมอยู่'
-                              : u.status}
-                          </span>
-                        </td>
-                        <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
                           <input
                             type="number"
                             min="1"
                             max="50"
                             value={copies}
-                            disabled={!isSelected}
                             onChange={(e) => handleCopyChange(u.unit_code, e.target.value)}
-                            className="w-14 px-1.5 py-1 text-center font-semibold border border-slate-300 rounded disabled:bg-slate-100 disabled:text-slate-400 min-h-[44px]"
+                            aria-label={`จำนวนดวงของ ${u.unit_code}`}
+                            className="w-9 text-center text-xs font-extrabold text-violet-950 tabular-nums focus:outline-none"
                           />
-                        </td>
-                      </tr>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyChange(u.unit_code, Math.min(50, Number(copies) + 1))}
+                            className="w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-800 cursor-pointer"
+                            aria-label={`เพิ่มจำนวนพิมพ์ ${u.unit_code}`}
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* RIGHT PANEL: 2. เลือกแบบ ขนาด และดูตัวอย่างสติกเกอร์จริง */}
+        <aside className="w-full lg:w-[400px] shrink-0 bg-white border-t lg:border-t-0 lg:border-l border-slate-200 lg:overflow-y-auto p-4 space-y-4">
+          {/* Accessible combobox kept in sync for keyboard/screen-reader & automated contract */}
+          <select
+            aria-label="รูปแบบรหัส"
+            value={labelFormat}
+            onChange={(e) => selectFormatMode(e.target.value)}
+            className="sr-only"
+          >
+            <option value={LABEL_FORMATS.QR}>QR Code</option>
+            <option value={LABEL_FORMATS.BARCODE}>Code 128 Barcode</option>
+          </select>
+
+          {/* Step 2A: 2-Tab Format Switcher (QR Code vs Barcode) */}
+          <div className="space-y-2">
+            <h3 className="text-sm font-extrabold text-slate-900">2. เลือกแบบและขนาดสติกเกอร์</h3>
+            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-2xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setLabelFormat(LABEL_FORMATS.QR);
+                  if (!['micro_qr', 'scissor', 'normal', 'custom'].includes(selectedPresetKey)) {
+                    setSelectedPresetKey('normal');
+                  }
+                }}
+                className={`h-10 px-3 rounded-xl text-xs sm:text-sm font-extrabold transition flex items-center justify-center gap-2 cursor-pointer ${
+                  labelFormat === LABEL_FORMATS.QR
+                    ? 'bg-white text-violet-700 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <QrCode className="w-4 h-4 shrink-0" />
+                <span>QR Code</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setLabelFormat(LABEL_FORMATS.BARCODE);
+                  if (!['micro_barcode', 'small_barcode', 'handle', 'custom'].includes(selectedPresetKey)) {
+                    setSelectedPresetKey('micro_barcode');
+                  }
+                }}
+                className={`h-10 px-3 rounded-xl text-xs sm:text-sm font-extrabold transition flex items-center justify-center gap-2 cursor-pointer ${
+                  labelFormat === LABEL_FORMATS.BARCODE
+                    ? 'bg-white text-violet-700 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Barcode className="w-4 h-4 shrink-0" />
+                <span>Barcode แท่ง</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Step 2B: Visible 1-Tap Size Presets (Down to 5mm Micro!) */}
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              {(labelFormat === LABEL_FORMATS.QR
+                ? [
+                    { key: 'micro_qr', title: 'จิ๋วติดกรรไกร', sub: 'รูป QR 5×5 มม.' },
+                    { key: 'scissor', title: 'เล็ก', sub: '18 × 24 มม.' },
+                    { key: 'normal', title: 'มาตรฐาน', sub: '30 × 40 มม.' },
+                    { key: 'custom', title: 'กำหนดขนาดเอง', sub: 'ตั้งแต่ 5 มม.' }
+                  ]
+                : [
+                    { key: 'micro_barcode', title: 'จิ๋วติดกรรไกร', sub: '15 × 5 มม.' },
+                    { key: 'small_barcode', title: 'เล็กติดด้าม', sub: '30 × 10 มม.' },
+                    { key: 'handle', title: 'มาตรฐาน', sub: '50 × 15 มม.' },
+                    { key: 'custom', title: 'กำหนดขนาดเอง', sub: 'ตั้งแต่ 5 มม.' }
+                  ]
+              ).map((opt) => {
+                const active = selectedPresetKey === opt.key;
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => setSelectedPresetKey(opt.key)}
+                    className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                      active
+                        ? 'bg-violet-50/80 border-violet-600 ring-2 ring-violet-600'
+                        : 'bg-white border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="text-xs font-extrabold text-slate-900">{opt.title}</div>
+                    <div className="text-[11px] font-semibold text-slate-500 tabular-nums mt-0.5">
+                      {opt.sub}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {selectedPresetKey === 'custom' && (
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    กว้าง (มม. · ขั้นต่ำ 5)
+                  </label>
+                  <input
+                    type="number"
+                    min="5"
+                    max="210"
+                    step="0.5"
+                    value={customWidthMm}
+                    onChange={(e) => setCustomWidthMm(e.target.value)}
+                    className="w-full h-9 px-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold tabular-nums focus:outline-none focus:border-violet-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    สูง (มม. · ขั้นต่ำ 5)
+                  </label>
+                  <input
+                    type="number"
+                    min="5"
+                    max="297"
+                    step="0.5"
+                    value={customHeightMm}
+                    onChange={(e) => setCustomHeightMm(e.target.value)}
+                    className="w-full h-9 px-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold tabular-nums focus:outline-none focus:border-violet-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {labelFormat === LABEL_FORMATS.BARCODE && (
+              <div className="pt-1 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-700">ความบางเส้นบาร์โค้ด</span>
+                  <span className="text-[10px] font-semibold text-slate-500">ลดเส้นบวมเวลาพิมพ์ขนาดเล็ก</span>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5" role="group" aria-label="ความบางเส้นบาร์โค้ด">
+                  {[
+                    { key: BARCODE_DENSITIES.ULTRA, label: 'บางพิเศษ' },
+                    { key: BARCODE_DENSITIES.FINE, label: 'เส้นบางคมชัด' },
+                    { key: BARCODE_DENSITIES.NORMAL, label: 'มาตรฐาน' }
+                  ].map((opt) => {
+                    const active = barDensity === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => setBarDensity(opt.key)}
+                        className={`h-8 px-2 rounded-xl border text-[11px] font-bold transition cursor-pointer ${
+                          active
+                            ? 'bg-violet-600 text-white border-violet-600'
+                            : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
                     );
                   })}
-                </tbody>
-              </table>
+                </div>
+              </div>
             )}
           </div>
 
-          {/* Footer Selection Summary */}
-          <footer className="px-4 py-2.5 border-t border-[#e4eaf1] bg-slate-50 flex items-center justify-between text-xs text-slate-600 shrink-0">
-            <span>
-              เลือกแล้ว{' '}
-              <strong className="font-bold" style={{ color: 'var(--theme-ink, #4c1d95)' }}>
-                {selectedCodes.size}
-              </strong>{' '}
-              รายการ (รวมทั้งสิ้น <strong className="text-slate-800">{totalLabelsCount}</strong> ดวง)
-            </span>
-            <span className="text-slate-400 hidden sm:inline">
-              * ไม่เลือกทั้งคลังโดยอัตโนมัติ เพื่อป้องกันการพิมพ์เปลืองกระดาษ
-            </span>
-          </footer>
-        </section>
+          {/* Retail-Style Tight Live Sticker Preview (ONLY QR/Bars + Tiny Flush Code, NO Item Name!) */}
+          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-slate-800">ตัวอย่างป้ายจริง (พิมพ์เฉพาะรหัสชิดใต้ภาพ)</span>
+              <span className="font-bold text-violet-700 tabular-nums">
+                {activePreset.widthMm} × {activePreset.heightMm} มม.
+              </span>
+            </div>
 
-        {/* Right Column: Live Scale Preview & Calibration Guidance */}
-        <aside className="w-full lg:w-[360px] xl:w-[420px] bg-[#f8fafc] flex flex-col lg:overflow-y-auto shrink-0 min-w-0 p-3 sm:p-5 space-y-4 border-t lg:border-t-0 lg:border-l border-[#e0e6ee]">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-              <FileText className="w-4 h-4" style={{ color: 'var(--theme-ink, #4c1d95)' }} />
-              ตัวอย่างฉลาก
-            </h2>
-            <span className="text-xs text-slate-500 font-medium">
-              ขนาด {activePreset.widthMm} × {activePreset.heightMm} มม.
-            </span>
-          </div>
+            {dimensionCheck.blocked && (
+              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-2 text-xs font-semibold text-rose-900">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>{dimensionCheck.error}</span>
+              </div>
+            )}
 
-          {/* Live Label Card Preview */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm flex flex-col items-center justify-center">
-            {/* Visual Label Box in scale */}
-            <div
-              className="border-2 border-dashed border-slate-300 bg-white rounded flex flex-col items-center justify-center p-2 text-center transition-all shadow-xs"
-              style={{
-                width: `${Math.min(260, Math.max(90, activePreset.widthMm * 3.78))}px`,
-                height: `${Math.min(320, Math.max(110, activePreset.heightMm * 3.78))}px`
-              }}
-            >
-              {previewSvg ? (
+            {!dimensionCheck.blocked && dimensionCheck.warning && (
+              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-2 text-[11px] font-semibold text-amber-900">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                <span>{dimensionCheck.warning}</span>
+              </div>
+            )}
+
+            <div className="min-h-[116px] flex items-center justify-center py-2">
+              {previewSampleUnit && !dimensionCheck.blocked ? (
                 <div
-                  className="w-full flex-1 flex items-center justify-center overflow-hidden min-h-0 [&_svg]:max-w-full [&_svg]:max-h-full"
-                  dangerouslySetInnerHTML={{ __html: previewSvg }}
-                />
-              ) : (
-                <div className="w-16 h-16 bg-slate-100 rounded flex items-center justify-center text-slate-300">
-                  {labelFormat === LABEL_FORMATS.QR ? 'QR' : 'Code 128'}
-                </div>
-              )}
-              <div className="mt-1 font-bold text-slate-900 tracking-wider text-xs truncate max-w-full">
-                {previewSampleUnit?.unit_code || 'ยังไม่มีรหัสประจำชิ้น'}
-              </div>
-              {activePreset.showItemName && previewSampleUnit && (
-                <div className="text-[10px] text-slate-500 truncate max-w-full leading-tight">
-                  {previewSampleUnit?.itemName}
-                  {previewSampleUnit.color ? ` · ${previewSampleUnit.color}` : ''}
-                </div>
-              )}
-            </div>
-            <p className="text-sm text-slate-600 mt-3 text-center">
-              ตัวอย่างบนจอปรับตามพื้นที่ ขนาดจริงขึ้นกับการตั้งค่าพิมพ์ 100% และแผ่นเทียบขนาด 10 มม.
-            </p>
-          </div>
-
-          {/* Excessive Limit Warning */}
-          {isExcessive && (
-            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold">จำนวนฉลากเกินขีดจำกัดสูงสุด</p>
-                <p className="mt-0.5">
-                  เลือกพิมพ์ทั้งหมด {totalLabelsCount} ดวง ซึ่งเกินขีดจำกัดสูงสุด {MAX_TOTAL_LABELS} ดวง
-                  กรุณาลดจำนวนชุดหรือแบ่งพิมพ์ทีละชุด
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Validation Warnings */}
-          {dimensionCheck.blocked && (
-            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold">ขนาดฉลากเล็กเกินไป</p>
-                <p className="mt-0.5">{dimensionCheck.error}</p>
-              </div>
-            </div>
-          )}
-
-          {!dimensionCheck.blocked && dimensionCheck.warning && (
-            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold">ข้อควรระวัง</p>
-                <p className="mt-0.5">{dimensionCheck.warning}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Technical Specs & Calibration Advice Box */}
-          <div className="bg-white rounded-xl border border-slate-200 p-4 text-xs text-slate-600 space-y-2.5">
-            <h3 className="font-bold text-slate-800 flex items-center gap-1.5">
-              <Ruler className="w-4 h-4" style={{ color: 'var(--theme-ink, #4c1d95)' }} />
-              คำแนะนำการพิมพ์และการตั้งค่า (สำคัญมาก)
-            </h3>
-            <div className="space-y-1.5 text-slate-600 leading-relaxed">
-              <p>
-                <strong>1. ตั้งค่า Scale เป็น 100%:</strong> ในหน้าต่างพิมพ์ของเบราว์เซอร์ ให้เลือก
-                ขนาดจริง (Actual size / 100%) เสมอ <u>ห้ามเลือก Fit to page</u> เพื่อให้ช่องไฟและขนาดฉลากตรงตามสติ๊กเกอร์จริง
-              </p>
-              <p>
-                <strong>2. ทดสอบเทียบขนาด:</strong> หากเริ่มใช้กระดาษสติ๊กเกอร์หรืองานติดตั้งใหม่ แนะนำกด{' '}
-                <button
-                  type="button"
-                  onClick={() => handlePrint(true)}
-                  className="font-bold underline cursor-pointer"
-                  style={{ color: 'var(--theme-ink, #4c1d95)' }}
+                  className="bg-white border border-dashed border-slate-400 rounded-md px-2 py-1.5 inline-flex flex-col items-center justify-center text-center shadow-xs overflow-hidden"
+                  style={{
+                    width:
+                      labelFormat === LABEL_FORMATS.BARCODE
+                        ? `${Math.min(230, Math.max(96, activePreset.widthMm * 4.5))}px`
+                        : undefined
+                  }}
                 >
-                  พิมพ์แผ่นเทียบขนาด 10 มม.
-                </button>{' '}
-                เพื่อนำไม้บรรทัดวัดตรวจสอบก่อนพิมพ์จริง
-              </p>
-              <p>
-                <strong>3. เครื่องพิมพ์สติ๊กเกอร์ม้วน:</strong> หากใช้เครื่องพิมพ์ฉลากความร้อน ให้เลือกโหมด{' '}
-                <span className="font-semibold text-slate-800">เครื่องพิมพ์ม้วน (Roll)</span>
-              </p>
+                  {previewSvg && (
+                    <div
+                      className={
+                        labelFormat === LABEL_FORMATS.QR
+                          ? `${
+                              activePreset.widthMm <= 10
+                                ? 'w-14 h-14'
+                                : activePreset.widthMm <= 20
+                                  ? 'w-20 h-20'
+                                  : 'w-24 h-24'
+                            } shrink-0 flex items-center justify-center leading-none [&_svg]:w-full [&_svg]:h-full [&_svg]:block`
+                          : 'w-full shrink-0 flex items-center justify-center leading-none [&_svg]:w-full [&_svg]:h-9 [&_svg]:block'
+                      }
+                      dangerouslySetInnerHTML={{ __html: previewSvg }}
+                    />
+                  )}
+                  <div
+                    className={`shrink-0 font-mono font-semibold text-black leading-none mt-1 tracking-tight truncate max-w-full ${
+                      activePreset.heightMm <= 10 || activePreset.widthMm <= 12
+                        ? 'text-[9px]'
+                        : 'text-[10px]'
+                    }`}
+                  >
+                    {previewSampleUnit.unit_code}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs text-slate-500 text-center">
+                  แตะเลือกรหัสฝั่งซ้ายเพื่อดูตัวอย่างสติกเกอร์ก่อนพิมพ์
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Step 3: Quick Copy Multiplier & Paper Mode */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-extrabold text-slate-900">จำนวนดวงต่อรหัส</h3>
+              <span className="text-[11px] text-slate-500">ตั้งพร้อมกันทุกรายการที่เลือก</span>
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {[1, 2, 3, 5].map((num) => (
+                <button
+                  key={num}
+                  type="button"
+                  disabled={selectedCodes.size === 0}
+                  onClick={() => setAllCopies(num)}
+                  className="h-9 rounded-xl bg-slate-50 hover:bg-violet-600 hover:text-white disabled:opacity-40 border border-slate-200 text-xs font-extrabold text-slate-800 transition cursor-pointer disabled:cursor-not-allowed tabular-nums"
+                >
+                  {num}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-extrabold text-slate-900">กระดาษเครื่องพิมพ์</h3>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setPrintMode(PRINT_MODES.SHEET_A4)}
+                className={`h-9 px-3 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                  printMode === PRINT_MODES.SHEET_A4
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                แผ่น A4
+              </button>
+              <button
+                type="button"
+                onClick={() => setPrintMode(PRINT_MODES.ROLL)}
+                className={`h-9 px-3 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                  printMode === PRINT_MODES.ROLL
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                ม้วนสติกเกอร์ (Roll)
+              </button>
+            </div>
+            {printMode === PRINT_MODES.SHEET_A4 && sheetLayout.valid && (
+              <p className="text-[11px] text-slate-600 tabular-nums">
+                เรียงอัตโนมัติ {sheetLayout.cols} × {sheetLayout.rows} ช่อง ({sheetLayout.cols * sheetLayout.rows} ดวง/แผ่น
+                {totalLabelsCount > 0 ? ` · ใช้ ${sheetLayout.totalPages} แผ่น` : ''})
+              </p>
+            )}
+          </div>
+
+          {/* Collapsible Printer Offset & Calibration Ruler */}
+          <details className="group rounded-2xl border border-slate-200 bg-white overflow-hidden">
+            <summary className="p-3 text-xs font-bold text-slate-700 flex items-center justify-between cursor-pointer select-none list-none hover:bg-slate-50">
+              <span>ตั้งค่าแผ่น A4 เดิม / พิมพ์ใบวัดขนาด</span>
+              <ChevronDown className="w-4 h-4 text-slate-500 transition-transform group-open:rotate-180" />
+            </summary>
+
+            <div className="p-3.5 pt-0 border-t border-slate-100 space-y-3 text-xs">
+              {printMode === PRINT_MODES.SHEET_A4 && (
+                <div className="pt-3 space-y-1.5">
+                  <label className="block font-bold text-slate-700">
+                    ข้ามช่องสติกเกอร์ที่ลอกใช้ไปแล้ว (แผ่น A4 เดิม)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="450"
+                    value={sheetParams.startOffset}
+                    onChange={(e) =>
+                      setSheetParams((prev) => ({
+                        ...prev,
+                        startOffset: Math.max(0, Math.floor(Number(e.target.value) || 0))
+                      }))
+                    }
+                    className="w-full h-9 px-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 tabular-nums"
+                  />
+                </div>
+              )}
+
+              <button
+                type="button"
+                disabled={isGeneratingPrint || !previewSampleUnit || dimensionCheck.blocked}
+                onClick={() => handlePrint(true)}
+                className="w-full h-9 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-800 font-bold flex items-center justify-center gap-2 transition cursor-pointer disabled:cursor-not-allowed mt-2"
+              >
+                <Ruler className="w-4 h-4" />
+                <span>พิมพ์แผ่นเทียบไม้บรรทัด 10 มม.</span>
+              </button>
+            </div>
+          </details>
         </aside>
       </div>
 
@@ -1162,6 +1326,8 @@ export default function QrLabelPrint({
           onClose={() => setToastMessage(null)}
         />
       )}
-    </div>, document.body
+    </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(dialogNode, document.body) : dialogNode;
 }

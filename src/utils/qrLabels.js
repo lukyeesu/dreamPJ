@@ -2,54 +2,118 @@ import QRCode from 'qrcode';
 import JsBarcode from 'jsbarcode';
 
 export const LABEL_FORMATS = Object.freeze({ QR: 'qr', BARCODE: 'code128' });
+export const BARCODE_DENSITIES = Object.freeze({
+  ULTRA: 'ultra',
+  FINE: 'fine',
+  NORMAL: 'normal'
+});
 
-// JsBarcode supplies the encoding/checksum; render its bits locally with a 10X quiet zone.
-export function getBarcodeSymbol(unitCode) {
+// JsBarcode supplies the encoding/checksum; render its bits locally with adaptive quiet zone.
+export function getBarcodeSymbol(unitCode, quietZoneModules = 10) {
   const decoded = decodeQrPayload(unitCode);
   if (!decoded.success || !decoded.isRawCode || decoded.unitCode !== unitCode) {
     throw new Error('บาร์โค้ดต้องใช้รหัสประจำชิ้น 1-64 ตัวอักษร A-Z, a-z, 0-9, ขีด, จุด หรือ /');
   }
+  const qz = Number.isFinite(Number(quietZoneModules)) && Number(quietZoneModules) >= 2 ? Math.floor(Number(quietZoneModules)) : 10;
   const encoded = {};
   JsBarcode(encoded, unitCode, { format: 'CODE128', displayValue: false });
   const data = encoded.encodings.map((part) => part.data).join('');
-  return { data, quietZoneModules: 10, totalModules: data.length + 20 };
+  return { data, quietZoneModules: qz, totalModules: data.length + qz * 2 };
+}
+
+function getBarcodeLayoutMetrics(widthMm, heightMm) {
+  const w = Number(widthMm);
+  const h = Number(heightMm);
+  const isCompactWidth = w <= 30;
+  const padXMm = isCompactWidth ? 0.8 : 3;
+  const quietZoneModules = isCompactWidth ? 3 : 10;
+  const minModuleMm = isCompactWidth ? 0.075 : 0.16;
+  const textReserveMm = h <= 6 ? 1.85 : h <= 9 ? 2.1 : h <= 15 ? 2.6 : 3.5;
+  const barHeightMm = Number((h - textReserveMm).toFixed(2));
+  return { w, h, padXMm, quietZoneModules, minModuleMm, textReserveMm, barHeightMm };
 }
 
 export function validateBarcodeDimensions({ widthMm, heightMm, unitCodes = [] }) {
-  const w = Number(widthMm);
-  const h = Number(heightMm);
+  const { w, h, padXMm, quietZoneModules, minModuleMm, barHeightMm } = getBarcodeLayoutMetrics(widthMm, heightMm);
   const result = { valid: false, blocked: true, error: null, warning: null, moduleSizeMm: 0 };
-  if (!Number.isFinite(w) || !Number.isFinite(h) || w < 10 || w > 210 || h < 10 || h > 297) {
-    return { ...result, error: 'ขนาดฉลากต้องอยู่ในช่วงกว้าง 10-210 และสูง 10-297 มม.' };
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w < 5 || w > 210 || h < 5 || h > 297) {
+    return { ...result, error: 'ขนาดฉลากต้องอยู่ในช่วงกว้าง 5-210 และสูง 5-297 มม.' };
   }
   try {
     let minModule = Infinity;
     for (const code of unitCodes) {
-      const symbol = getBarcodeSymbol(code);
-      const moduleMm = (w - 3) / symbol.totalModules;
+      const symbol = getBarcodeSymbol(code, quietZoneModules);
+      const moduleMm = (w - padXMm) / symbol.totalModules;
       minModule = Math.min(minModule, moduleMm);
-      if (moduleMm < 0.25) {
-        return { ...result, error: `รหัส ${code} ยาวเกินฉลาก ${w} มม. ต้องกว้างอย่างน้อย ${(symbol.totalModules * 0.25 + 3).toFixed(1)} มม. หรือเลือก QR`, moduleSizeMm: moduleMm };
+      if (moduleMm < minModuleMm) {
+        const neededW = (symbol.totalModules * minModuleMm + padXMm).toFixed(1);
+        return {
+          ...result,
+          error: `รหัส ${code} ยาวเกินฉลาก ${w} มม. ต้องกว้างอย่างน้อย ${neededW} มม. หรือใช้รหัสสั้นลง`,
+          moduleSizeMm: moduleMm
+        };
       }
     }
-    if (h - (h <= 25 ? 7.5 : 10) < 6) return { ...result, error: 'บาร์โค้ดต้องมีแถบสูงอย่างน้อย 6 มม. กรุณาเพิ่มความสูงฉลากเป็น 14 มม. ขึ้นไป' };
-    return { ...result, valid: true, blocked: false, moduleSizeMm: Number.isFinite(minModule) ? minModule : 0 };
+    if (barHeightMm < 2.8) {
+      return { ...result, error: 'บาร์โค้ดต้องมีความสูงฉลากอย่างน้อย 5 มม. เพื่อให้สแกนติด' };
+    }
+    const warning =
+      w <= 20 || h <= 7
+        ? `บาร์โค้ดขนาดจิ๋ว (${w}×${h} มม.) แนะนำให้ใช้เครื่องพิมพ์ความละเอียดสูง (300 DPI ขึ้นไป) และพิมพ์ทดสอบก่อนติดจริง`
+        : null;
+    return {
+      ...result,
+      valid: true,
+      blocked: false,
+      warning,
+      moduleSizeMm: Number.isFinite(minModule) ? minModule : 0
+    };
   } catch (error) {
     return { ...result, error: error.message };
   }
 }
 
-export function generateBarcodeSvgString(unitCode, { widthMm, heightMm }) {
+export function generateBarcodeSvgString(unitCode, { widthMm, heightMm, barDensity = BARCODE_DENSITIES.FINE }) {
   const check = validateBarcodeDimensions({ widthMm, heightMm, unitCodes: [unitCode] });
   if (check.blocked) throw new Error(check.error);
-  const { data, totalModules, quietZoneModules } = getBarcodeSymbol(unitCode);
-  const barHeightMm = Number(heightMm) - (Number(heightMm) <= 25 ? 7.5 : 10);
-  const viewHeight = barHeightMm / check.moduleSizeMm;
+  const { w, padXMm, quietZoneModules, barHeightMm } = getBarcodeLayoutMetrics(widthMm, heightMm);
+  const { data, totalModules } = getBarcodeSymbol(unitCode, quietZoneModules);
+  const svgWidthMm = Number((w - padXMm).toFixed(2));
+
+  const maxModuleMm =
+    barDensity === BARCODE_DENSITIES.ULTRA
+      ? w <= 20 ? 0.08 : w <= 35 ? 0.11 : 0.145
+      : barDensity === BARCODE_DENSITIES.NORMAL
+        ? w <= 20 ? 0.125 : w <= 35 ? 0.19 : 0.26
+        : w <= 20 ? 0.095 : w <= 35 ? 0.135 : 0.18;
+
+  const minViewModules = Math.ceil(svgWidthMm / maxModuleMm);
+  const effectiveTotalModules = Math.max(totalModules, minViewModules);
+  const effectiveModuleMm = svgWidthMm / effectiveTotalModules;
+  const viewHeight = Math.max(10, Number((barHeightMm / effectiveModuleMm).toFixed(2)));
+  const offsetX = Number(((effectiveTotalModules - data.length) / 2).toFixed(3));
+  const trim =
+    barDensity === BARCODE_DENSITIES.ULTRA
+      ? 0.16
+      : barDensity === BARCODE_DENSITIES.NORMAL
+        ? 0.04
+        : 0.12;
+
   const bars = [];
-  for (let i = 0; i < data.length; i++) {
-    if (data[i] === '1') bars.push(`<rect x="${i + quietZoneModules}" y="0" width="1" height="${viewHeight}"/>`);
+  let i = 0;
+  while (i < data.length) {
+    if (data[i] === '1') {
+      let run = 1;
+      while (i + run < data.length && data[i + run] === '1') run++;
+      const barW = Number(Math.max(0.55, run - trim).toFixed(3));
+      const barX = Number((offsetX + i + (run - barW) / 2).toFixed(3));
+      bars.push(`<rect x="${barX}" y="0" width="${barW}" height="${viewHeight}"/>`);
+      i += run;
+    } else {
+      i++;
+    }
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${Number(widthMm) - 3}mm" height="${barHeightMm}mm" viewBox="0 0 ${totalModules} ${viewHeight}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><g fill="#000">${bars.join('')}</g></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidthMm}mm" height="${barHeightMm}mm" viewBox="0 0 ${effectiveTotalModules} ${viewHeight}"><rect width="100%" height="100%" fill="#fff"/><g fill="#000">${bars.join('')}</g></svg>`;
 }
 
 /**
@@ -71,13 +135,19 @@ export const PRINT_MODES = Object.freeze({
 });
 
 export const LABEL_PRESETS = Object.freeze({
-  handle: {
-    id: 'handle', name: 'ด้ามเครื่องมือแนวยาว', widthMm: 50, heightMm: 15,
-    description: 'ฉลากแนวนอนสำหรับบาร์โค้ดบนด้ามเครื่องมือ', experimental: true, showItemName: false
+  micro_qr: {
+    id: 'micro_qr',
+    name: 'QR จิ๋วติดกรรไกร (QR 5×5 มม.)',
+    widthMm: 7,
+    heightMm: 8.5,
+    qrGraphicMm: 5,
+    description: 'รูป QR ขนาด 5×5 มม. พร้อมรหัสตัวเล็กชิดใต้ภาพสำหรับด้ามกรรไกร',
+    experimental: true,
+    showItemName: false
   },
   scissor: {
     id: 'scissor',
-    name: 'ด้ามกรรไกร (เล็ก)',
+    name: 'QR เล็ก (18×24 มม.)',
     widthMm: 18,
     heightMm: 24,
     description: 'สำหรับเครื่องมือขนาดเล็ก เช่น ด้ามกรรไกร (ขนาดทดลอง)',
@@ -86,21 +156,48 @@ export const LABEL_PRESETS = Object.freeze({
   },
   normal: {
     id: 'normal',
-    name: 'ปกติ (สว่าน / อุปกรณ์)',
+    name: 'QR มาตรฐาน (30×40 มม.)',
     widthMm: 30,
     heightMm: 40,
-    description: 'ขนาดมาตรฐาน อ่านง่าย ชัดเจนสำหรับเครื่องมือทั่วไป',
+    description: 'ขนาดมาตรฐาน อ่านง่าย ชัดเจนสำหรับอุปกรณ์และกล่องวัสดุ',
     experimental: false,
-    showItemName: true
+    showItemName: false
+  },
+  micro_barcode: {
+    id: 'micro_barcode',
+    name: 'บาร์โค้ดจิ๋วติดกรรไกร (15×5 มม.)',
+    widthMm: 15,
+    heightMm: 5,
+    description: 'ขนาดจิ๋ว 1.5×0.5 ซม. แปะด้ามกรรไกรไม่เสียพื้นที่จับ',
+    experimental: true,
+    showItemName: false
+  },
+  small_barcode: {
+    id: 'small_barcode',
+    name: 'บาร์โค้ดเล็ก (30×10 มม.)',
+    widthMm: 30,
+    heightMm: 10,
+    description: 'ฉลากแนวนอนกะทัดรัดสำหรับด้ามเครื่องมือ',
+    experimental: false,
+    showItemName: false
+  },
+  handle: {
+    id: 'handle',
+    name: 'บาร์โค้ดมาตรฐาน (50×15 มม.)',
+    widthMm: 50,
+    heightMm: 15,
+    description: 'ฉลากแนวนอนมาตรฐานสำหรับด้ามเครื่องมือและกล่อง',
+    experimental: false,
+    showItemName: false
   },
   custom: {
     id: 'custom',
     name: 'กำหนดขนาดเอง (มม.)',
-    widthMm: 35,
-    heightMm: 35,
-    description: 'กำหนดความกว้างและความสูงอิสระตามขนาดฉลากจริง',
+    widthMm: 20,
+    heightMm: 20,
+    description: 'กำหนดความกว้างและความสูงอิสระตั้งแต่ 5 มม. ขึ้นไป',
     experimental: false,
-    showItemName: true
+    showItemName: false
   }
 });
 
@@ -316,6 +413,7 @@ export async function generateQrSvgString(payload, options = {}) {
 export async function generateQrDataUrl(payload, options = {}) {
   const mergedOptions = {
     margin: DEFAULT_QUIET_ZONE_MODULES,
+    scale: 8,
     errorCorrectionLevel: 'M',
     color: {
       dark: '#000000',
@@ -336,6 +434,7 @@ export function validateLabelDimensions({
   heightMm,
   payload,
   payloads,
+  qrGraphicMm,
   errorCorrectionLevel = 'M'
 }) {
   const w = Number(widthMm);
@@ -356,12 +455,12 @@ export function validateLabelDimensions({
     };
   }
 
-  // Sensible mm range check (10mm to 300mm)
-  if (w < 10 || w > 300 || h < 10 || h > 300) {
+  // Sensible mm range check (5mm to 300mm; height >= 6mm to fit 5mm QR + tight code text)
+  if (w < 5 || w > 300 || h < 6 || h > 300) {
     return {
       valid: false,
       blocked: true,
-      error: `ขนาดฉลาก (${w}×${h} มม.) อยู่นอกช่วงขนาดที่รองรับ (10 - 300 มม.)`,
+      error: `ขนาดฉลาก (${w}×${h} มม.) อยู่นอกช่วงขนาดที่รองรับ (กว้าง 5-300 มม. สูง 6-300 มม.)`,
       warning: null,
       widthMm: w,
       heightMm: h,
@@ -409,30 +508,37 @@ export function validateLabelDimensions({
     }
   }
 
-  const totalModules = worstSymbolInfo.totalModules; // e.g. 21 + 8 = 29 for V1
-  const paddingMm = 1.5;
-  // Calculate text reservation space
-  const textReserveMm = h <= 25 ? 4.5 : 8.0;
+  const totalModules = worstSymbolInfo.totalModules;
+  const activeModules = worstSymbolInfo.moduleSize; // Rendered with margin: 0 inside padded sticker
+  const isMicro = w <= 12 || h <= 12;
+  const paddingMm = isMicro ? 0.5 : w <= 22 ? 1.0 : 1.5;
+  const textReserveMm = isMicro ? 1.5 : h <= 25 ? 2.5 : 4.0;
   const availableWidth = Math.max(0, w - 2 * paddingMm);
   const availableHeight = Math.max(0, h - 2 * paddingMm - textReserveMm);
-  const qrBoxMm = Math.min(availableWidth, availableHeight);
-  const moduleSizeMm = qrBoxMm > 0 ? qrBoxMm / totalModules : 0;
+  const maxBoxMm = Math.min(availableWidth, availableHeight);
+  const requestedQrMm = Number(qrGraphicMm);
+  const qrBoxMm =
+    Number.isFinite(requestedQrMm) && requestedQrMm > 0
+      ? Math.min(maxBoxMm, requestedQrMm)
+      : maxBoxMm;
+  const moduleSizeMm = qrBoxMm > 0 ? qrBoxMm / activeModules : 0;
 
   // Check code length against horizontal width for human legibility
   let codeLengthWarning = null;
-  if (w <= 20 && worstUnitCode.length > 14) {
+  if (w <= 10 && worstUnitCode.length > 10) {
+    codeLengthWarning = `รหัส "${worstUnitCode}" ยาว ${worstUnitCode.length} ตัวอักษร แนะนำให้ใช้รหัสสั้นไม่เกิน 8-10 ตัวสำหรับป้ายจิ๋ว`;
+  } else if (w <= 20 && worstUnitCode.length > 14) {
     codeLengthWarning = `รหัส "${worstUnitCode}" มีความยาว ${worstUnitCode.length} ตัวอักษร อาจยาวเกินความกว้างฉลาก ${w} มม.`;
   } else if (w <= 30 && worstUnitCode.length > 24) {
     codeLengthWarning = `รหัส "${worstUnitCode}" มีความยาว ${worstUnitCode.length} ตัวอักษร อาจยาวเกินความกว้างฉลาก ${w} มม.`;
   }
 
-  // Decision logic:
-  // Consumer thermal printers (203 dpi) have ~0.125mm per dot. Modules should be >= 0.25mm (2 dots).
-  if (w < 12 || h < 14 || qrBoxMm < 8 || moduleSizeMm < 0.25) {
+  // Minimum QR graphic 4.5mm and module >= 0.18mm (supports 5x5mm QR V1/V2 cleanly while blocking unreadable payloads)
+  if (qrBoxMm < 4.5 || moduleSizeMm < 0.18) {
     return {
       valid: false,
       blocked: true,
-      error: `ขนาดฉลากเล็กเกินไป (${w}×${h} มม.) สำหรับ QR Version ${worstSymbolInfo.version} (${worstSymbolInfo.moduleSize}×${worstSymbolInfo.moduleSize} ช่อง) พื้นที่ช่อง QR เพียง ${moduleSizeMm.toFixed(2)} มม. (ต้องการอย่างน้อย 0.25 มม.)`,
+      error: `ขนาดฉลากเล็กเกินไป (${w}×${h} มม.) สำหรับ QR Version ${worstSymbolInfo.version} (${worstSymbolInfo.moduleSize}×${worstSymbolInfo.moduleSize} ช่อง) รูป QR ต้องได้อย่างน้อย 5×5 มม.`,
       warning: codeLengthWarning,
       widthMm: w,
       heightMm: h,
@@ -443,10 +549,10 @@ export function validateLabelDimensions({
     };
   }
 
-  // Small experimental label warning (e.g. scissor handle ~18x24mm)
-  if (w < 20 || h < 26) {
+  // Small / micro experimental label warning (e.g. 5x5mm QR or 18x24mm scissor)
+  if (w < 20 || h < 26 || qrBoxMm < 14) {
     const combinedWarning = [
-      `ขนาดฉลากด้ามกรรไกร (${w}×${h} มม.) เป็นขนาดทดลอง ช่อง QR เล็ก (~${moduleSizeMm.toFixed(2)} มม.) อาจสแกนติดยากบนมือถือบางรุ่น ต้องพิมพ์ทดสอบก่อนติดใช้งานจริง (ไม่รับประกันการอ่านได้กับกล้องทุกชนิด)`,
+      `ขนาดฉลากด้ามกรรไกร (${w}×${h} มม. · รูป QR ${Number(qrBoxMm.toFixed(1))}×${Number(qrBoxMm.toFixed(1))} มม.) เป็นขนาดทดลอง แนะนำเครื่องพิมพ์คมชัดสูงและทดสอบสแกนก่อนติดจริง`,
       codeLengthWarning
     ]
       .filter(Boolean)
@@ -550,8 +656,8 @@ export function calculateSheetLayout({
     };
   }
 
-  // Sensible mm range boundaries
-  if (pw < 50 || pw > 500 || ph < 50 || ph > 500 || lw < 10 || lw > pw || lh < 10 || lh > ph) {
+  // Sensible mm range boundaries (down to 5mm micro stickers)
+  if (pw < 50 || pw > 500 || ph < 50 || ph > 500 || lw < 5 || lw > pw || lh < 5 || lh > ph) {
     return {
       valid: false,
       error: 'ขนาดหน้ากระดาษหรือขนาดฉลากอยู่นอกช่วงที่รองรับ',
@@ -688,10 +794,10 @@ export function calculateRollLayout({ labelWidthMm, labelHeightMm, totalLabels =
   const lw = Number(labelWidthMm);
   const lh = Number(labelHeightMm);
 
-  if (!isFinitePositive(lw) || !isFinitePositive(lh) || lw < 10 || lw > 300 || lh < 10 || lh > 300) {
+  if (!isFinitePositive(lw) || !isFinitePositive(lh) || lw < 5 || lw > 300 || lh < 5 || lh > 300) {
     return {
       valid: false,
-      error: 'ขนาดฉลากสำหรับเครื่องพิมพ์ม้วนต้องเป็นตัวเลขจำนวนจริงบวก (10 - 300 มม.)',
+      error: 'ขนาดฉลากสำหรับเครื่องพิมพ์ม้วนต้องเป็นตัวเลขจำนวนจริงบวก (5 - 300 มม.)',
       cols: 0,
       rows: 0,
       labelsPerPage: 0,
@@ -761,14 +867,45 @@ export function buildPrintHtml({
     throw new Error(`จำนวนฉลาก (${labels.length} ดวง) เกินขีดจำกัดสูงสุด ${MAX_TOTAL_LABELS} ดวง`);
   }
 
-  // Sanitize and validate physical dimensions
+  // Sanitize and validate physical dimensions (down to 5mm micro labels)
   const rawLw = Number(preset?.widthMm);
   const rawLh = Number(preset?.heightMm);
-  const lw = isFinitePositive(rawLw) ? Math.min(210, Math.max(10, rawLw)) : 30;
-  const lh = isFinitePositive(rawLh) ? Math.min(297, Math.max(10, rawLh)) : 40;
-  const showItemName = preset?.showItemName !== false && lh >= 26;
-  const visualWidthMm = format === LABEL_FORMATS.BARCODE ? lw - 3 : Math.max(0, Math.min(lw - 3, lh - 3 - (lh <= 25 ? 4.5 : 8)));
-  const visualHeightMm = format === LABEL_FORMATS.BARCODE ? lh - (lh <= 25 ? 7.5 : 10) : visualWidthMm;
+  const lw = isFinitePositive(rawLw) ? Math.min(210, Math.max(5, rawLw)) : 30;
+  const lh = isFinitePositive(rawLh) ? Math.min(297, Math.max(5, rawLh)) : 40;
+  // Stickers print ONLY QR/Barcode + tight unit code (never item name like "กรรไกร")
+  const showItemName = Boolean(preset?.forceShowItemName);
+  const isMicroLabel = lw <= 12 || lh <= 10;
+  const boxPadMm = lh <= 6 ? 0.2 : isMicroLabel ? 0.35 : lw <= 22 || lh <= 18 ? 0.6 : 1.0;
+  const codeGapMm = lh <= 6 ? 0.16 : lh <= 10 || lw <= 12 ? 0.32 : 0.25;
+  const codeGapTopCss = `${codeGapMm}mm`;
+  const codeSlotHeightMm =
+    lh <= 6
+      ? 1.12
+      : lh <= 10 || lw <= 12
+        ? 1.25
+        : lh <= 18 || lw <= 20
+          ? 1.65
+          : lh <= 26
+            ? 1.95
+            : 2.25;
+  // Render code at 10px (= 2.6458mm) so Chrome never applies min-font-size clamping, then scale cleanly
+  const baseCodeScale = Number((codeSlotHeightMm / 2.65).toFixed(3));
+  const maxInnerWidthMm = Math.max(2, lw - 2 * boxPadMm);
+
+  const barcodeMetrics = getBarcodeLayoutMetrics(lw, lh);
+  const maxQrSideMm = Math.max(
+    0,
+    Math.min(lw - 2 * boxPadMm, lh - 2 * boxPadMm - codeGapMm - codeSlotHeightMm)
+  );
+  const requestedQrMm = Number(preset?.qrGraphicMm);
+  const qrVisualMm =
+    Number.isFinite(requestedQrMm) && requestedQrMm > 0
+      ? Number(Math.min(maxQrSideMm, requestedQrMm).toFixed(2))
+      : Number(maxQrSideMm.toFixed(2));
+  const visualWidthMm =
+    format === LABEL_FORMATS.BARCODE ? Number((lw - barcodeMetrics.padXMm).toFixed(2)) : qrVisualMm;
+  const visualHeightMm =
+    format === LABEL_FORMATS.BARCODE ? barcodeMetrics.barHeightMm : qrVisualMm;
   if (format === LABEL_FORMATS.BARCODE && labels.length) {
     const check = validateBarcodeDimensions({ widthMm: lw, heightMm: lh, unitCodes: labels.map((item) => item.unitCode || item.unit_code) });
     if (check.blocked) throw new Error(check.error);
@@ -798,15 +935,22 @@ export function buildPrintHtml({
     const rawSvg = typeof item.svg === 'string' ? item.svg : '';
     const safeSvg = isSafeSvgMarkup(rawSvg) ? rawSvg : '';
     const dataUrl = typeof item.dataUrl === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(item.dataUrl) ? item.dataUrl : '';
+    const rawCodeStr = String(item.unitCode || item.unit_code || '');
+    const fitWidthScale = maxInnerWidthMm / Math.max(1, rawCodeStr.length * 1.62);
+    const codeScale = Number(Math.max(0.22, Math.min(baseCodeScale, fitWidthScale)).toFixed(3));
 
     return {
-      unitCode: escapeHtml(item.unitCode || item.unit_code || ''),
+      unitCode: escapeHtml(rawCodeStr),
+      codeScale,
       itemName: escapeHtml(item.itemName || item.item_name || ''),
       color: escapeHtml(item.color || ''),
       svg: safeSvg,
       dataUrl
     };
   });
+
+  const renderCodeSlot = (lbl) =>
+    `<div class="label-code-slot"><div class="label-code" style="transform: scale(${lbl.codeScale ?? baseCodeScale});">${lbl.unitCode}</div></div>`;
 
   const renderQrVisual = (lbl) => {
     if (lbl.dataUrl) {
@@ -852,7 +996,7 @@ export function buildPrintHtml({
           <div class="sample-grid">
             <div class="label-box" style="width: ${lw}mm; height: ${lh}mm;">
               ${renderQrVisual(sample)}
-              <div class="label-code">${sample.unitCode}</div>
+              ${renderCodeSlot(sample)}
               ${showItemName && sample.itemName ? `<div class="label-name">${sample.itemName}</div>` : ''}
             </div>
           </div>
@@ -872,7 +1016,7 @@ export function buildPrintHtml({
         (lbl) => `
         <div class="roll-label" style="width: ${lw}mm; height: ${lh}mm;">
           ${renderQrVisual(lbl)}
-          <div class="label-code">${lbl.unitCode}</div>
+          ${renderCodeSlot(lbl)}
           ${showItemName && lbl.itemName ? `<div class="label-name">${lbl.itemName}${lbl.color ? ` · ${lbl.color}` : ''}</div>` : ''}
         </div>
       `
@@ -917,7 +1061,7 @@ export function buildPrintHtml({
         pageSlots.push(`
           <div class="label-slot label-box" style="width: ${lw}mm; height: ${lh}mm;">
             ${renderQrVisual(lbl)}
-            <div class="label-code">${lbl.unitCode}</div>
+            ${renderCodeSlot(lbl)}
             ${showItemName && lbl.itemName ? `<div class="label-name">${lbl.itemName}${lbl.color ? ` · ${lbl.color}` : ''}</div>` : ''}
           </div>
         `);
@@ -975,6 +1119,7 @@ export function buildPrintHtml({
     align-items: center;
     justify-content: center;
     text-align: center;
+    padding: ${boxPadMm}mm;
   }
   .roll-label:last-child {
     page-break-after: avoid;
@@ -986,7 +1131,7 @@ export function buildPrintHtml({
     align-items: center;
     justify-content: center;
     text-align: center;
-    padding: 1mm;
+    padding: ${boxPadMm}mm;
     page-break-inside: avoid;
     break-inside: avoid;
     overflow: hidden;
@@ -1029,17 +1174,29 @@ export function buildPrintHtml({
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
+    image-rendering: pixelated;
     display: block;
   }
+  .label-code-slot {
+    flex: none;
+    width: 100%;
+    height: ${codeSlotHeightMm}mm;
+    margin-top: ${codeGapTopCss};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+  }
   .label-code {
-    font-weight: 700;
-    font-size: ${lh <= 25 ? '7pt' : '8.5pt'};
-    line-height: 1.1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+    font-weight: 600;
+    font-size: 10px;
+    line-height: 1;
     color: #000000;
-    letter-spacing: 0.2px;
-    margin-top: 0.5mm;
-    word-break: break-all;
-    max-width: 100%;
+    letter-spacing: 0.1px;
+    white-space: nowrap;
+    transform-origin: center center;
+    flex: none;
   }
   .label-name {
     font-size: 6.5pt;

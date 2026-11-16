@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { saveCustomerSync } from './services/syncService';
 import Toast from './components/common/Toast';
+import HeaderFilterPortal from './components/common/HeaderFilterPortal';
 import { useStickyFilter } from './hooks/useStickyFilter';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -239,8 +240,11 @@ function Customers({
   }, [customerDirectory]);
 
   // Open Add/Edit Modal
+  const [isViewOnly, setIsViewOnly] = useState(false);
+
   const handleOpenModal = (customer = null) => {
     if (customer) {
+      setIsViewOnly(true);
       setEditingCustomer(customer);
       reset({
         name: customer.name || '',
@@ -253,6 +257,7 @@ function Customers({
         vip_tier: customer.vip_tier || 'general'
       });
     } else {
+      setIsViewOnly(false);
       setEditingCustomer(null);
       reset({
         name: '',
@@ -270,6 +275,7 @@ function Customers({
 
   // Submit Save Customer (React Hook Form onSubmit)
   const onSubmitCustomer = async (data) => {
+    if (isViewOnly) return;
     setIsSaving(true);
     try {
       const payload = {
@@ -372,86 +378,48 @@ function Customers({
         </div>
       </div>
 
-      {/* Filter and Search Bar */}
-      <div 
-        ref={filterSentinelRef} 
-        className="w-full h-0 -my-3 pointer-events-none opacity-0"
-      />
-      <div className={`bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out z-20 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 ${
-        isFilterStuck
-          ? '-mx-4 sm:-mx-8 lg:-mx-10 py-2 sm:py-2.5 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
-          : 'p-3 sm:p-3.5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
-      }`}>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
-          {/* Search Box */}
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="ค้นหาชื่อลูกค้า, เบอร์โทร, LINE, โซเชียล..."
-              className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-slate-50 focus:bg-white transition-all font-medium"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition cursor-pointer"
-                title="ล้างข้อความค้นหา"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+      {/* Header-Integrated Search & Filter */}
+      <HeaderFilterPortal
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+        placeholder="ค้นหาชื่อลูกค้า, เบอร์โทร, LINE..."
+        activeFilterCount={[selectedTier !== 'all', sortBy !== 'spend'].filter(Boolean).length}
+        onReset={() => {
+          setSearchQuery('');
+          setSelectedTier('all');
+          setSortBy('spend');
+        }}
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div className="relative">
+            <select
+              value={selectedTier}
+              onChange={(e) => setSelectedTier(e.target.value)}
+              className="w-full h-10 pl-3.5 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 appearance-none cursor-pointer"
+            >
+              <option value="all">ระดับ: ทั้งหมด ({customerDirectory.length})</option>
+              <option value="vip_fandom">Fandom VIP</option>
+              <option value="gold">VIP Gold</option>
+              <option value="silver">VIP Silver</option>
+              <option value="general">ลูกค้าทั่วไป</option>
+            </select>
+            <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            {/* VIP Tier Dropdown */}
-            <div className="relative w-36 sm:w-44 shrink-0">
-              <select
-                value={selectedTier}
-                onChange={(e) => setSelectedTier(e.target.value)}
-                className="w-full pl-3.5 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
-              >
-                <option value="all">ระดับ: ทั้งหมด ({customerDirectory.length})</option>
-                <option value="vip_fandom">Fandom VIP</option>
-                <option value="gold">VIP Gold</option>
-                <option value="silver">VIP Silver</option>
-                <option value="general">ลูกค้าทั่วไป</option>
-              </select>
-              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            {/* SortBy Dropdown */}
-            <div className="relative w-36 sm:w-44 shrink-0">
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
-                className="w-full pl-3.5 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
-              >
-                <option value="spend">เรียง: ยอดใช้จ่าย</option>
-                <option value="orders">เรียง: จำนวนงาน</option>
-                <option value="name">เรียง: ชื่อ ก-ฮ / A-Z</option>
-              </select>
-              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            {/* Reset Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('');
-                setSelectedTier('all');
-                setSortBy('spend');
-              }}
-              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer shadow-2xs"
-              title="ล้างค่าตัวกรองทั้งหมด"
+          <div className="relative">
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="w-full h-10 pl-3.5 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 appearance-none cursor-pointer"
             >
-              <RotateCcw className="w-4 h-4" />
-            </button>
+              <option value="spend">เรียง: ยอดใช้จ่าย</option>
+              <option value="orders">เรียง: จำนวนงาน</option>
+              <option value="name">เรียง: ชื่อ ก-ฮ / A-Z</option>
+            </select>
+            <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
         </div>
-      </div>
+      </HeaderFilterPortal>
 
       {/* Desktop Table View */}
       <div className="hidden md:block bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
@@ -673,7 +641,7 @@ function Customers({
                 <div>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                     <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
-                      {editingCustomer ? 'แก้ไขข้อมูลลูกค้า' : 'เพิ่มลูกค้าใหม่'}
+                      {editingCustomer ? (isViewOnly ? 'รายละเอียดข้อมูลลูกค้า' : 'แก้ไขข้อมูลลูกค้า') : 'เพิ่มลูกค้าใหม่'}
                     </h3>
                     {editingCustomer?.name && (
                       <span className="bg-indigo-50 text-indigo-600 text-xs sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 w-fit">
@@ -682,7 +650,7 @@ function Customers({
                     )}
                   </div>
                   <p className="text-xs sm:text-sm text-slate-500 font-medium">
-                    บันทึกข้อมูลเพื่อความสะดวกรวดเร็วในการติดต่อและออกใบเสนอราคา
+                    {isViewOnly ? 'ล็อกป้องกันการแก้ไขโดยไม่ตั้งใจ กดปุ่มแก้ไขด้านล่างเพื่อปรับข้อมูล' : 'บันทึกข้อมูลเพื่อความสะดวกรวดเร็วในการติดต่อและออกใบเสนอราคา'}
                   </p>
                 </div>
               </div>
@@ -697,7 +665,11 @@ function Customers({
 
             <form onSubmit={handleSubmit(onSubmitCustomer)} className="flex flex-col flex-1 overflow-hidden">
               {/* Scrollable Form Body */}
-              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-5 overscroll-contain">
+              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar overscroll-contain">
+                <fieldset
+                  disabled={isViewOnly}
+                  className="block min-w-0 border-0 p-0 m-0 space-y-5 [&_input:disabled]:bg-slate-100 [&_input:disabled]:text-slate-500 [&_input:disabled]:cursor-not-allowed [&_select:disabled]:bg-slate-100 [&_select:disabled]:text-slate-500 [&_select:disabled]:cursor-not-allowed [&_textarea:disabled]:bg-slate-100 [&_textarea:disabled]:text-slate-500 [&_textarea:disabled]:cursor-not-allowed"
+                >
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">ชื่อลูกค้า / ชื่อบ้านเบส *</label>
                   <input
@@ -779,9 +751,10 @@ function Customers({
                     rows="3"
                     placeholder="ที่อยู่สำหรับออกบิลและจัดส่งเอกสาร..."
                     {...register('billing_address')}
-                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
+                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors resize-none"
                   ></textarea>
                 </div>
+                </fieldset>
               </div>
 
               {/* Sticky Footer */}
@@ -789,22 +762,33 @@ function Customers({
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-all active:scale-95 cursor-pointer"
+                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
-                  ยกเลิก
+                  {isViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
-                >
-                  {isSaving ? (
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <Check className="w-4 h-4" />
-                  )}
-                  <span>{isSaving ? 'กำลังบันทึก...' : (editingCustomer ? 'บันทึกการแก้ไข' : 'เพิ่มลูกค้า')}</span>
-                </button>
+                {isViewOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsViewOnly(false)}
+                    className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
+                  >
+                    <Edit className="w-4 h-4" />
+                    <span>แก้ไข</span>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSaving ? (
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4" />
+                    )}
+                    <span>{isSaving ? 'กำลังบันทึก...' : (editingCustomer ? 'บันทึกการแก้ไข' : 'เพิ่มลูกค้า')}</span>
+                  </button>
+                )}
               </div>
             </form>
           </div>

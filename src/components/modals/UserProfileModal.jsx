@@ -16,7 +16,8 @@ import {
   CreditCard,
   HeartHandshake,
   Calendar,
-  Lock
+  Lock,
+  Edit
 } from 'lucide-react';
 import { saveStaffSync } from '../../services/syncService';
 import db from '../../services/db';
@@ -49,10 +50,12 @@ export default function UserProfileModal({
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
   // Load latest staff data from db.staff when modal opens
   useEffect(() => {
     if (!isOpen || !userProfile?.username) return;
+    setIsEditing(false);
 
     let isMounted = true;
     const fetchStaffData = async () => {
@@ -228,8 +231,21 @@ export default function UserProfileModal({
         </div>
 
         {/* Form Body (Scrollable) */}
-        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
-          <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-6 overscroll-contain">
+        <form
+          onSubmit={(e) => {
+            if (!isEditing) {
+              e.preventDefault();
+              return;
+            }
+            handleSubmit(e);
+          }}
+          className="flex flex-col flex-1 overflow-hidden"
+        >
+          <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar overscroll-contain">
+            <fieldset
+              disabled={!isEditing}
+              className="block min-w-0 border-0 p-0 m-0 space-y-6 [&_input:disabled]:bg-slate-100 [&_input:disabled]:text-slate-500 [&_input:disabled]:cursor-not-allowed [&_textarea:disabled]:bg-slate-100 [&_textarea:disabled]:text-slate-500 [&_textarea:disabled]:cursor-not-allowed"
+            >
             
             {/* Top Identity Card */}
             <div className="p-4 bg-gradient-to-br from-indigo-50/70 via-slate-50 to-purple-50/40 rounded-2xl border border-indigo-100/70 flex flex-col sm:flex-row items-center gap-4">
@@ -247,28 +263,30 @@ export default function UserProfileModal({
                   formData.name ? formData.name.charAt(0).toUpperCase() : 'U'
                 )}
 
-                <label className="absolute inset-0 bg-black/45 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer text-white" title="คลิกเพื่อเปลี่ยนรูปถ่าย">
-                  <Camera className="w-5 h-5 text-white" />
-                  <span className="text-xs font-bold mt-0.5">เปลี่ยนรูป</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        const file = e.target.files[0];
-                        const reader = new FileReader();
-                        reader.onload = (event) => {
-                          setFormData(prev => ({ ...prev, avatar_url: event.target.result }));
-                        };
-                        reader.readAsDataURL(file);
-                        if (handleProfileImageUpload) {
-                          handleProfileImageUpload(file);
+                {isEditing && (
+                  <label className="absolute inset-0 bg-black/45 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer text-white" title="คลิกเพื่อเปลี่ยนรูปถ่าย">
+                    <Camera className="w-5 h-5 text-white" />
+                    <span className="text-xs font-bold mt-0.5">เปลี่ยนรูป</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          const file = e.target.files[0];
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            setFormData(prev => ({ ...prev, avatar_url: event.target.result }));
+                          };
+                          reader.readAsDataURL(file);
+                          if (handleProfileImageUpload) {
+                            handleProfileImageUpload(file);
+                          }
                         }
-                      }
-                    }}
-                  />
-                </label>
+                      }}
+                    />
+                  </label>
+                )}
               </div>
 
               <div className="flex-1 text-center sm:text-left">
@@ -294,28 +312,30 @@ export default function UserProfileModal({
                   </span>
                 </div>
 
-                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white text-indigo-700 hover:bg-indigo-50 border border-indigo-200 text-xs font-bold transition shadow-2xs cursor-pointer mt-2.5">
-                  <Camera className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>เปลี่ยนรูปถ่ายโปรไฟล์</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        const file = e.target.files[0];
-                        const reader = new FileReader();
-                        reader.onload = (event) => {
-                          setFormData(prev => ({ ...prev, avatar_url: event.target.result }));
-                        };
-                        reader.readAsDataURL(file);
-                        if (handleProfileImageUpload) {
-                          handleProfileImageUpload(file);
+                {isEditing && (
+                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white text-indigo-700 hover:bg-indigo-50 border border-indigo-200 text-xs font-bold transition shadow-2xs cursor-pointer mt-2.5">
+                    <Camera className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>เปลี่ยนรูปถ่ายโปรไฟล์</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          const file = e.target.files[0];
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            setFormData(prev => ({ ...prev, avatar_url: event.target.result }));
+                          };
+                          reader.readAsDataURL(file);
+                          if (handleProfileImageUpload) {
+                            handleProfileImageUpload(file);
+                          }
                         }
-                      }
-                    }}
-                  />
-                </label>
+                      }}
+                    />
+                  </label>
+                )}
               </div>
             </div>
 
@@ -379,6 +399,7 @@ export default function UserProfileModal({
                 <ModernDateTimePicker
                   value={formData.birth_date}
                   onChange={(val) => setFormData({ ...formData, birth_date: val })}
+                  disabled={!isEditing}
                   placeholder="เลือกวันเดือนปีเกิด"
                   hasTime={false}
                 />
@@ -516,6 +537,7 @@ export default function UserProfileModal({
                 </div>
               </div>
             </div>
+            </fieldset>
 
           </div>
 
@@ -524,22 +546,33 @@ export default function UserProfileModal({
             <button
               type="button"
               onClick={onClose}
-              className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-all active:scale-95 cursor-pointer"
+              className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
             >
-              ยกเลิก
+              {isEditing ? 'ยกเลิก' : 'ปิด'}
             </button>
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
-            >
-              {isSaving ? (
-                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
-                <Check className="w-4 h-4" />
-              )}
-              <span>{isSaving ? 'กำลังบันทึก...' : 'บันทึกข้อมูลโปรไฟล์'}</span>
-            </button>
+            {!isEditing ? (
+              <button
+                type="button"
+                onClick={() => setIsEditing(true)}
+                className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
+              >
+                <Edit className="w-4 h-4" />
+                <span>แก้ไข</span>
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={isSaving}
+                className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                {isSaving ? (
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <Check className="w-4 h-4" />
+                )}
+                <span>{isSaving ? 'กำลังบันทึก...' : 'บันทึกข้อมูลโปรไฟล์'}</span>
+              </button>
+            )}
           </div>
         </form>
 

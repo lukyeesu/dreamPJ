@@ -1,4 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, startTransition } from 'react';
+import HeaderFilterPortal from './components/common/HeaderFilterPortal';
+import DbCombobox from './components/common/DbCombobox';
 import {
   DollarSign,
   TrendingUp,
@@ -40,12 +42,19 @@ import {
   Sparkles,
   ArrowUpRight,
   ArrowDownRight,
-  Activity
+  Activity,
+  Package
 } from 'lucide-react';
 import DateFilterControl from './components/common/DateFilterControl';
 import { processImageUrl } from './utils/formatters';
 import ImageViewer from './components/common/ImageViewer';
 import { saveProjectSync } from './services/syncService';
+import {
+  matchInventoryItemByText,
+  syncExpenseLinesToWarehouse,
+  shouldAutoSyncExpenseLine,
+  detectBanknoteDenomination
+} from './utils/financeInventoryBridge';
 import ModernDateTimePicker from './components/common/ModernDateTimePicker';
 import Toast from './components/common/Toast';
 import ConfirmDialog from './components/common/ConfirmDialog';
@@ -374,6 +383,7 @@ const escapeHtml = (str) => {
 
 function Finance({
   activities = [],
+  inventoryItems = [],
   dealStatuses = [],
   transportStatuses = [],
   shopInfo = {},
@@ -970,6 +980,8 @@ function Finance({
   }, [feedTransactions, feedSearchQuery, feedTypeFilter]);
 
   // Handlers for Transaction Feed Actions
+  const [isEditTxViewOnly, setIsEditTxViewOnly] = useState(true);
+
   const handleOpenEditTx = (tx) => {
     setEditingTx(tx);
     setEditFormData({
@@ -978,12 +990,13 @@ function Finance({
       amount: tx.amount,
       is_voided: tx.isVoided
     });
+    setIsEditTxViewOnly(true);
     setIsEditTxModalOpen(true);
   };
 
   const handleSaveEditTx = async (e) => {
     e.preventDefault();
-    if (!editingTx) return;
+    if (isEditTxViewOnly || !editingTx) return;
     setIsTxSaving(true);
     try {
       const project = activities.find(a => a.id === editingTx.projectId);
@@ -1177,6 +1190,7 @@ function Finance({
       if (newTxFormData.channel) clone.paymentChannel = newTxFormData.channel;
 
       const txDate = newTxFormData.dateTime || new Date().toISOString();
+      const addedExpenseLinesForSync = [];
 
       validItems.forEach((it, idx) => {
         const lineId = `tx_${Date.now()}_${idx}`;
@@ -1186,7 +1200,12 @@ function Finance({
 
         if (newTxFormData.type === 'expense') {
           if (!clone.expenses) clone.expenses = [];
-          clone.expenses.push({
+          const matchedItem = matchInventoryItemByText(it.detail, inventoryItems);
+          const shouldSyncStock =
+            it.syncToWarehouse !== undefined
+              ? Boolean(it.syncToWarehouse)
+              : shouldAutoSyncExpenseLine(it.detail, newTxFormData.category, inventoryItems);
+          const expRecord = {
             id: lineId,
             category: newTxFormData.category || 'ค่าใช้จ่ายทั่วไป',
             detail: it.detail.trim(),
@@ -1196,8 +1215,14 @@ function Finance({
             price: linePrice,
             date: txDate,
             paymentChannel: newTxFormData.channel || 'โอนเงิน',
-            is_voided: false
-          });
+            is_voided: false,
+            syncToWarehouse: shouldSyncStock,
+            warehouseItemId: matchedItem?.id || null
+          };
+          clone.expenses.push(expRecord);
+          if (shouldSyncStock) {
+            addedExpenseLinesForSync.push(expRecord);
+          }
         } else if (newTxFormData.type === 'income') {
           if (!clone.quotationItems) clone.quotationItems = [];
           clone.quotationItems.push({
@@ -1223,6 +1248,21 @@ function Finance({
       clone.netProfit = totalRev - totalExp;
 
       await saveProjectSync(clone);
+
+      let syncedStockCount = 0;
+      let stockSyncWarning = '';
+      if (newTxFormData.type === 'expense' && addedExpenseLinesForSync.length > 0) {
+        const syncRes = await syncExpenseLinesToWarehouse({
+          projectId: clone.id,
+          expenseLines: addedExpenseLinesForSync,
+          catalogItems: inventoryItems
+        });
+        syncedStockCount = syncRes.syncedCount || 0;
+        if (syncRes.errors && syncRes.errors.length > 0) {
+          stockSyncWarning = syncRes.errors[0].error || '';
+        }
+      }
+
       if (onSaveActivity) onSaveActivity(clone);
       setIsAddTxModalOpen(false);
       setNewTxFormData({
@@ -1240,7 +1280,13 @@ function Finance({
         taxType: 'none',
         note: ''
       });
-      showToast(`บันทึก${newTxFormData.type === 'income' ? 'รายรับ' : 'รายจ่าย'} ${validItems.length} รายการ เรียบร้อย`, 'success');
+      if (stockSyncWarning) {
+        showToast(`บันทึกรายจ่ายแล้ว แต่เติมของเข้าคลังไม่สำเร็จบางรายการ (${stockSyncWarning})`, 'warning');
+      } else if (syncedStockCount > 0) {
+        showToast(`บันทึกรายจ่าย ${validItems.length} รายการ และเติมของเข้ากระเป๋าคลังอัตโนมัติ ${syncedStockCount} รายการ เรียบร้อย`, 'success');
+      } else {
+        showToast(`บันทึก${newTxFormData.type === 'income' ? 'รายรับ' : 'รายจ่าย'} ${validItems.length} รายการ เรียบร้อย`, 'success');
+      }
     } catch (err) {
       showToast('เพิ่มรายการไม่สำเร็จ: ' + err.message, 'error');
     } finally {
@@ -2542,238 +2588,64 @@ function Finance({
       </div>
 
       {/* =========================================================================
-          FILTER TOOLBAR (Clean, Modern, Unified Mobile & Desktop Filter)
+          HEADER-INTEGRATED SEARCH & FILTER PORTAL
          ========================================================================= */}
-      <div 
-        ref={filterSentinelRef} 
-        className="w-full h-0 -my-3 pointer-events-none opacity-0"
-      />
-      <div 
-        className={`no-print bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out z-40 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0
-          ${isFilterStuck
-            ? '-mx-4 sm:-mx-8 lg:-mx-10 py-2.5 sm:py-3 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
-            : 'p-3.5 sm:p-4 rounded-[2rem] sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
-          }
-        `}
+      <HeaderFilterPortal
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+        placeholder="ค้นหารหัส, ชื่องาน, ลูกค้า, ศิลปิน..."
+        activeFilterCount={[
+          dateFilterMode !== 'month',
+          paymentStatusFilter !== 'all',
+          sortOrder !== 'desc'
+        ].filter(Boolean).length}
+        onReset={handleResetFilters}
       >
-        {/* --- MOBILE FILTER LAYOUT (Clean, Compact, No Clutter) --- */}
-        <div className="flex flex-col gap-2.5 md:hidden">
-          {/* Row 1: Search + Filter Toggle + Reset */}
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1 bg-slate-50 border border-slate-200/70 rounded-xl h-10 flex items-center hover:bg-slate-100/60 focus-within:bg-white focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                <Search className="w-4 h-4" />
-              </div>
-              <input
-                type="text"
-                placeholder="ค้นหา..."
-                className="w-full h-full pl-9 pr-8 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-medium placeholder:text-slate-400 rounded-xl"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-md"
-                  title="ล้างข้อความค้นหา"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* ปุ่มเปิด/ซ่อนตัวกรอง (Icon Only) */}
-            <button
-              type="button"
-              onClick={() => setIsMobileFilterExpanded(!isMobileFilterExpanded)}
-              className={`h-10 w-10 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 border ${
-                isMobileFilterExpanded 
-                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-200' 
-                  : 'bg-slate-50 text-slate-600 border-slate-200/70 hover:bg-slate-100'
-              }`}
-              title={isMobileFilterExpanded ? "ซ่อนตัวกรอง" : "เปิดตัวกรองเพิ่มเติม"}
-              aria-label="ตัวกรอง"
-            >
-              <SlidersHorizontal className="w-4 h-4" />
-            </button>
-
-            {/* ปุ่มรีเซ็ตฟิลเตอร์ */}
-            <button
-              onClick={handleResetFilters}
-              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95"
-              title="ล้างค่าตัวกรองทั้งหมด"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          <div className="sm:col-span-2 lg:col-span-1 h-10">
+            <DateFilterControl
+              mode={dateFilterMode}
+              setMode={setDateFilterMode}
+              date={filterDate}
+              setDate={setFilterDate}
+              range={filterDateRange}
+              setRange={setFilterDateRange}
+            />
           </div>
 
-          {/* แผงฟิลเตอร์เมื่อกดเปิด (Mobile Drawer) */}
-          {isMobileFilterExpanded && (
-            <div className="flex flex-col gap-2 pt-2 border-t border-slate-100 animate-in slide-in-from-top-2 fade-in duration-200">
-              {/* 1. ตัวเลือกช่วงวันที่ (Full Width) */}
-              <div className="w-full h-10">
-                <DateFilterControl
-                  mode={dateFilterMode}
-                  setMode={setDateFilterMode}
-                  date={filterDate}
-                  setDate={setFilterDate}
-                  range={filterDateRange}
-                  setRange={setFilterDateRange}
-                />
-              </div>
-
-              {/* 2. Grid 2 คอลัมน์: สถานะการชำระ + สลับเรียงลำดับ */}
-              <div className="grid grid-cols-2 gap-2">
-                {/* สถานะการชำระ Mobile */}
-                <div className="relative bg-slate-50 border border-slate-200/70 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                    <Wallet className="w-3.5 h-3.5" />
-                  </div>
-                  <select
-                    value={paymentStatusFilter}
-                    onChange={(e) => setPaymentStatusFilter(e.target.value)}
-                    className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer rounded-xl"
-                  >
-                    <option value="all">สถานะ: ทั้งหมด</option>
-                    <option value="paid">ชำระครบแล้ว</option>
-                    <option value="deposit">มัดจำแล้ว</option>
-                    <option value="unpaid">รอชำระเงิน</option>
-                    <option value="refunded">คืนเงิน/ยกเลิก</option>
-                  </select>
-                  <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-
-                {/* เรียงลำดับ Mobile */}
-                <button
-                  onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
-                  className="h-10 px-3 bg-slate-50 border border-slate-200/70 rounded-xl text-xs font-bold text-slate-600 flex items-center justify-between hover:border-slate-300 transition-colors active:scale-95"
-                  title={sortOrder === 'desc' ? 'เรียงล่าสุดก่อน' : 'เรียงเก่าสุดก่อน'}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-                    <span>เรียง:</span>
-                  </div>
-                  <span className="text-indigo-600 font-bold">{sortOrder === 'desc' ? 'ล่าสุด' : 'เก่าสุด'}</span>
-                </button>
-              </div>
+          <div className="relative bg-slate-50 border border-slate-200/80 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+              <Wallet className="w-3.5 h-3.5" />
             </div>
-          )}
-        </div>
-
-        {/* --- DESKTOP FILTER LAYOUT (แถวเดียวเป็นค่าเริ่มต้น กดปุ่มเพื่อเปิดตัวกรองเพิ่มเติม) --- */}
-        <div className="hidden md:flex flex-col gap-2.5">
-          {/* แถวที่ 1: ค้นหา + ตัวเลือกวันที่ + ปุ่มตัวกรองเพิ่มเติม + ปุ่มรีเซ็ต */}
-          <div className="flex items-center gap-3 h-[48px]">
-            {/* กล่องค้นหา Desktop */}
-            <div className="relative flex-[1.2] min-w-[260px] h-full bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all shadow-xs">
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-                <Search className="w-5 h-5" />
-              </div>
-              <input
-                type="text"
-                placeholder="ค้นหารหัส, ชื่องาน, ลูกค้า, ศิลปิน..."
-                className="w-full h-full pl-12 pr-10 bg-transparent outline-none text-slate-700 text-sm font-medium placeholder:text-slate-400 rounded-2xl"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 p-1 rounded-md cursor-pointer"
-                  title="ล้างข้อความค้นหา"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-
-            {/* เลือกวันที่ Desktop */}
-            <div className="flex-1 min-w-[320px] max-w-[440px] h-full">
-              <DateFilterControl
-                mode={dateFilterMode}
-                setMode={setDateFilterMode}
-                date={filterDate}
-                setDate={setFilterDate}
-                range={filterDateRange}
-                setRange={setFilterDateRange}
-              />
-            </div>
-
-            {/* ปุ่มเปิด/ซ่อนตัวกรองเพิ่มเติม Desktop (Icon Only) */}
-            <button
-              type="button"
-              onClick={() => setIsDesktopFilterExpanded(!isDesktopFilterExpanded)}
-              className={`h-full px-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 active:scale-95 border cursor-pointer shadow-xs ${
-                isDesktopFilterExpanded 
-                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-200' 
-                  : (paymentStatusFilter !== 'all' || sortOrder !== 'desc')
-                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-                  : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:bg-slate-50'
-              }`}
-              title={isDesktopFilterExpanded ? "ซ่อนตัวกรองเพิ่มเติม" : "เปิดตัวกรองเพิ่มเติม"}
-              aria-label="ตัวกรอง"
+            <select
+              value={paymentStatusFilter}
+              onChange={(e) => setPaymentStatusFilter(e.target.value)}
+              className="w-full h-full pl-8 pr-7 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-bold appearance-none cursor-pointer rounded-xl"
             >
-              <SlidersHorizontal className="w-4 h-4" />
-              {(paymentStatusFilter !== 'all' || sortOrder !== 'desc') && (
-                <span className={`px-1.5 py-0.5 rounded-full text-xs font-black ${
-                  isDesktopFilterExpanded ? 'bg-white text-indigo-600' : 'bg-indigo-200 text-indigo-800'
-                }`}>
-                  {[paymentStatusFilter !== 'all', sortOrder !== 'desc'].filter(Boolean).length}
-                </span>
-              )}
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isDesktopFilterExpanded ? 'rotate-180' : ''}`} />
-            </button>
-
-            {/* ปุ่มรีเซ็ตฟิลเตอร์ Desktop */}
-            <button
-              onClick={handleResetFilters}
-              className="h-full w-[48px] bg-white border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-2xl font-bold transition-colors flex items-center justify-center shadow-xs shrink-0 cursor-pointer active:scale-95"
-              title="ล้างค่าตัวกรองทั้งหมด"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
+              <option value="all">สถานะการชำระ: ทั้งหมด</option>
+              <option value="paid">ชำระครบแล้ว</option>
+              <option value="deposit">มัดจำแล้ว</option>
+              <option value="unpaid">รอชำระเงิน</option>
+              <option value="refunded">คืนเงิน/ยกเลิก</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
-          {/* แถวที่ 2: สถานะการชำระ + สลับเรียงลำดับ (ซ่อนเริ่มต้น แสดงเมื่อกดปุ่มตัวกรอง) */}
-          {isDesktopFilterExpanded && (
-            <div className="flex gap-3 h-[48px] pt-1 animate-in slide-in-from-top-2 fade-in duration-200">
-              {/* สถานะการชำระ Dropdown */}
-              <div className="relative flex-1 bg-slate-50 border border-slate-200/70 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs group">
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors">
-                  <Wallet className="w-4 h-4" />
-                </div>
-                <select
-                  value={paymentStatusFilter}
-                  onChange={(e) => setPaymentStatusFilter(e.target.value)}
-                  className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
-                >
-                  <option value="all">สถานะการชำระ: ทั้งหมด</option>
-                  <option value="paid">ชำระครบแล้ว</option>
-                  <option value="deposit">มัดจำแล้ว</option>
-                  <option value="unpaid">รอชำระเงิน</option>
-                  <option value="refunded">คืนเงิน/ยกเลิก</option>
-                </select>
-                <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
-
-              {/* สลับการเรียงลำดับ Sort Toggle Button */}
-              <button
-                onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
-                className="relative flex-1 bg-slate-50 border border-slate-200/70 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs px-4 flex items-center justify-between cursor-pointer group"
-                title={sortOrder === 'desc' ? 'เรียงล่าสุดก่อน' : 'เรียงเก่าสุดก่อน'}
-              >
-                <div className="flex items-center gap-2.5">
-                  <ArrowUpDown className="w-4 h-4 text-slate-400 group-hover:text-indigo-500 transition-colors" />
-                  <span className="text-sm font-bold text-slate-700">การเรียงลำดับ</span>
-                </div>
-                <span className="text-xs font-semibold px-2 py-0.5 bg-white border border-slate-200/80 rounded-md text-slate-600">
-                  {sortOrder === 'desc' ? 'ล่าสุดก่อน' : 'เก่าสุดก่อน'}
-                </span>
-              </button>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={() => setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
+            className="h-10 px-3.5 bg-slate-50 border border-slate-200/80 rounded-xl text-xs sm:text-sm font-bold text-slate-700 flex items-center justify-between hover:border-slate-300 transition-colors cursor-pointer"
+          >
+            <span className="flex items-center gap-2">
+              <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+              <span>เรียงลำดับ</span>
+            </span>
+            <span className="text-xs font-bold text-violet-700 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+              {sortOrder === 'desc' ? 'ล่าสุดก่อน' : 'เก่าสุดก่อน'}
+            </span>
+          </button>
         </div>
-      </div>
+      </HeaderFilterPortal>
 
       {/* =========================================================================
           VIEW 0: FINANCIAL COLUMN TABLE VIEW (ตารางคอลัมน์การเงิน รายรับ-รายจ่าย)
@@ -3236,7 +3108,7 @@ function Finance({
                 <div>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                     <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
-                      แก้ไขรายการธุรกรรม
+                      {isEditTxViewOnly ? 'รายละเอียดรายการธุรกรรม' : 'แก้ไขรายการธุรกรรม'}
                     </h3>
                     {editingTx?.projectId && (
                       <span className="bg-amber-50 text-amber-700 text-xs px-2.5 py-1 rounded-lg font-bold border border-amber-100 font-mono w-fit">
@@ -3245,7 +3117,7 @@ function Finance({
                     )}
                   </div>
                   <p className="text-xs sm:text-sm text-slate-500 font-medium">
-                    แก้ไขข้อมูลธุรกรรม หรือทำเครื่องหมาย Void
+                    {isEditTxViewOnly ? 'ล็อกป้องกันการแก้ไขโดยไม่ตั้งใจ กดปุ่มแก้ไขด้านล่างเพื่อปรับข้อมูล' : 'แก้ไขข้อมูลธุรกรรม หรือทำเครื่องหมาย Void'}
                   </p>
                 </div>
               </div>
@@ -3265,9 +3137,10 @@ function Finance({
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">หมวดหมู่</label>
                   <input
                     type="text"
+                    disabled={isEditTxViewOnly}
                     value={editFormData.category}
                     onChange={(e) => setEditFormData({ ...editFormData, category: e.target.value })}
-                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
                   />
                 </div>
 
@@ -3276,9 +3149,10 @@ function Finance({
                   <input
                     type="text"
                     required
+                    disabled={isEditTxViewOnly}
                     value={editFormData.detail}
                     onChange={(e) => setEditFormData({ ...editFormData, detail: e.target.value })}
-                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
                   />
                 </div>
 
@@ -3289,21 +3163,23 @@ function Finance({
                     required
                     min="0"
                     step="any"
+                    disabled={isEditTxViewOnly}
                     value={editFormData.amount}
                     onChange={(e) => setEditFormData({ ...editFormData, amount: e.target.value })}
-                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-black text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-black text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
                   />
                 </div>
 
-                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex items-center gap-3">
+                <div className={`p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex items-center gap-3 ${isEditTxViewOnly ? 'opacity-65' : ''}`}>
                   <input
                     type="checkbox"
                     id="void_checkbox"
+                    disabled={isEditTxViewOnly}
                     checked={editFormData.is_voided}
                     onChange={(e) => setEditFormData({ ...editFormData, is_voided: e.target.checked })}
-                    className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
+                    className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer disabled:cursor-not-allowed"
                   />
-                  <label htmlFor="void_checkbox" className="text-xs font-bold text-slate-700 cursor-pointer">
+                  <label htmlFor="void_checkbox" className={`text-xs font-bold text-slate-700 ${isEditTxViewOnly ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
                     ยกเลิกรายการนี้ (Void) - ไม่นำยอดนี้ไปคิดกำไรขาดทุน
                   </label>
                 </div>
@@ -3314,22 +3190,33 @@ function Finance({
                 <button
                   type="button"
                   onClick={() => setIsEditTxModalOpen(false)}
-                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-all active:scale-95 cursor-pointer"
+                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
-                  ยกเลิก
+                  {isEditTxViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
-                <button
-                  type="submit"
-                  disabled={isTxSaving}
-                  className="py-3 px-7 sm:px-8 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-emerald-200 hover:shadow-emerald-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
-                >
-                  {isTxSaving ? (
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <Check className="w-4 h-4" />
-                  )}
-                  <span>{isTxSaving ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}</span>
-                </button>
+                {isEditTxViewOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditTxViewOnly(false)}
+                    className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
+                  >
+                    <Edit className="w-4 h-4" />
+                    <span>แก้ไข</span>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={isTxSaving}
+                    className="py-3 px-7 sm:px-8 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-emerald-200 hover:shadow-emerald-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isTxSaving ? (
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4" />
+                    )}
+                    <span>{isTxSaving ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}</span>
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -3453,19 +3340,35 @@ function Finance({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">รหัสงาน (Project ID) *</label>
-                    <input
-                      list="project-id-suggestions"
-                      type="text"
+                    <DbCombobox
+                      options={activities.map((a) => ({
+                        id: a.id,
+                        value: a.id,
+                        label: a.name ? `${a.id} · ${a.name}` : a.id,
+                        badge: a.id,
+                        sublabel: [a.artist ? `ศิลปิน: ${a.artist}` : '', a.customer ? `ลูกค้า: ${a.customer}` : '']
+                          .filter(Boolean)
+                          .join(' • '),
+                        keywords: `${a.id} ${a.name || ''} ${a.artist || ''} ${a.customer || ''}`,
+                        raw: a
+                      }))}
+                      dbTable="projects"
                       value={newTxFormData.projectId}
-                      onChange={(e) => setNewTxFormData(prev => ({ ...prev, projectId: e.target.value }))}
-                      placeholder="เช่น P-0309"
-                      className="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm uppercase font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                      onChange={(val) => setNewTxFormData((prev) => ({ ...prev, projectId: val }))}
+                      onSelectOption={(opt) => {
+                        const proj = opt?.raw;
+                        if (proj) {
+                          setNewTxFormData((prev) => ({
+                            ...prev,
+                            projectId: proj.id || opt.value,
+                            artist: prev.artist || proj.artist || proj.artist_name || '',
+                            customer: prev.customer || proj.customer || proj.customer_name || ''
+                          }));
+                        }
+                      }}
+                      placeholder="ค้นหารหัสงาน หรือชื่องาน..."
+                      inputClassName="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors"
                     />
-                    <datalist id="project-id-suggestions">
-                      {activities.slice(0, 15).map(a => (
-                        <option key={a.id} value={a.id}>{a.name || a.customer}</option>
-                      ))}
-                    </datalist>
                   </div>
 
                   <div>
@@ -3473,7 +3376,7 @@ function Finance({
                     <select
                       value={newTxFormData.channel}
                       onChange={(e) => setNewTxFormData(prev => ({ ...prev, channel: e.target.value }))}
-                      className="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer"
+                      className="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors cursor-pointer"
                     >
                       <option value="โอนเงิน">โอนเงิน (Mobile Banking)</option>
                       <option value="เงินสด">เงินสด (Cash)</option>
@@ -3490,12 +3393,12 @@ function Finance({
                       <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
                       <span>ศิลปิน (Artist)</span>
                     </label>
-                    <input
-                      type="text"
+                    <DbCombobox
+                      dbTable="artists"
                       value={newTxFormData.artist}
-                      onChange={(e) => setNewTxFormData(prev => ({ ...prev, artist: e.target.value }))}
-                      placeholder="เช่น Nunew DMD"
-                      className="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                      onChange={(val) => setNewTxFormData((prev) => ({ ...prev, artist: val }))}
+                      placeholder="ค้นหาหรือพิมพ์ชื่อศิลปิน..."
+                      inputClassName="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors"
                     />
                   </div>
 
@@ -3504,12 +3407,12 @@ function Finance({
                       <Briefcase className="w-3.5 h-3.5 text-slate-400" />
                       <span>ลูกค้า (Customer)</span>
                     </label>
-                    <input
-                      type="text"
+                    <DbCombobox
+                      dbTable="customers"
                       value={newTxFormData.customer}
-                      onChange={(e) => setNewTxFormData(prev => ({ ...prev, customer: e.target.value }))}
-                      placeholder="เช่น คุณวิไลลักษณ์"
-                      className="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                      onChange={(val) => setNewTxFormData((prev) => ({ ...prev, customer: val }))}
+                      placeholder="ค้นหาหรือพิมพ์ชื่อลูกค้า..."
+                      inputClassName="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors"
                     />
                   </div>
                 </div>
@@ -3556,10 +3459,10 @@ function Finance({
                       return (
                         <div
                           key={it.id || idx}
-                          className="rounded-2xl border border-slate-200/90 overflow-hidden bg-slate-50/80 hover:border-slate-300 transition-colors shadow-2xs"
+                          className="rounded-2xl border border-slate-200/90 overflow-visible bg-slate-50/80 hover:border-slate-300 transition-colors shadow-2xs"
                         >
                           {/* Mobile Card Header */}
-                          <div className="sm:hidden bg-gradient-to-r from-sky-600 to-indigo-600 px-3.5 py-2 flex items-center justify-between text-white shadow-2xs">
+                          <div className="sm:hidden rounded-t-2xl bg-gradient-to-r from-sky-600 to-indigo-600 px-3.5 py-2 flex items-center justify-between text-white shadow-2xs">
                             <span className="font-black text-xs flex items-center gap-1.5 tracking-wide">
                               <Receipt className="w-3.5 h-3.5 text-white/90" />
                               รายการที่ {idx + 1}
@@ -3578,14 +3481,26 @@ function Finance({
 
                           <div className="p-2.5 sm:p-3 grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-2.5 items-center">
                             <div className="sm:col-span-6">
-                              <input
-                                type="text"
-                                placeholder="ค้นหาหรือพิมพ์ชื่อรายการ..."
-                                value={it.detail}
-                                onChange={(e) => handleUpdateTxItem(idx, 'detail', e.target.value)}
-                                required
-                                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all placeholder:text-slate-400"
-                              />
+                              {newTxFormData.type === 'expense' ? (
+                                <DbCombobox
+                                  options={inventoryItems}
+                                  dbTable="inventory_items"
+                                  placeholder="ค้นหาของในคลัง หรือพิมพ์รายการใหม่..."
+                                  value={it.detail}
+                                  required
+                                  onChange={(val) => handleUpdateTxItem(idx, 'detail', val)}
+                                  inputClassName="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors placeholder:text-slate-400"
+                                />
+                              ) : (
+                                <input
+                                  type="text"
+                                  placeholder="พิมพ์ชื่อรายการรายรับ..."
+                                  value={it.detail}
+                                  onChange={(e) => handleUpdateTxItem(idx, 'detail', e.target.value)}
+                                  required
+                                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors placeholder:text-slate-400"
+                                />
+                              )}
                             </div>
                             <div className="flex items-center gap-2 sm:col-span-2">
                               <span className="text-xs text-slate-500 font-bold sm:hidden">จำนวน:</span>
@@ -3627,6 +3542,53 @@ function Finance({
                               )}
                             </div>
                           </div>
+
+                          {newTxFormData.type === 'expense' && (() => {
+                            const matchedCatalogItem = matchInventoryItemByText(it.detail, inventoryItems);
+                            const detectedDenom = detectBanknoteDenomination(it.detail);
+                            const isSyncChecked =
+                              it.syncToWarehouse !== undefined
+                                ? Boolean(it.syncToWarehouse)
+                                : shouldAutoSyncExpenseLine(it.detail, newTxFormData.category, inventoryItems);
+                            return (
+                              <div className="px-3 py-2 bg-white/80 border-t border-slate-200/70 flex flex-wrap items-center justify-between gap-2">
+                                <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSyncChecked}
+                                    onChange={(e) => handleUpdateTxItem(idx, 'syncToWarehouse', e.target.checked)}
+                                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                  />
+                                  <span className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                                    <Package className="w-3.5 h-3.5 text-indigo-600" />
+                                    <span>
+                                      เพิ่มเข้ากระเป๋าคลังอัตโนมัติ (+{Number(it.quantity) || 1}{' '}
+                                      {detectedDenom ? 'ใบ' : matchedCatalogItem?.unit || 'ชิ้น'})
+                                    </span>
+                                  </span>
+                                </label>
+                                {it.detail.trim() && (
+                                  <span
+                                    className={`text-[11px] font-black px-2 py-0.5 rounded-full border ${
+                                      detectedDenom || matchedCatalogItem
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                        : isSyncChecked
+                                          ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                          : 'bg-slate-100 text-slate-500 border-slate-200'
+                                    }`}
+                                  >
+                                    {detectedDenom
+                                      ? `พบธนบัตร ฿${detectedDenom} · เติมเข้าคลังเงินสด`
+                                      : matchedCatalogItem
+                                        ? `พบในคลัง: ${matchedCatalogItem.name}`
+                                        : isSyncChecked
+                                          ? 'เพิ่มเป็นของใหม่เข้ากระเป๋าคลังอัตโนมัติ'
+                                          : 'ไม่เชื่อมคลัง'}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}

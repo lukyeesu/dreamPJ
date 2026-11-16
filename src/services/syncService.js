@@ -1549,153 +1549,9 @@ export async function saveCustomerSync(customerData) {
   }
 }
 
-export const DEFAULT_INVENTORY_ITEMS_SPEC = [
-  {
-    id: 'a808caa3-43b8-4bdf-b652-b775b4bf6d9c',
-    code: 'item0001',
-    name: 'กรรไกรตัดกระดาษ (สีน้ำเงิน)',
-    item_type: 'asset',
-    unit: 'อัน',
-    current_stock: 5,
-    min_alert_threshold: 2,
-    average_cost: 0,
-    storage_location: 'กล่องเครื่องมือ 1',
-    color: 'สีน้ำเงิน',
-    status: 'in_service',
-    is_active: true
-  },
-  {
-    id: 'b1111111-1111-1111-1111-111111111111',
-    code: 'item0002',
-    name: 'แท่นตัดเทปกาวตั้งโต๊ะ',
-    item_type: 'asset',
-    unit: 'อัน',
-    current_stock: 3,
-    min_alert_threshold: 1,
-    average_cost: 0,
-    storage_location: 'โต๊ะจัดดอกไม้ A',
-    color: '',
-    status: 'in_service',
-    is_active: true
-  },
-  {
-    id: 'b2222222-2222-2222-2222-222222222222',
-    code: 'ITM-TLP-WHT',
-    name: 'ดอกทิวลิปพลาสติก (สีขาว)',
-    item_type: 'reusable',
-    unit: 'ชิ้น',
-    current_stock: 500,
-    min_alert_threshold: 50,
-    average_cost: 25.0,
-    storage_location: 'ชั้นวางดอกไม้ C2',
-    color: 'สีขาว',
-    status: 'in_service',
-    is_active: true
-  },
-  {
-    id: 'b2222222-2222-2222-2222-333333333333',
-    code: 'ITM-ROS-RED',
-    name: 'ดอกกุหลาบพลาสติก (สีแดง)',
-    item_type: 'reusable',
-    unit: 'ชิ้น',
-    current_stock: 300,
-    min_alert_threshold: 30,
-    average_cost: 30.0,
-    storage_location: 'ชั้นวางดอกไม้ C1',
-    color: 'สีแดง',
-    status: 'in_service',
-    is_active: true
-  },
-  {
-    id: 'b4444444-4444-4444-4444-444444444444',
-    code: 'ITM-TAPE-CLR',
-    name: 'เทปกาวใสสำหรับจัดดอกไม้',
-    item_type: 'consumable',
-    unit: 'ม้วน',
-    current_stock: 40,
-    min_alert_threshold: 10,
-    average_cost: 35.0,
-    storage_location: 'ตู้เก็บพัสดุสิ้นเปลือง',
-    color: 'ใส',
-    status: 'in_service',
-    is_active: true
-  },
-  {
-    id: 'b4444444-4444-4444-4444-555555555555',
-    code: 'ITM-WRAP-PPR',
-    name: 'กระดาษปริ้นงาน / กระดาษห่อช่อ',
-    item_type: 'consumable',
-    unit: 'รีม',
-    current_stock: 25,
-    min_alert_threshold: 5,
-    average_cost: 15.0,
-    storage_location: 'ชั้นวางกระดาษ B1',
-    color: '',
-    status: 'in_service',
-    is_active: true
-  },
-  {
-    id: 'b3333333-3333-3333-3333-333333333333',
-    code: 'BNK-100',
-    name: 'ธนบัตร 100 บาท',
-    item_type: 'banknote',
-    unit: 'ใบ',
-    current_stock: 1000,
-    min_alert_threshold: 100,
-    average_cost: 100.0,
-    storage_location: 'ตู้เซฟประจำร้าน',
-    color: 'แดง',
-    status: 'in_service',
-    is_active: true
-  },
-  {
-    id: 'b3333333-3333-3333-3333-444444444444',
-    code: 'BNK-500',
-    name: 'ธนบัตร 500 บาท',
-    item_type: 'banknote',
-    unit: 'ใบ',
-    current_stock: 500,
-    min_alert_threshold: 50,
-    average_cost: 500.0,
-    storage_location: 'ตู้เซฟประจำร้าน',
-    color: 'ม่วง',
-    status: 'in_service',
-    is_active: true
-  },
-  {
-    id: 'b5555555-5555-5555-5555-555555555555',
-    code: 'TSK-DSGN',
-    name: 'ออกแบบช่อดอกไม้ & จัดวางธีม',
-    item_type: 'task',
-    unit: 'งาน',
-    current_stock: 9999,
-    min_alert_threshold: 0,
-    average_cost: 500.0,
-    storage_location: 'บริการในร้าน',
-    color: '',
-    status: 'in_service',
-    is_active: true
-  }
-];
-
-export const DEFAULT_ASSET_UNITS = [
-  {
-    unit_code: 'item0001',
-    item_id: 'a808caa3-43b8-4bdf-b652-b775b4bf6d9c',
-    status: 'AVAILABLE',
-    borrowed_by: null,
-    project_id: null,
-    notes: 'กรรไกรตัดผ้า/กระดาษ สีน้ำเงิน'
-  },
-  {
-    unit_code: 'item0002',
-    item_id: 'b1111111-1111-1111-1111-111111111111',
-    status: 'AVAILABLE',
-    borrowed_by: null,
-    project_id: null,
-    notes: 'แท่นตัดเทปกาวตั้งโต๊ะ'
-  }
-];
+// Purged legacy mockup catalog items — strictly load real rows from Supabase only
+export const DEFAULT_INVENTORY_ITEMS_SPEC = [];
+export const DEFAULT_ASSET_UNITS = [];
 
 // 13. คลังพัสดุและสต๊อก (Inventory Items) - Local-First + Zero-Egress Sync
 export async function loadInventoryLocalFirst(onUpdate) {
@@ -1706,7 +1562,6 @@ export async function loadInventoryLocalFirst(onUpdate) {
     } catch {}
 
     let cached = await db.inventory_items.toArray();
-    // Exclude banknotes from cached results
     cached = cached.filter((it) => String(it.item_type || '').toLowerCase() !== 'banknote');
 
     if (cached.length > 0 && onUpdate) {
@@ -1718,8 +1573,12 @@ export async function loadInventoryLocalFirst(onUpdate) {
       const page = await loadWarehouseStock();
       if (page) {
         const rows = page.items || [];
-        if (rows.length) await db.inventory_items.bulkPut(rows);
-        else if (page.total_count === 0) await db.inventory_items.clear();
+        if (!page.has_more) {
+          await db.inventory_items.clear();
+          if (rows.length) await db.inventory_items.bulkPut(rows);
+        } else if (rows.length) {
+          await db.inventory_items.bulkPut(rows);
+        }
         onUpdate?.(rows);
         return rows;
       }

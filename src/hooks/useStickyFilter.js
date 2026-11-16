@@ -22,7 +22,7 @@ export function useStickyFilter() {
         const mainEl = document.querySelector('main');
 
         const targetTop = isMobile
-          ? (header ? header.getBoundingClientRect().bottom : 56)
+          ? (header ? header.getBoundingClientRect().bottom : 72)
           : (mainEl ? mainEl.getBoundingClientRect().top : 0);
 
         const marginOffset = isMobile ? 8 : 12;

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import HeaderFilterPortal from './components/common/HeaderFilterPortal';
 import {
   Users,
   UserCheck,
@@ -253,6 +254,7 @@ function Staff({
     const defaultRole = 'technician';
     const suggestedCode = generateSuggestedStaffCode(defaultRole);
 
+    setIsViewOnly(false);
     setEditingStaffId(null);
     setEditingStaffExtra({
       banned_until: null,
@@ -282,8 +284,11 @@ function Staff({
   };
 
   // Open Edit Modal
-  const handleOpenEditModal = (staff) => {
+  const [isViewOnly, setIsViewOnly] = useState(false);
+
+  const handleOpenEditModal = (staff, startLocked = true) => {
     const staffId = staff.id || staff.staff_code || staff.username;
+    setIsViewOnly(Boolean(startLocked));
     setEditingStaffId(staffId);
     setEditingStaffExtra({
       banned_until: staff.banned_until || null,
@@ -323,6 +328,7 @@ function Staff({
 
   // Save Staff (React Hook Form onSubmit)
   const onSubmitStaff = async (formData) => {
+    if (isViewOnly) return;
     // Check duplicate username on create
     if (!editingStaffId) {
       const exists = staffList.some(
@@ -716,95 +722,57 @@ function Staff({
         </div>
       </div>
 
-      {/* 2. Controls & Search Bar (Revamped Filter System) */}
-      <div 
-        ref={filterSentinelRef} 
-        className="w-full h-0 -my-3 pointer-events-none opacity-0"
-      />
-      <div className={`bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out z-20 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 ${
-        isFilterStuck
-          ? '-mx-4 sm:-mx-6 lg:-mx-8 py-2 sm:py-2.5 px-4 sm:px-6 lg:px-8 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
-          : 'p-3 sm:p-3.5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
-      }`}>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
-          {/* Search Box with Clear Button */}
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="ค้นหาชื่อพนักงาน, ชื่อเล่น, รหัส (2611XXX), Username, เบอร์โทร..."
-              className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all placeholder:text-slate-400"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition cursor-pointer"
-                title="ล้างข้อความค้นหา"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+      {/* 2. Header-Integrated Search & Filter */}
+      <HeaderFilterPortal
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+        placeholder="ค้นหาชื่อพนักงาน, ชื่อเล่น, รหัส, เบอร์โทร..."
+        activeFilterCount={[roleFilter !== 'all', statusFilter !== 'all'].filter(Boolean).length}
+        onReset={() => {
+          setSearchQuery('');
+          setRoleFilter('all');
+          setStatusFilter('all');
+        }}
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div className="relative">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none flex items-center text-slate-400">
+              <Briefcase className="w-3.5 h-3.5 text-indigo-500" />
+            </div>
+            <select
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}
+              className="w-full h-10 pl-8 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 cursor-pointer appearance-none"
+              title="กรองตามตำแหน่งงาน"
+            >
+              <option value="all">ตำแหน่งทั้งหมด ({staffList.length})</option>
+              {activeRoleDefinitions.map((r) => {
+                const count = staffList.filter((s) => s.role === r.name).length;
+                return (
+                  <option key={r.name} value={r.name}>
+                    {r.label} ({count})
+                  </option>
+                );
+              })}
+            </select>
+            <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Role Dropdown Filter */}
-            <div className="relative w-40 sm:w-52 shrink-0">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none flex items-center text-slate-400">
-                <Briefcase className="w-3.5 h-3.5 text-indigo-500" />
-              </div>
-              <select
-                value={roleFilter}
-                onChange={(e) => setRoleFilter(e.target.value)}
-                className="w-full pl-8 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer appearance-none shadow-2xs"
-                title="กรองตามตำแหน่งงาน"
-              >
-                <option value="all">ตำแหน่งทั้งหมด ({staffList.length})</option>
-                {activeRoleDefinitions.map(r => {
-                  const count = staffList.filter(s => s.role === r.name).length;
-                  return (
-                    <option key={r.name} value={r.name}>
-                      {r.label} ({count})
-                    </option>
-                  );
-                })}
-              </select>
-              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            {/* Status Dropdown Filter (Converted from bulky pills) */}
-            <div className="relative w-36 sm:w-44 shrink-0">
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full pl-3 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer appearance-none shadow-2xs"
-                title="กรองตามสถานะงาน"
-              >
-                <option value="all">สถานะทั้งหมด</option>
-                <option value="active">พร้อมงาน ({stats.active})</option>
-                <option value="inactive">พักงาน ({stats.inactive})</option>
-              </select>
-              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            {/* Reset Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('');
-                setRoleFilter('all');
-                setStatusFilter('all');
-              }}
-              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer shadow-2xs"
-              title="ล้างค่าตัวกรองทั้งหมด"
+          <div className="relative">
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full h-10 pl-3.5 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 cursor-pointer appearance-none"
+              title="กรองตามสถานะงาน"
             >
-              <RotateCcw className="w-4 h-4" />
-            </button>
+              <option value="all">สถานะทั้งหมด</option>
+              <option value="active">พร้อมงาน ({stats.active})</option>
+              <option value="inactive">พักงาน ({stats.inactive})</option>
+            </select>
+            <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
         </div>
-      </div>
+      </HeaderFilterPortal>
 
       {/* 3. Staff Table Grid (Desktop) */}
       <div className="hidden md:block bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
@@ -1158,7 +1126,7 @@ function Staff({
                 <div>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                     <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
-                      {editingStaffId ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'}
+                      {editingStaffId ? (isViewOnly ? 'รายละเอียดข้อมูลพนักงาน' : 'แก้ไขข้อมูลพนักงาน') : 'เพิ่มพนักงานใหม่'}
                     </h3>
                     {watchedStaffCode && (
                       <span className="bg-indigo-50 text-indigo-600 text-xs sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 w-fit">
@@ -1167,7 +1135,9 @@ function Staff({
                     )}
                   </div>
                   <p className="text-xs sm:text-sm text-slate-500 font-medium">
-                    {editingStaffId ? 'ปรับปรุงข้อมูลส่วนตัว สิทธิ์การใช้งาน และรหัสผ่าน' : 'สร้างบัญชีพนักงานใหม่และกำหนดสิทธิ์เข้าใช้งานระบบ'}
+                    {editingStaffId
+                      ? (isViewOnly ? 'ล็อกป้องกันการแก้ไขโดยไม่ตั้งใจ กดปุ่มแก้ไขด้านล่างเพื่อปรับข้อมูล' : 'ปรับปรุงข้อมูลส่วนตัว สิทธิ์การใช้งาน และรหัสผ่าน')
+                      : 'สร้างบัญชีพนักงานใหม่และกำหนดสิทธิ์เข้าใช้งานระบบ'}
                   </p>
                 </div>
               </div>
@@ -1182,7 +1152,11 @@ function Staff({
 
             {/* Modal Form */}
             <form onSubmit={handleSubmit(onSubmitStaff)} className="flex flex-col flex-1 overflow-hidden">
-              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-6 overscroll-contain">
+              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar overscroll-contain">
+                <fieldset
+                  disabled={isViewOnly}
+                  className="block min-w-0 border-0 p-0 m-0 space-y-6 [&_input:disabled]:bg-slate-100 [&_input:disabled]:text-slate-500 [&_input:disabled]:cursor-not-allowed [&_select:disabled]:bg-slate-100 [&_select:disabled]:text-slate-500 [&_select:disabled]:cursor-not-allowed"
+                >
                 {/* Row 1: Username & Staff Code */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
@@ -1414,6 +1388,7 @@ function Staff({
                         <ModernDateTimePicker
                           value={field.value}
                           onChange={field.onChange}
+                          disabled={isViewOnly}
                           placeholder="เลือกวันเดือนปีเกิด"
                           hasTime={false}
                         />
@@ -1560,6 +1535,7 @@ function Staff({
                     </div>
                   </label>
                 </div>
+                </fieldset>
               </div>
 
               {/* Modal Footer (Sticky at Bottom) */}
@@ -1567,22 +1543,33 @@ function Staff({
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-all active:scale-95 cursor-pointer"
+                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
-                  ยกเลิก
+                  {isViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
-                >
-                  {isSaving ? (
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <Check className="w-4 h-4" />
-                  )}
-                  <span>{isSaving ? 'กำลังบันทึก...' : (editingStaffId ? 'บันทึกการแก้ไข' : 'สร้างบัญชีพนักงาน')}</span>
-                </button>
+                {isViewOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsViewOnly(false)}
+                    className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
+                  >
+                    <Edit className="w-4 h-4" />
+                    <span>แก้ไข</span>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSaving ? (
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4" />
+                    )}
+                    <span>{isSaving ? 'กำลังบันทึก...' : (editingStaffId ? 'บันทึกการแก้ไข' : 'สร้างบัญชีพนักงาน')}</span>
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -1781,7 +1768,7 @@ function Staff({
                 type="button"
                 onClick={() => {
                   setIsDetailModalOpen(false);
-                  handleOpenEditModal(selectedStaff);
+                  handleOpenEditModal(selectedStaff, false);
                 }}
                 className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
               >

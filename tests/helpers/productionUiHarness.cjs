@@ -15,6 +15,7 @@ global.HTMLInputElement = dom.window.HTMLInputElement;
 global.HTMLSelectElement = dom.window.HTMLSelectElement;
 global.HTMLTextAreaElement = dom.window.HTMLTextAreaElement;
 global.HTMLButtonElement = dom.window.HTMLButtonElement;
+global.HTMLFieldSetElement = dom.window.HTMLFieldSetElement;
 global.HTMLVideoElement = dom.window.HTMLVideoElement;
 global.requestAnimationFrame = (cb) => setTimeout(cb, 0);
 global.cancelAnimationFrame = (id) => clearTimeout(id);
@@ -70,7 +71,34 @@ async function loadProductionComponent(relativePath) {
           export const createTeam = (...a) => (getH().createTeam ? getH().createTeam(...a) : Promise.resolve({ success: true }));
           export const returnTools = (...a) => (getH().returnTools ? getH().returnTools(...a) : Promise.resolve({ success: true }));
           export const dispatchWarehouseCommand = (...a) => (getH().dispatchWarehouseCommand ? getH().dispatchWarehouseCommand(...a) : Promise.resolve({ success: true }));
+          export const resetWarehouseAuthSession = (...a) => (getH().resetWarehouseAuthSession ? getH().resetWarehouseAuthSession(...a) : undefined);
           export const generateIdempotencyKey = (...a) => (getH().generateIdempotencyKey ? getH().generateIdempotencyKey(...a) : crypto.randomUUID());
+        `,
+        loader: 'js'
+      }));
+
+      build.onResolve({ filter: /syncService(\.js)?$/ }, (args) => ({
+        path: args.path,
+        namespace: 'mock-ss'
+      }));
+      build.onLoad({ filter: /.*/, namespace: 'mock-ss' }, () => ({
+        contents: `
+          const getH = () => global.__PRODUCTION_TEST_HARNESS__ || {};
+          export const saveStaffSync = (...a) => (getH().saveStaffSync ? getH().saveStaffSync(...a) : Promise.resolve({ success: true }));
+        `,
+        loader: 'js'
+      }));
+
+      build.onResolve({ filter: /supabaseClient(\.js)?$/ }, (args) => ({
+        path: args.path,
+        namespace: 'mock-sb'
+      }));
+      build.onLoad({ filter: /.*/, namespace: 'mock-sb' }, () => ({
+        contents: `
+          const getH = () => global.__PRODUCTION_TEST_HARNESS__ || {};
+          export const supabase = null;
+          export const getActiveClient = () => (getH().getActiveClient ? getH().getActiveClient() : null);
+          export default null;
         `,
         loader: 'js'
       }));

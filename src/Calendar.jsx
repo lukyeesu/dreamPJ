@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import HeaderFilterPortal from './components/common/HeaderFilterPortal';
 import { systemStatusTypes } from './constants/appConstants';
 import {
   ChevronLeft,
@@ -30,6 +31,7 @@ const colorPresets = [
 const Calendar = ({ activities = [], onEventClick, onDayClick, dealStatuses = [], transportStatuses = [], onMonthChange }) => {
   const [viewDate, setViewDate] = useState(new Date());
   const [viewMode, setViewMode] = useState('month'); // 'month', 'week', 'day', 'list'
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedDayDetails, setSelectedDayDetails] = useState(null); // Data for modal
   const [isDayModalClosing, setIsDayModalClosing] = useState(false); // [ADDED] State for modal closing animation
   
@@ -85,10 +87,15 @@ const Calendar = ({ activities = [], onEventClick, onDayClick, dealStatuses = []
            dateObj.getFullYear() === today.getFullYear();
   };
 
-  // [OPTIMIZATION] Group events by day using rawDeliveryStart
+  // [OPTIMIZATION] Group events by day using rawDeliveryStart + Header Search
   const eventsMap = useMemo(() => {
     const map = {};
+    const q = searchQuery.trim().toLowerCase();
     (activities || []).forEach(item => {
+        if (q) {
+          const hay = `${item.id || ''} ${item.name || ''} ${item.artist || ''} ${item.customer || ''} ${item.category || ''} ${item.location || ''}`.toLowerCase();
+          if (!hay.includes(q)) return;
+        }
         // Requirement 4: Use rawDeliveryStart (Delivery Start Date) -> fallback to rawDateTime
         const dateStr = item.rawDeliveryStart || item.rawDeliveryDateTime || item.rawDateTime;
         if(!dateStr) return;
@@ -112,7 +119,7 @@ const Calendar = ({ activities = [], onEventClick, onDayClick, dealStatuses = []
     });
     
     return map;
-  }, [activities]);
+  }, [activities, searchQuery]);
 
   const getEventsForDate = (dateObj) => {
     const key = `${dateObj.getFullYear()}-${dateObj.getMonth()}-${dateObj.getDate()}`;
@@ -354,7 +361,7 @@ const Calendar = ({ activities = [], onEventClick, onDayClick, dealStatuses = []
                       
                       return (
                           <div key={dayIdx} className="space-y-2">
-                              <div className={`sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 z-10 px-3 py-2 rounded-lg flex items-center gap-2 border-l-4 ${isCurrent ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-slate-50 border-slate-300 text-slate-600'}`}>
+                              <div className={`sticky top-[calc(72px+env(safe-area-inset-top,0px))] md:top-0 z-10 px-3 py-2 rounded-lg flex items-center gap-2 border-l-4 ${isCurrent ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-slate-50 border-slate-300 text-slate-600'}`}>
                                   <span className="font-black w-6 text-right">{d.getDate()}</span>
                                   <span className="font-bold text-sm uppercase">{daysTH[d.getDay()]}</span>
                                   <div className="h-px bg-current opacity-10 flex-1 ml-2"></div>
@@ -603,22 +610,24 @@ const Calendar = ({ activities = [], onEventClick, onDayClick, dealStatuses = []
   };
 
   return (
-    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 px-4 sm:px-8 lg:px-10 pt-6 pb-24 md:pb-6 h-full flex flex-col">
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 px-4 sm:px-8 lg:px-10 pt-4 pb-24 md:pb-6 h-full flex flex-col">
+       <HeaderFilterPortal
+         searchValue={searchQuery}
+         onSearchChange={setSearchQuery}
+         placeholder="ค้นหางานในปฏิทิน, ศิลปิน, รหัส..."
+         onReset={() => setSearchQuery('')}
+       />
        {/* Requirement 3: Day Details Modal */}
        {renderDayDetailsModal()}
 
-       {/* [MODIFIED] Reorganized Header for Better Mobile Layout */}
-       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-2">
-          {/* Title Section */}
-          <div className="w-full xl:w-auto">
-             <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">ปฏิทินงาน</h2>
-             <p className="text-slate-500 mt-1 text-sm font-medium">
-                 {viewMode === 'list' 
-                    ? `รายการสัปดาห์ของ ${monthsTH[viewDate.getMonth()]} ${viewDate.getFullYear() + 543}` 
-                    : `ภาพรวม ${monthsTH[viewDate.getMonth()]} ${viewDate.getFullYear() + 543}`
-                 }
-             </p>
-          </div>
+       {/* Compact Date & View Switcher Row (Title already in AppBar!) */}
+       <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-2.5">
+          <p className="hidden xl:block text-slate-500 text-sm font-medium">
+              {viewMode === 'list' 
+                 ? `รายการสัปดาห์ของ ${monthsTH[viewDate.getMonth()]} ${viewDate.getFullYear() + 543}` 
+                 : `ภาพรวม ${monthsTH[viewDate.getMonth()]} ${viewDate.getFullYear() + 543}`
+              }
+          </p>
           
           {/* Controls Section (Date & View Switcher) */}
           <div className="flex flex-col gap-3 w-full xl:w-auto xl:flex-row xl:items-center">

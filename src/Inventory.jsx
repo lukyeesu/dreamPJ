@@ -60,6 +60,15 @@ import AddRecipientModal from './components/inventory/AddRecipientModal.jsx';
 import AddAssetUnitModal from './components/inventory/AddAssetUnitModal.jsx';
 import MigrationNoticeBanner from './components/inventory/MigrationNoticeBanner.jsx';
 import ProductionHubView from './components/inventory/ProductionHubView.jsx';
+import GameBackpackGrid from './components/inventory/GameBackpackGrid.jsx';
+import GameActionModal from './components/inventory/GameActionModal.jsx';
+import {
+  loadStagedBags,
+  upsertStagedBag,
+  removeStagedBag,
+  subscribeStagedBags
+} from './utils/stagedBagsService.js';
+import { buildProjectWithWarehouseExpense } from './utils/financeInventoryBridge.js';
 import * as productionService from './services/productionService.js';
 import Toast from './components/common/Toast.jsx';
 import PersistentPage from './components/common/PersistentPage.jsx';
@@ -70,14 +79,7 @@ const QrScanner = lazy(() => import('./components/inventory/QrScanner.jsx'));
 const QrLabelPrint = lazy(() => import('./components/inventory/QrLabelPrint.jsx'));
 
 /**
- * Plan C — Flower2you Warehouse & Inventory Main Component
- *
- * Implements the full inventory experience:
- * 1. ของในคลัง (Stock): Typebar, categories, colors, serialized tool availability, contextual issue cart
- * 2. เบิก–คืน (Custody Flow): Active tool custody, field rounds, partial return, tool handover, material recovery
- * 3. เงินสด (Petty Cash Vault): Denominations, counted opening, job reservation, helper work batches, RBAC gated
- * 4. ประวัติ (History): Audit log, legacy checklists, legacy asset loans, legacy services
- * 5. Full QR Integration: QrScanner and QrLabelPrint with lazy loading and leak-proof unmount
+ * Plan C + Game-Style Backpack Inventory Main Component
  */
 export default function Inventory({
   inventoryItems = [],
@@ -85,16 +87,34 @@ export default function Inventory({
   activities = [],
   isCreateOpen = false,
   onCloseCreate,
+  onHistoryModeChange,
   onOpenProjectModal,
+  onSaveActivity,
+  defaultExperience = 'classic',
+  externalGameActionRequest = null,
+  onClearExternalGameAction,
   onRefresh,
   isActive = true,
   userProfile = null,
   inventoryImageFolderId = '',
   driveUploadUrl = ''
 }) {
-  // 4 Primary Navigation Tabs: 'stock' | 'flows' | 'cash' | 'history'
+  // Game Mode vs Classic Table Mode ('game' is passed as default from App.jsx)
+  const [viewExperience, setViewExperience] = useState(defaultExperience); // 'game' | 'history' | 'classic'
+  // 4 Primary Navigation Tabs for classic mode: 'stock' | 'flows' | 'cash' | 'history'
   const [activeMainTab, setActiveMainTab] = useState('stock');
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
+
+  // Live Game Bag Dock State (1-tap pick, smart scan, staged bags, auto cash split)
+  const [gameBagItems, setGameBagItems] = useState([]);
+  const [gameBagCashLines, setGameBagCashLines] = useState([]);
+  const [isGameBagExpanded, setIsGameBagExpanded] = useState(false);
+  const [editingStagedBagId, setEditingStagedBagId] = useState(null);
+  const [editingStagedBagTitle, setEditingStagedBagTitle] = useState('');
+  const [gameInitialProjectIds, setGameInitialProjectIds] = useState([]);
+
+  // Pre-packed / Staged Bags State
+  const [stagedBags, setStagedBags] = useState([]);
 
   // Sticky Filter Sentinel
   const { filterSentinelRef } = useStickyFilter();
@@ -171,6 +191,12 @@ export default function Inventory({
     }
   }, [isCreateOpen, onCloseCreate]);
 
+  useEffect(() => {
+    if (typeof onHistoryModeChange === 'function') {
+      onHistoryModeChange(viewExperience === 'history');
+    }
+  }, [viewExperience, onHistoryModeChange]);
+
   const [unitsPages, setUnitsPages] = useState({});
   const [issueProjectId, setIssueProjectId] = useState('');
   const [printUnits, setPrintUnits] = useState([]);
@@ -228,6 +254,40 @@ export default function Inventory({
       setIsPrintWorkspaceOpen(true);
     } catch (error) { showToast(error.message, 'error'); }
   };
+
+  // Connect AppBar buttons from App.jsx header (Scan, Print, History, Refresh)
+  useEffect(() => {
+    if (!isActive || typeof window === 'undefined') return undefined;
+
+    const handleTriggerScan = () => {
+      setScannerIntent('borrow');
+      setIsScannerOpen(true);
+    };
+    const handleTriggerPrint = () => {
+      openPrint();
+    };
+    const handleTriggerHistory = () => {
+      setViewExperience((prev) => (prev === 'history' ? 'game' : 'history'));
+    };
+    const handleTriggerRefresh = () => {
+      refreshSummary();
+      refreshOperations();
+      if (isPrivilegedCashUser) refreshCash();
+      if (typeof onRefresh === 'function') onRefresh();
+    };
+
+    window.addEventListener('trigger-inventory-scan', handleTriggerScan);
+    window.addEventListener('trigger-inventory-print', handleTriggerPrint);
+    window.addEventListener('trigger-inventory-history', handleTriggerHistory);
+    window.addEventListener('trigger-inventory-refresh', handleTriggerRefresh);
+
+    return () => {
+      window.removeEventListener('trigger-inventory-scan', handleTriggerScan);
+      window.removeEventListener('trigger-inventory-print', handleTriggerPrint);
+      window.removeEventListener('trigger-inventory-history', handleTriggerHistory);
+      window.removeEventListener('trigger-inventory-refresh', handleTriggerRefresh);
+    };
+  });
 
   const loadUnitCatalog = async (search = '') => {
     const request = ++unitCatalogRequestRef.current;
@@ -309,17 +369,91 @@ export default function Inventory({
     setIsMobileCartOpen(false);
   }, []);
 
-  // Handle barcode / QR scan result (Exact case matching, availability check, pure state updater)
+  // Handle barcode / QR scan result (Smart Auto-Detect in Game Mode: Available -> Bag, Borrowed -> Instant Return!)
   const handleScanCode = useCallback(async (scannedCode) => {
     const code = String(scannedCode || '').trim();
     if (!code) return;
 
-    // Exact case match only (preserve case)
+    // 1. Check serialized tool unit first (exact match)
     let unitMatch = assetUnits.find(u => u.unit_code === code);
     if (!unitMatch) {
       try { unitMatch = (await loadWarehouseUnits({unit_code: code, limit: 1}))?.units?.[0]; }
-      catch (error) { showToast(error.message, 'error'); return; }
+      catch { /* May be an item barcode instead of a unit code */ }
     }
+
+    if (viewExperience === 'game') {
+      if (unitMatch) {
+        const itemMatch = items.find(it => String(it.id) === String(unitMatch.item_id)) || (unitMatch.item ? {...unitMatch.item, item_type: 'asset'} : null);
+        setAssetUnits(prev => [...new Map([...prev, unitMatch].map(unit => [unit.unit_code, unit])).values()]);
+        const isBorrowed = String(unitMatch.status || '').toUpperCase() === 'BORROWED' || Boolean(unitMatch.borrowed_by) || Boolean(unitMatch.active_recipient);
+
+        if (isBorrowed) {
+          // Instant 1-Step Return!
+          try {
+            await returnTools({ returns: [{ unit_code: unitMatch.unit_code, condition: 'good' }] });
+            setIsScannerOpen(false);
+            showToast(`คืนสำเร็จ! รับ "${itemMatch?.name || 'อุปกรณ์'} (${unitMatch.unit_code})" กลับเข้าคลังแล้ว`);
+            await refreshSummary();
+            await refreshOperations();
+          } catch (err) {
+            showToast(err.message || `รับคืน ${unitMatch.unit_code} ไม่สำเร็จ`, 'error');
+          }
+          return;
+        }
+
+        if (!itemMatch) {
+          showToast(`พบรหัส "${code}" แต่ไม่พบข้อมูลสินค้าในคลัง`, 'error');
+          return;
+        }
+
+        // Available unit -> Add straight into Game Bag!
+        setGameBagItems((prev) => {
+          const exists = prev.find((it) => String(it.id) === String(itemMatch.id));
+          if (exists) {
+            const nextCodes = exists.unitCodes?.includes(unitMatch.unit_code)
+              ? exists.unitCodes
+              : [...(exists.unitCodes || []), unitMatch.unit_code];
+            return prev.map((it) =>
+              String(it.id) === String(itemMatch.id)
+                ? { ...it, quantity: nextCodes.length, unitCodes: nextCodes }
+                : it
+            );
+          }
+          return [...prev, { ...itemMatch, quantity: 1, unitCodes: [unitMatch.unit_code] }];
+        });
+        setIsScannerOpen(false);
+        showToast(`หยิบ "${itemMatch.name} (${unitMatch.unit_code})" ใส่กระเป๋าแล้ว`);
+        return;
+      }
+
+      // 2. Check catalog item code / barcode (consumable or reusable box barcode!)
+      let catalogMatch = items.find(it => String(it.code || '').trim() === code);
+      if (!catalogMatch) {
+        try {
+          const page = await loadWarehouseStock({ search: code, limit: 5, offset: 0 });
+          catalogMatch = (page?.items || []).find(it => String(it.code || '').trim() === code);
+        } catch {}
+      }
+      if (catalogMatch) {
+        setGameBagItems((prev) => {
+          const exists = prev.find((it) => String(it.id) === String(catalogMatch.id));
+          if (exists) {
+            return prev.map((it) =>
+              String(it.id) === String(catalogMatch.id) ? { ...it, quantity: Number(it.quantity || 1) + 1 } : it
+            );
+          }
+          return [...prev, { ...catalogMatch, quantity: 1, unitCodes: [] }];
+        });
+        setIsScannerOpen(false);
+        showToast(`หยิบ "${catalogMatch.name}" (+1 ${catalogMatch.unit || 'ชิ้น'}) ใส่กระเป๋าแล้ว`);
+        return;
+      }
+
+      showToast(`ไม่พบรหัส "${code}" บน Supabase`, 'error');
+      return;
+    }
+
+    // Classic mode scan flow
     if (!unitMatch) {
       showToast(`ไม่พบรหัสเครื่องมือ "${code}" ในระบบคลัง`, 'error');
       return;
@@ -332,23 +466,19 @@ export default function Inventory({
       return;
     }
 
-    // Check intent
     if (scannerIntent === 'return') {
-      // Return intent: Switch to flows view
       setActiveMainTab('flows');
       setIsScannerOpen(false);
       showToast(`สแกนพบเครื่องมือ "${itemMatch.name} (${unitMatch.unit_code})" ในระบบ สามารถกดรับคืนได้ในหน้านี้`);
       return;
     }
 
-    // Borrow intent: Check availability before adding to cart
     const isUnitAvailable = String(unitMatch.status || '').toUpperCase() === 'AVAILABLE' && !unitMatch.borrowed_by;
     if (!isUnitAvailable) {
       showToast(`เครื่องมือรหัส "${unitMatch.unit_code}" ถูกยืมอยู่แล้ว (ผู้ถือครอง: ${unitMatch.borrowed_by || 'ไม่ระบุ'})`, 'error');
       return;
     }
 
-    // Check if unit is already selected in cart
     let alreadyInCart = false;
     cartItems.forEach(ci => {
       if (ci.selectedUnits && ci.selectedUnits.includes(unitMatch.unit_code)) {
@@ -361,7 +491,6 @@ export default function Inventory({
       return;
     }
 
-    // Add to cart purely without side-effects in state updater
     setCartItems((prev) => {
       const existingCartItem = prev.find(it => String(it.id) === String(itemMatch.id));
       if (existingCartItem) {
@@ -383,7 +512,7 @@ export default function Inventory({
     });
 
     showToast(`เพิ่ม "${itemMatch.name} (${unitMatch.unit_code})" ลงในตะกร้าแล้ว`);
-  }, [assetUnits, items, setAssetUnits, scannerIntent, cartItems, showToast]);
+  }, [assetUnits, items, setAssetUnits, viewExperience, scannerIntent, cartItems, showToast, refreshSummary, refreshOperations]);
 
   // Submit Issue Cart transaction (Atomic mixed cart via createIssue with stable idempotency key)
   const handleSubmitIssueCart = async (payload, onSuccess) => {
@@ -451,7 +580,7 @@ export default function Inventory({
       // Refresh data (if refresh fails, inform user that transaction succeeded on server)
       try {
         await refreshSummary();
-        if (activeMainTab === 'flows') await refreshOperations();
+        await refreshOperations();
       } catch (refreshErr) {
         console.warn('Post-transaction refresh failed:', refreshErr);
         showToast('บันทึกการเบิกสำเร็จแล้ว แต่การดึงข้อมูลล่าสุดล้มเหลว กรุณากดรีเฟรช', 'warning');
@@ -694,6 +823,28 @@ export default function Inventory({
     }
   };
 
+  const handleQuickCreatePrintUnit = async ({ itemId, unitCode, idempotencyKey }) => {
+    await addAssetUnit({
+      itemId,
+      unitCode,
+      notes: '',
+      idempotencyKey
+    });
+    showToast(`สร้างรหัส ${unitCode} พร้อมพิมพ์แล้ว`);
+    const rows = [];
+    let offset = 0;
+    while (rows.length < 500) {
+      const page = await loadWarehouseUnits({ offset, limit: 50 });
+      if (!page) break;
+      rows.push(...(page.units || []));
+      if (!page.has_more) break;
+      offset += 50;
+    }
+    setPrintUnits(rows);
+    await refreshSummary();
+    return unitCode;
+  };
+
   // Stock Receive / Adjustment (Sends signed delta without client-side clamp)
   const handleAdjustStock = async ({ itemId, direction, quantity, reason, notes, idempotencyKey }, onSuccess) => {
     const delta = direction === 'in' ? Number(quantity) : -Number(quantity);
@@ -743,8 +894,350 @@ export default function Inventory({
     }
   };
 
+  // Load & subscribe to Pre-packed Staged Bags
+  useEffect(() => {
+    let active = true;
+    loadStagedBags().then((bags) => {
+      if (active) setStagedBags(bags);
+    });
+    const unsub = subscribeStagedBags((bags) => {
+      if (active) setStagedBags(bags);
+    });
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, []);
+
+  // Watch external Game Action shortcut (e.g. from Project Cards on Home/Plans page!)
+  useEffect(() => {
+    if (externalGameActionRequest && externalGameActionRequest.projectId) {
+      setViewExperience('game');
+      setGameInitialProjectIds([String(externalGameActionRequest.projectId)]);
+      setIsGameBagExpanded(true);
+      if (typeof onClearExternalGameAction === 'function') {
+        onClearExternalGameAction();
+      }
+    }
+  }, [externalGameActionRequest, onClearExternalGameAction]);
+
+  // =========================================================================
+  // 1-TAP GAME BAG DOCK HANDLERS
+  // =========================================================================
+  const handleTapPickGameItem = useCallback((item) => {
+    if (!item?.id) return;
+    const itemId = String(item.id);
+    const cls = String(item.item_type || '').trim().toLowerCase();
+    const isAsset = cls === 'asset' || cls === 'tool' || cls === 'equipment';
+
+    if (isAsset) {
+      loadItemUnits(itemId);
+      setGameBagItems((prev) => {
+        const existing = prev.find((it) => String(it.id) === itemId);
+        if (existing) {
+          return prev.filter((it) => String(it.id) !== itemId);
+        }
+        const availUnits = (assetUnits || []).filter(
+          (u) =>
+            String(u.item_id) === itemId &&
+            String(u.status || '').toUpperCase() === 'AVAILABLE' &&
+            !u.borrowed_by &&
+            !u.active_recipient
+        );
+        const prePicked = availUnits.length > 0 ? [availUnits[0].unit_code] : [];
+        return [...prev, { ...item, quantity: Math.max(1, prePicked.length), unitCodes: prePicked }];
+      });
+      return;
+    }
+
+    const maxStock = Math.max(0, Number(item.current_stock) || 0);
+    setGameBagItems((prev) => {
+      const existing = prev.find((it) => String(it.id) === itemId);
+      if (existing) {
+        const nextQty = Math.min(maxStock || existing.quantity + 1, Number(existing.quantity || 1) + 1);
+        return prev.map((it) => (String(it.id) === itemId ? { ...it, quantity: nextQty } : it));
+      }
+      if (maxStock <= 0) return prev;
+      return [...prev, { ...item, quantity: 1, unitCodes: [] }];
+    });
+  }, [assetUnits, loadItemUnits]);
+
+  const handleUpdateGameBagItemQty = useCallback((itemId, nextQty) => {
+    const num = Math.floor(Number(nextQty) || 0);
+    if (num <= 0) {
+      setGameBagItems((prev) => prev.filter((it) => String(it.id) !== String(itemId)));
+      return;
+    }
+    setGameBagItems((prev) =>
+      prev.map((it) => (String(it.id) === String(itemId) ? { ...it, quantity: num } : it))
+    );
+  }, []);
+
+  const handleToggleGameBagItemUnit = useCallback((itemId, unitCode, checked) => {
+    setGameBagItems((prev) =>
+      prev.map((it) => {
+        if (String(it.id) !== String(itemId)) return it;
+        const currentCodes = Array.isArray(it.unitCodes) ? it.unitCodes : [];
+        const nextCodes = checked
+          ? currentCodes.includes(unitCode)
+            ? currentCodes
+            : [...currentCodes, unitCode]
+          : currentCodes.filter((c) => c !== unitCode);
+        return {
+          ...it,
+          unitCodes: nextCodes,
+          quantity: Math.max(1, nextCodes.length)
+        };
+      })
+    );
+  }, []);
+
+  const handleAddComboToGameBag = useCallback((companionItem, suggestQty = 1) => {
+    if (!companionItem?.id) return;
+    const compId = String(companionItem.id);
+    const maxStock = Math.max(1, Number(companionItem.current_stock) || 1);
+    const addQty = Math.min(maxStock, Math.max(1, Number(suggestQty) || 1));
+    setGameBagItems((prev) => {
+      const exists = prev.find((it) => String(it.id) === compId);
+      if (exists) {
+        return prev.map((it) =>
+          String(it.id) === compId
+            ? { ...it, quantity: Math.min(maxStock, Number(it.quantity || 1) + addQty) }
+            : it
+        );
+      }
+      return [...prev, { ...companionItem, quantity: addQty, unitCodes: [] }];
+    });
+  }, []);
+
+  const handleRemoveGameBagItem = useCallback((itemId) => {
+    setGameBagItems((prev) => prev.filter((it) => String(it.id) !== String(itemId)));
+  }, []);
+
+  const handleTapPickGameCash = useCallback((denomination, step = 20) => {
+    const denom = Number(denomination);
+    if (!denom) return;
+    const denomRow = (cashSummary?.denominations || []).find((d) => Number(d.denomination) === denom);
+    const maxAvail = denomRow
+      ? Number(denomRow.available_count ?? Math.max(0, (Number(denomRow.physical_count) || 0) - (Number(denomRow.reserved_count) || 0)))
+      : 0;
+    if (maxAvail <= 0) return;
+
+    setGameBagCashLines((prev) => {
+      const exists = prev.find((c) => Number(c.denomination) === denom);
+      if (exists) {
+        const nextCount = Math.min(maxAvail, Number(exists.noteCount || 0) + step);
+        return prev.map((c) => (Number(c.denomination) === denom ? { ...c, noteCount: nextCount } : c));
+      }
+      return [...prev, { denomination: denom, noteCount: Math.min(maxAvail, step) }];
+    });
+  }, [cashSummary]);
+
+  const handleUpdateGameCashLine = useCallback((denomination, nextCount) => {
+    const denom = Number(denomination);
+    const count = Math.floor(Number(nextCount) || 0);
+    if (count <= 0) {
+      setGameBagCashLines((prev) => prev.filter((c) => Number(c.denomination) !== denom));
+      return;
+    }
+    setGameBagCashLines((prev) =>
+      prev.map((c) => (Number(c.denomination) === denom ? { ...c, noteCount: count } : c))
+    );
+  }, []);
+
+  const handleRemoveGameCashLine = useCallback((denomination) => {
+    setGameBagCashLines((prev) => prev.filter((c) => Number(c.denomination) !== Number(denomination)));
+  }, []);
+
+  const handleClearGameBag = useCallback(() => {
+    setGameBagItems([]);
+    setGameBagCashLines([]);
+    setEditingStagedBagId(null);
+    setEditingStagedBagTitle('');
+    setIsGameBagExpanded(false);
+  }, []);
+
+  const handleLoadStagedBagToDock = useCallback((bag) => {
+    if (!bag) return;
+    const hydrated = (bag.items || []).map((line) => {
+      const catalogItem = items.find((i) => String(i.id) === String(line.item_id)) || {};
+      const cls = String(line.item_type || catalogItem.item_type || '').toLowerCase();
+      if (cls === 'asset' || cls === 'tool' || cls === 'equipment') {
+        loadItemUnits(line.item_id);
+      }
+      return {
+        ...catalogItem,
+        id: line.item_id,
+        name: line.name || catalogItem.name,
+        unit: line.unit || catalogItem.unit || 'ชิ้น',
+        item_type: line.item_type || catalogItem.item_type || 'consumable',
+        quantity: Number(line.quantity) || 1,
+        unitCodes: Array.isArray(line.unit_codes) ? line.unit_codes : []
+      };
+    });
+    setGameBagItems(hydrated);
+    setEditingStagedBagId(bag.id);
+    setEditingStagedBagTitle(bag.title || '');
+    const projIds = Array.isArray(bag.projectIds) && bag.projectIds.length > 0
+      ? bag.projectIds
+      : bag.projectId
+        ? [bag.projectId]
+        : [];
+    setGameInitialProjectIds(projIds);
+    setIsGameBagExpanded(true);
+  }, [items, loadItemUnits]);
+
+  const handleQuickReturnToolFromGrid = useCallback(async (unitCode) => {
+    await handleReturnTools({
+      returns: [{ unit_code: unitCode, condition: 'good' }]
+    });
+  }, [handleReturnTools]);
+
+  const handleQuickSalvageReusableFromGrid = useCallback(async ({ line, goodQty, damagedQty }) => {
+    await handleRecoverMaterials({
+      projectId: line.project_id || null,
+      recipientName: line.recipient_name || '',
+      items: [
+        {
+          source_issue_movement_id: line.movement_id || line.id,
+          item_id: line.item_id,
+          recovered_qty: Number(goodQty) + Number(damagedQty),
+          inspect_now: true,
+          good_qty: Number(goodQty),
+          damaged_qty: Number(damagedQty)
+        }
+      ],
+      notes: `เก็บของวนใช้ซ้ำกลับคลัง (ดี ${goodQty}, ชำรุดหน้างาน ${damagedQty} ไม่คิดเงินพนักงาน)`
+    });
+  }, [handleRecoverMaterials]);
+
+  const handleQuickCompleteCashBatchFromGrid = useCallback(async (batch) => {
+    try {
+      await receivePreparedCash({
+        batchId: batch.id,
+        preparedCount: batch.remainingCount,
+        notes: 'รับช่อเงินที่พับเสร็จเข้าคลังพร้อมส่งลูกค้า'
+      });
+      await refreshCash();
+      showToast(`รับช่อเงินแบงค์ ${batch.denomination} (${batch.remainingCount} ใบ) จาก ${batch.recipient_name || 'คนพับ'} เรียบร้อย!`);
+    } catch (err) {
+      showToast(err.message || 'รับช่อเงินไม่สำเร็จ', 'error');
+      throw err;
+    }
+  }, [refreshCash, showToast]);
+
+  const handleQuickReturnRawCashBatchFromGrid = useCallback(async (batch) => {
+    try {
+      await returnUnusedRawCash({
+        batchId: batch.id,
+        returnCount: batch.remainingCount,
+        keepReservation: true,
+        notes: 'รับคืนธนบัตรเปล่าเข้าคลัง'
+      });
+      await refreshCash();
+      showToast(`รับคืนธนบัตรเปล่า ${batch.denomination} (${batch.remainingCount} ใบ) เข้าคลังเรียบร้อย!`);
+    } catch (err) {
+      showToast(err.message || 'รับคืนธนบัตรไม่สำเร็จ', 'error');
+      throw err;
+    }
+  }, [refreshCash, showToast]);
+
+  // Quick Restock from Game Backpack (+ Optional Seamless Finance Expense Sync!)
+  const handleQuickRestockFromBackpack = async ({
+    itemId,
+    item,
+    quantity,
+    recordExpenseToo,
+    expenseTotalBaht,
+    expenseProjectId,
+    idempotencyKey
+  }) => {
+    await adjustStock({
+      itemId,
+      deltaQuantity: Number(quantity),
+      reason: recordExpenseToo
+        ? `เติมของเข้ากระเป๋า + ลงบิลการเงิน (${expenseProjectId || 'SHOP-STOCK'})`
+        : 'เติมของด่วนจากกระเป๋าคลัง',
+      idempotencyKey
+    });
+
+    if (recordExpenseToo && Number(expenseTotalBaht) > 0) {
+      try {
+        const targetProj = (activities || []).find(
+          (a) => String(a.id || '').toLowerCase() === String(expenseProjectId || 'SHOP-STOCK').toLowerCase()
+        );
+        const updatedProj = await buildProjectWithWarehouseExpense({
+          targetProject: targetProj,
+          projectId: expenseProjectId || 'SHOP-STOCK',
+          itemName: item?.name || 'เติมของคลังสินค้า',
+          itemId,
+          quantity: Number(quantity),
+          totalCost: Number(expenseTotalBaht)
+        });
+        if (typeof onSaveActivity === 'function') {
+          await onSaveActivity(updatedProj);
+        }
+        showToast(`เติม +${quantity} ${item?.unit || 'ชิ้น'} เข้ากระเป๋า และลงบิลรายจ่ายหน้าการเงินเรียบร้อย!`);
+      } catch (finErr) {
+        showToast(`เติมของเข้าคลังสำเร็จ แต่บันทึกบิลการเงินไม่สำเร็จ: ${finErr.message}`, 'warning');
+      }
+    } else {
+      showToast(`เติมของ +${quantity} ${item?.unit || 'ชิ้น'} เข้ากระเป๋าคลังเรียบร้อย!`);
+    }
+
+    await refreshSummary();
+  };
+
+  // Quick Deposit Banknotes from Game Backpack (Bank Reserve vs Project Support)
+  const handleQuickDepositCashFromBackpack = async ({
+    denomination,
+    noteCount,
+    sourceMode,
+    projectId,
+    idempotencyKey
+  }) => {
+    await depositCash({
+      denomination: Number(denomination),
+      noteCount: Number(noteCount),
+      projectId: sourceMode === 'project_support' ? projectId : null,
+      notes:
+        sourceMode === 'project_support'
+          ? `รับธนบัตรสนับสนุนศิลปินเข้าโปรเจกต์ ${projectId}`
+          : 'เบิกเงินสำรองร้านจากธนาคารเข้าคลังธนบัตร (ไม่คิดเป็นรายจ่าย)',
+      idempotencyKey
+    });
+
+    if (sourceMode === 'project_support' && projectId) {
+      try {
+        await reserveCash({
+          projectId,
+          denomination: Number(denomination),
+          noteCount: Number(noteCount),
+          notes: `จองธนบัตรอัตโนมัติให้งาน ${projectId}`
+        });
+      } catch {
+        // Optional reservation convenience
+      }
+    }
+
+    await refreshCash();
+    showToast(`เติมธนบัตร ${denomination} บาท (+${noteCount} ใบ) เข้ากระเป๋าคลังเรียบร้อย!`);
+  };
+
+  const handleSaveStagedBag = async (bagPayload) => {
+    const saved = await upsertStagedBag(bagPayload);
+    const all = await loadStagedBags();
+    setStagedBags(all);
+    return saved;
+  };
+
+  const handleDeleteStagedBag = async (bagId) => {
+    const remaining = await removeStagedBag(bagId);
+    setStagedBags(remaining);
+  };
+
   return (
-    <div className="w-full max-w-[3840px] mx-auto px-3 sm:px-6 py-4 md:py-6 space-y-4">
+    <div className="w-full max-w-[3840px] mx-auto p-4 pb-28 md:pb-4 space-y-4">
       {/* Toast Notification */}
       {toast && (
         <Toast
@@ -780,48 +1273,131 @@ export default function Inventory({
         </div>
       )}
 
-      {/* Main Brand Header */}
-      <InventoryHeader
-        activeTab={activeMainTab}
-        onOpenReceiveStock={() => setIsStockAdjustOpen(true)}
-        onOpenCategories={() => setIsCategoriesOpen(true)}
-        onOpenBatchPrint={() => openPrint()}
-        onOpenScanner={() => {
-          setScannerIntent('borrow');
-          setIsScannerOpen(true);
-        }}
-        onOpenCreateItem={() => {
-          setEditingItem(null);
-          setIsItemModalOpen(true);
-        }}
-        onRefresh={() => {
-          refreshSummary();
-          if (activeMainTab === 'flows') refreshOperations();
-          if (activeMainTab === 'cash') refreshCash();
-          if (typeof onRefresh === 'function') onRefresh();
-        }}
-        isRefreshing={isLoading || isCashLoading}
-      />
-
       {/* Sentinel for sticky filter calculation */}
       <div ref={filterSentinelRef} className="h-0 w-full" />
 
-      {/* 4 Main View Navigation Tabs */}
-      <InventoryNavTabs
-        activeTab={activeMainTab}
-        onChangeTab={tab => { setIsMobileCartOpen(false); setActiveMainTab(tab); }}
-        activeBorrowCount={activeBorrowCount}
-        activeRecoveryPendingCount={pendingRecoveryCount}
-      />
+      {/* ===================================================================== */}
+      {/* EXPERIENCE 1 (DEFAULT IN APP): PURE GAME-STYLE BACKPACK INVENTORY     */}
+      {/* ===================================================================== */}
+      {viewExperience === 'game' && (
+        isLoading && items.length === 0 ? (
+          <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-3">
+            <RefreshCw className="w-8 h-8 text-[var(--theme-main,#8b5cf6)] animate-spin mx-auto" />
+            <p className="text-sm font-bold text-slate-700">กำลังเปิดกระเป๋าคลังสินค้า...</p>
+          </div>
+        ) : (
+          <GameBackpackGrid
+            items={items}
+            categories={categories}
+            assetUnits={assetUnits}
+            operations={operations}
+            cashSummary={cashSummary}
+            isPrivilegedCashUser={isPrivilegedCashUser}
+            activities={activities}
+            stagedBags={stagedBags}
+            bagItems={gameBagItems}
+            bagCashLines={gameBagCashLines}
+            isRefreshing={isLoading || isCashLoading}
+            onSmartScanClick={() => {
+              setScannerIntent('borrow');
+              setIsScannerOpen(true);
+            }}
+            onOpenHistory={() => setViewExperience('history')}
+            onRefreshAll={() => {
+              refreshSummary();
+              refreshOperations();
+              if (isPrivilegedCashUser) refreshCash();
+              if (typeof onRefresh === 'function') onRefresh();
+            }}
+            onTapPickItem={handleTapPickGameItem}
+            onUpdateBagItemQty={handleUpdateGameBagItemQty}
+            onTapPickCash={handleTapPickGameCash}
+            onUpdateCashLine={handleUpdateGameCashLine}
+            onLoadStagedBagToDock={handleLoadStagedBagToDock}
+            onSaveStagedBag={handleSaveStagedBag}
+            onDeleteStagedBag={handleDeleteStagedBag}
+            onQuickReturnTool={handleQuickReturnToolFromGrid}
+            onQuickSalvageReusable={handleQuickSalvageReusableFromGrid}
+            onQuickCompleteCashBatch={handleQuickCompleteCashBatchFromGrid}
+            onQuickReturnRawCashBatch={handleQuickReturnRawCashBatchFromGrid}
+            onQuickRestockItem={handleQuickRestockFromBackpack}
+            onQuickDepositCash={handleQuickDepositCashFromBackpack}
+            onOpenCreateItem={() => {
+              setEditingItem(null);
+              setIsItemModalOpen(true);
+            }}
+            onOpenEditItem={(item) => {
+              setEditingItem(item);
+              setIsItemModalOpen(true);
+            }}
+            onOpenAddUnit={(item) => {
+              setTargetItemForUnit(item);
+              setIsAddUnitOpen(true);
+            }}
+            onOpenPrintItem={openPrint}
+            onOpenCategories={() => setIsCategoriesOpen(true)}
+            onLoadMore={loadMoreStock}
+            hasMore={Boolean(stockPage?.has_more)}
+            isLoadingMore={Boolean(stockPage?.loading)}
+          />
+        )
+      )}
 
-      {/* Loading Skeleton */}
-      {isLoading && items.length === 0 ? (
-        <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-3">
-          <RefreshCw className="w-8 h-8 text-[var(--theme-main,#8b5cf6)] animate-spin mx-auto" />
-          <p className="text-sm font-bold text-slate-700">กำลังโหลดข้อมูลคลังสินค้า...</p>
-        </div>
-      ) : (
+      {/* ===================================================================== */}
+      {/* EXPERIENCE 2: QUICK AUDIT HISTORY BOOK (TOGGLED VIA APPBAR)           */}
+      {/* ===================================================================== */}
+      {viewExperience === 'history' && (
+        <HistoryAuditView
+          assetLoans={assetLoans}
+          checklistItems={checklistItems}
+          items={items}
+          activities={activities}
+          onOpenProjectModal={onOpenProjectModal}
+          isPrivilegedCash={isPrivilegedCashUser}
+        />
+      )}
+
+      {/* ===================================================================== */}
+      {/* EXPERIENCE 3: CLASSIC TABLE VIEW (PRESERVED FOR LEGACY AUDIT TESTS)   */}
+      {/* ===================================================================== */}
+      {viewExperience === 'classic' && (
         <>
+          <InventoryHeader
+            activeTab={activeMainTab}
+            onOpenReceiveStock={() => setIsStockAdjustOpen(true)}
+            onOpenCategories={() => setIsCategoriesOpen(true)}
+            onOpenBatchPrint={() => openPrint()}
+            onOpenScanner={() => {
+              setScannerIntent('borrow');
+              setIsScannerOpen(true);
+            }}
+            onOpenCreateItem={() => {
+              setEditingItem(null);
+              setIsItemModalOpen(true);
+            }}
+            onRefresh={() => {
+              refreshSummary();
+              if (activeMainTab === 'flows') refreshOperations();
+              if (activeMainTab === 'cash') refreshCash();
+              if (typeof onRefresh === 'function') onRefresh();
+            }}
+            isRefreshing={isLoading || isCashLoading}
+          />
+
+          <InventoryNavTabs
+            activeTab={activeMainTab}
+            onChangeTab={tab => { setIsMobileCartOpen(false); setActiveMainTab(tab); }}
+            activeBorrowCount={activeBorrowCount}
+            activeRecoveryPendingCount={pendingRecoveryCount}
+          />
+
+          {isLoading && items.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-3">
+              <RefreshCw className="w-8 h-8 text-[var(--theme-main,#8b5cf6)] animate-spin mx-auto" />
+              <p className="text-sm font-bold text-slate-700">กำลังโหลดข้อมูลคลังสินค้า...</p>
+            </div>
+          ) : (
+            <>
           {/* ========================================================================= */}
           {/* TAB 1: ของในคลัง (Stock View with Contextual Issue Cart)                   */}
           {/* ========================================================================= */}
@@ -949,12 +1525,51 @@ export default function Inventory({
               isPrivilegedCash={isPrivilegedCashUser}
             />
           )}
+            </>
+          )}
         </>
       )}
 
       {/* ========================================================================= */}
-      {/* MODALS & WORKSPACES                                                       */}
+      {/* MODALS & FLOATING GAME BAG DOCK                                           */}
       {/* ========================================================================= */}
+
+      {/* Floating + Slide-Up Game Bag Dock (Appears automatically when items/cash are picked!) */}
+      {isActive && viewExperience === 'game' && (
+        <GameActionModal
+          bagItems={gameBagItems}
+          bagCashLines={gameBagCashLines}
+          editingBagId={editingStagedBagId}
+          editingBagTitle={editingStagedBagTitle}
+          isExpanded={isGameBagExpanded}
+          onToggleExpand={() => setIsGameBagExpanded((v) => !v)}
+          onClearBag={handleClearGameBag}
+          onUpdateBagItemQty={handleUpdateGameBagItemQty}
+          onToggleBagItemUnit={handleToggleGameBagItemUnit}
+          onAddComboItem={handleAddComboToGameBag}
+          onRemoveBagItem={handleRemoveGameBagItem}
+          onUpdateCashLine={handleUpdateGameCashLine}
+          onRemoveCashLine={handleRemoveGameCashLine}
+          initialProjectIds={gameInitialProjectIds}
+          items={items}
+          assetUnits={assetUnits}
+          activities={activities}
+          recipients={recipients}
+          cashSummary={cashSummary}
+          isPrivilegedCashUser={isPrivilegedCashUser}
+          stagedBags={stagedBags}
+          onSaveStagedBag={handleSaveStagedBag}
+          onDeleteStagedBag={handleDeleteStagedBag}
+          onCreateIssue={handleSubmitIssueCart}
+          onIssueCashBatch={handleIssueCashBatch}
+          onRefreshAll={async () => {
+            await refreshSummary();
+            await refreshOperations();
+            if (isPrivilegedCashUser) await refreshCash();
+          }}
+          onNotify={showToast}
+        />
+      )}
 
       {/* Add / Edit Catalog Item Modal */}
       {isItemModalOpen && <ItemFormModal
@@ -1020,12 +1635,14 @@ export default function Inventory({
       {/* QR Scanner Modal (Lazy loaded, leak-proof unmount on isActive=false) */}
       {isActive && isScannerOpen && (
         <Suspense fallback={
-          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="p-4 bg-white rounded-xl shadow-lg text-xs font-bold text-slate-700">กำลังเปิดกล้องสแกน...</div>
+          <div className="fixed inset-0 z-[120] bg-zinc-950 flex flex-col items-center justify-center p-4 text-white">
+            <RefreshCw className="w-7 h-7 animate-spin mb-3 opacity-80" />
+            <div className="text-sm font-semibold text-white/90">กำลังเปิดกล้องสแกน...</div>
           </div>
         }>
           <QrScanner
             isOpen={isScannerOpen}
+            autoStart={true}
             onClose={() => setIsScannerOpen(false)}
             onScan={handleScanCode}
           />
@@ -1045,6 +1662,7 @@ export default function Inventory({
             categories={categories}
             initialSelectedUnitCodes={printUnitCodes}
             onAddUnitRequest={handleAddPrintUnit}
+            onQuickCreateUnit={handleQuickCreatePrintUnit}
             onClose={() => {
               setIsPrintWorkspaceOpen(false);
               setPrintUnitCodes([]);

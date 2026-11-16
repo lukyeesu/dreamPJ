@@ -19,7 +19,8 @@ import {
   ChevronDown,
   ChevronUp,
   User,
-  ShieldCheck
+  ShieldCheck,
+  X
 } from 'lucide-react';
 import { TOOL_STATUSES } from '../../utils/warehouse.js';
 
@@ -375,14 +376,25 @@ export default function StockTable({
         <div className="p-3 sm:p-4 border-b border-slate-200/80 bg-white flex flex-wrap items-center gap-2">
           {/* Search box */}
           <div className="flex-1 min-w-[200px] relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="ค้นหาชื่อ หมวดหมู่ สี ขนาด หรือรหัส..."
-              className="w-full pl-9 pr-3 py-2 bg-slate-50 hover:bg-slate-100/80 focus:bg-white border border-slate-200 focus:border-[var(--theme-main)] rounded-xl text-xs sm:text-sm text-slate-800 transition outline-hidden min-h-[44px]"
+              className="w-full pl-9 pr-9 py-2 bg-slate-50 hover:bg-slate-100/80 focus:bg-white border border-slate-200 focus:border-[var(--theme-main)] rounded-xl text-xs sm:text-sm text-slate-800 transition outline-hidden min-h-[44px]"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                aria-label="ล้างคำค้นหา"
+                title="ล้างคำค้นหา"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200/70 rounded-full transition-colors cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           {/* Category Dropdown */}

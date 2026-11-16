@@ -19,7 +19,8 @@ import {
   ArrowRight,
   ExternalLink,
   Layers,
-  Loader2
+  Loader2,
+  X
 } from 'lucide-react';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import ModernDateTimePicker from '../common/ModernDateTimePicker.jsx';
@@ -519,14 +520,25 @@ export default function CustodyFlowView({
         <section className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
           <div className="p-3.5 border-b border-slate-200/80 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="relative flex-1 max-w-md">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="ค้นหารหัสเครื่องมือ, ผู้ยืม, หรืองาน..."
-                className="w-full min-h-[44px] pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-sm sm:text-sm outline-hidden focus:border-[var(--theme-main)]"
+                className="w-full min-h-[44px] pl-9 pr-9 py-2 bg-white border border-slate-200 rounded-xl text-sm sm:text-sm outline-hidden focus:border-[var(--theme-main)]"
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  aria-label="ล้างคำค้นหา"
+                  title="ล้างคำค้นหา"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
             <p className="text-sm text-slate-500 font-medium">
               แสดง {activeBorrowedTools.length} รายการเครื่องมือที่ยังไม่คืน

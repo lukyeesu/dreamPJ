@@ -1,5 +1,6 @@
 import { loadWarehouseStock } from './services/warehouseService.js';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import HeaderFilterPortal from './components/common/HeaderFilterPortal';
 import {
   FileText,
   Search,
@@ -522,9 +523,13 @@ function Quotations({
   }, [quotationDocs]);
 
   // Open Create Modal with fresh form
+  const [isViewOnly, setIsViewOnly] = useState(false);
+  const [isRatesViewOnly, setIsRatesViewOnly] = useState(true);
+
   const handleOpenCreateModal = () => {
     const newNo = generateNextQuoteNo();
 
+    setIsViewOnly(false);
     setEditingDocId(null);
     setQuoteNo(newNo);
     setTitle('');
@@ -568,6 +573,10 @@ function Quotations({
 
   // Open Edit Modal with existing doc
   const handleOpenEditModal = (doc) => {
+    setIsViewOnly(true);
+    setIsCustomerDropdownOpen(false);
+    setIsProjectDropdownOpen(false);
+    setActiveFloralDropdownIndex(null);
     setEditingDocId(doc.id);
     setQuoteNo(doc.quote_no || `QT-${Date.now()}`);
     setTitle(doc.title || '');
@@ -605,6 +614,7 @@ function Quotations({
   const handleCloneQuotation = (doc) => {
     const newNo = generateNextQuoteNo();
 
+    setIsViewOnly(false);
     setEditingDocId(null); // Clear ID so it saves as new
     setQuoteNo(newNo);
     setTitle(`${doc.title || 'งานจัดดอกไม้'} (สำเนา)`);
@@ -734,6 +744,7 @@ function Quotations({
   // Save Quotation
   const handleSaveQuotation = async (e) => {
     if (e) e.preventDefault();
+    if (isViewOnly) return;
     if (!title.trim()) {
       showToast('กรุณาระบุชื่องาน / ศิลปิน', 'error');
       return;
@@ -837,12 +848,14 @@ function Quotations({
   // Open Master Rates Modal
   const handleOpenRatesModal = () => {
     setEditingRates([...materialRates]);
+    setIsRatesViewOnly(true);
     setIsRatesModalOpen(true);
   };
 
   // Save Master Rates
   const handleSaveMasterRates = async (e) => {
     e.preventDefault();
+    if (isRatesViewOnly) return;
     try {
       for (const rate of editingRates) {
         await saveMaterialRateSync(rate);
@@ -926,69 +939,30 @@ function Quotations({
         </div>
       </div>
 
-      {/* 2.1 ส่วนบน: Header & Filter Bar */}
-      <div 
-        ref={filterSentinelRef} 
-        className="w-full h-0 -my-3 pointer-events-none opacity-0"
-      />
-      <div className={`bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out z-20 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 ${
-        isFilterStuck
-          ? '-mx-4 sm:-mx-8 lg:-mx-10 py-2 sm:py-2.5 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
-          : 'p-3 sm:p-3.5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
-      }`}>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
-          {/* Search Bar */}
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="ค้นหาจากชื่อศิลปิน, ชื่องาน, เลขที่คำนวณราคา (QT-XXXX), หรือเลขโปรเจกต์ (P-XXXX)..."
-              className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 focus:bg-white transition-colors"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition cursor-pointer"
-                title="ล้างข้อความค้นหา"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Status Filter Dropdown (Replaces bulky button tabs) */}
-            <div className="relative flex-1 sm:w-56 shrink-0">
-              <select
-                value={filterTab}
-                onChange={(e) => setFilterTab(e.target.value)}
-                className="w-full pl-3.5 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
-              >
-                <option value="all">สถานะ: ทั้งหมด ({quotationDocs.length})</option>
-                <option value="unlinked">ยังไม่ผูกโปรเจกต์ ({stats.unlinked})</option>
-                <option value="linked">ผูกโปรเจกต์แล้ว ({stats.linked})</option>
-              </select>
-              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            {/* Reset Filter Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('');
-                setFilterTab('all');
-              }}
-              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer shadow-2xs"
-              title="ล้างค่าตัวกรองทั้งหมด"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
-          </div>
+      {/* 2.1 ส่วนบน: Header-Integrated Search & Filter */}
+      <HeaderFilterPortal
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+        placeholder="ค้นหาชื่อศิลปิน, ชื่องาน, QT-XXXX, P-XXXX..."
+        activeFilterCount={filterTab !== 'all' ? 1 : 0}
+        onReset={() => {
+          setSearchQuery('');
+          setFilterTab('all');
+        }}
+      >
+        <div className="relative w-full sm:w-72">
+          <select
+            value={filterTab}
+            onChange={(e) => setFilterTab(e.target.value)}
+            className="w-full h-10 pl-3.5 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 appearance-none cursor-pointer"
+          >
+            <option value="all">สถานะ: ทั้งหมด ({quotationDocs.length})</option>
+            <option value="unlinked">ยังไม่ผูกโปรเจกต์ ({stats.unlinked})</option>
+            <option value="linked">ผูกโปรเจกต์แล้ว ({stats.linked})</option>
+          </select>
+          <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
-      </div>
+      </HeaderFilterPortal>
 
       {/* 2.2 ส่วนตารางข้อมูล (Quotation Data Table - Desktop View) */}
       <div className="hidden md:block bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
@@ -1217,14 +1191,16 @@ function Quotations({
                 <div>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                     <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
-                      {editingDocId ? 'แก้ไขการคำนวณราคา' : 'คำนวณราคาใหม่'}
+                      {editingDocId ? (isViewOnly ? 'รายละเอียดการคำนวณราคา' : 'แก้ไขการคำนวณราคา') : 'คำนวณราคาใหม่'}
                     </h3>
                     <span className="bg-indigo-50 text-indigo-700 text-xs sm:text-sm px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-200 font-mono w-fit">
                       {quoteNo}
                     </span>
                   </div>
                   <p className="text-xs sm:text-sm text-slate-500 font-medium">
-                    คำนวณพื้นที่ ตร.ม. อัตโนมัติ ปรับราคาหน้างาน และผูกเลขโปรเจกต์ย้อนหลัง
+                    {isViewOnly
+                      ? 'ล็อกป้องกันการแก้ไขโดยไม่ตั้งใจ กดปุ่ม "แก้ไข" ด้านล่างเพื่อปรับข้อมูล'
+                      : 'คำนวณพื้นที่ ตร.ม. อัตโนมัติ ปรับราคาหน้างาน และผูกเลขโปรเจกต์ย้อนหลัง'}
                   </p>
                 </div>
               </div>
@@ -1240,7 +1216,11 @@ function Quotations({
             {/* Modal Form */}
             <form onSubmit={handleSaveQuotation} className="flex flex-col flex-1 overflow-hidden">
               {/* Scrollable Form Body */}
-              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-6 overscroll-contain">
+              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar overscroll-contain">
+                <fieldset
+                  disabled={isViewOnly}
+                  className="block min-w-0 border-0 p-0 m-0 space-y-6 [&_input:disabled]:bg-slate-100 [&_input:disabled]:text-slate-500 [&_input:disabled]:cursor-not-allowed [&_select:disabled]:bg-slate-100 [&_select:disabled]:text-slate-500 [&_select:disabled]:cursor-not-allowed [&_textarea:disabled]:bg-slate-100 [&_textarea:disabled]:text-slate-500 [&_textarea:disabled]:cursor-not-allowed [&_button:disabled]:opacity-50 [&_button:disabled]:pointer-events-none"
+                >
                 {/* ส่วนที่ 3.1: ข้อมูลงาน & Searchable Project Combobox */}
                 <div className="bg-gradient-to-b from-slate-50/90 to-white p-5 rounded-3xl border border-slate-200/80 shadow-xs space-y-4">
                   <div className="flex items-center justify-between pb-3 border-b border-slate-200/60">
@@ -1300,20 +1280,38 @@ function Quotations({
                           </span>
                         )}
                       </label>
-                      <input
-                        type="text"
-                        placeholder="เช่น คุณแพรว, DMD FC, Butterbear..."
-                        value={clientName}
-                        onFocus={() => setIsCustomerDropdownOpen(true)}
-                        onChange={(e) => {
-                          setClientName(e.target.value);
-                          setIsCustomerDropdownOpen(true);
-                        }}
-                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-400 shadow-2xs"
-                      />
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="เช่น คุณแพรว, DMD FC, Butterbear..."
+                          value={clientName}
+                          onFocus={() => {
+                            if (!isViewOnly) setIsCustomerDropdownOpen(true);
+                          }}
+                          onChange={(e) => {
+                            setClientName(e.target.value);
+                            setIsCustomerDropdownOpen(true);
+                          }}
+                          className="w-full pl-3.5 pr-9 py-2.5 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors placeholder:text-slate-400 shadow-2xs"
+                        />
+                        {!isViewOnly && clientName && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setClientName('');
+                              setIsCustomerDropdownOpen(true);
+                            }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors cursor-pointer"
+                            title="ล้างคำค้นหา"
+                            aria-label="ล้างคำค้นหา"
+                          >
+                            <X aria-hidden="true" className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
 
                       {/* Dropdown Customer Candidates */}
-                      {isCustomerDropdownOpen && filteredCustomerCandidates.length > 0 && (
+                      {!isViewOnly && isCustomerDropdownOpen && filteredCustomerCandidates.length > 0 && (
                         <div className="absolute left-0 right-0 top-full mt-1.5 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 max-h-56 overflow-y-auto divide-y divide-slate-100">
                           <div className="px-3 py-1.5 bg-slate-50 text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center justify-between sticky top-0 backdrop-blur-sm z-10">
                             <span>รายชื่อลูกค้าในฐานข้อมูล</span>
@@ -1370,23 +1368,40 @@ function Quotations({
                           type="text"
                           placeholder="พิมพ์รหัสโปรเจกต์ เช่น P-0001 หรือชื่อศิลปิน เพื่อค้นหา..."
                           value={projectCode ? `${projectCode} - ${projectSearchQuery}` : projectSearchQuery}
-                          onFocus={() => setIsProjectDropdownOpen(true)}
+                          onFocus={() => {
+                            if (!isViewOnly) setIsProjectDropdownOpen(true);
+                          }}
                           onChange={(e) => {
                             setProjectCode('');
                             setProjectSearchQuery(e.target.value);
                             setIsProjectDropdownOpen(true);
                           }}
-                          className={`w-full pl-10 pr-10 py-2.5 bg-white border rounded-xl text-xs sm:text-sm font-bold focus:outline-none focus:ring-2 transition-all shadow-2xs ${
+                          className={`w-full pl-10 pr-16 py-2.5 bg-white border rounded-xl text-xs sm:text-sm font-bold focus:outline-none focus:ring-2 transition-colors shadow-2xs ${
                             projectCode
                               ? 'border-emerald-300 bg-emerald-50/40 text-emerald-900 font-mono'
                               : 'border-slate-200 text-slate-800 focus:ring-indigo-500'
                           }`}
                         />
-                        <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        {!isViewOnly && (projectCode || projectSearchQuery) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setProjectCode('');
+                              setProjectSearchQuery('');
+                              setIsProjectDropdownOpen(true);
+                            }}
+                            className="absolute right-8 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors cursor-pointer"
+                            title="ล้างคำค้นหา"
+                            aria-label="ล้างคำค้นหา"
+                          >
+                            <X aria-hidden="true" className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                       </div>
 
                       {/* Dropdown Options */}
-                      {isProjectDropdownOpen && (
+                      {!isViewOnly && isProjectDropdownOpen && (
                         <div className="absolute left-0 right-0 top-full mt-1.5 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 max-h-60 overflow-y-auto divide-y divide-slate-100">
                           <div
                             onClick={() => {
@@ -1749,7 +1764,9 @@ function Quotations({
                                   type="text"
                                   placeholder="ค้นหาพัสดุในคลัง หรือพิมพ์ชื่อรายการเอง..."
                                   value={item.name}
-                                  onFocus={() => setActiveFloralDropdownIndex(index)}
+                                  onFocus={() => {
+                                    if (!isViewOnly) setActiveFloralDropdownIndex(index);
+                                  }}
                                   onChange={(e) => {
                                     const val = e.target.value;
                                     const updated = [...floralItems];
@@ -1763,13 +1780,13 @@ function Quotations({
                                       setActiveFloralDropdownIndex(index);
                                     }
                                   }}
-                                  className={`w-full pl-9 pr-8 py-2 bg-slate-50/70 hover:bg-white focus:bg-white border rounded-xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all shadow-2xs h-[38px] ${
+                                  className={`w-full pl-9 pr-14 py-2 bg-slate-50/70 hover:bg-white focus:bg-white border rounded-xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500 transition-colors shadow-2xs h-[38px] ${
                                     matchedInv ? 'border-violet-200' : 'border-slate-200'
                                   }`}
                                 />
 
                                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                                  {item.name && (
+                                  {!isViewOnly && item.name && (
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -1778,8 +1795,9 @@ function Quotations({
                                         setFloralItems(updated);
                                         setActiveFloralDropdownIndex(index);
                                       }}
-                                      className="p-1 text-slate-300 hover:text-slate-600 rounded cursor-pointer"
-                                      title="ล้างข้อความ"
+                                      className="p-1 text-slate-400 hover:text-slate-700 rounded cursor-pointer"
+                                      title="ล้างคำค้นหา"
+                                      aria-label="ล้างคำค้นหา"
                                     >
                                       <X className="w-3.5 h-3.5" />
                                     </button>
@@ -1796,7 +1814,7 @@ function Quotations({
                               </div>
 
                               {/* Dropdown Menu (Opens upward near bottom to prevent modal clipping) */}
-                              {isDropdownOpen && (
+                              {!isViewOnly && isDropdownOpen && (
                                 <div className={`absolute left-0 right-0 ${openUpwards ? 'bottom-full mb-1.5' : 'top-full mt-1.5'} bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 p-2 max-h-64 overflow-y-auto divide-y divide-slate-100`}>
                                   <div className="px-3 py-2 text-xs font-bold text-slate-600 flex items-center justify-between">
                                     <span className="flex items-center gap-1.5">
@@ -2252,6 +2270,7 @@ function Quotations({
                     </div>
                   </div>
                 </div>
+                </fieldset>
               </div>
 
             {/* Sticky Modal Footer Action Buttons (Core 3.4 in หน้าเสนอราคา.md) */}
@@ -2273,9 +2292,9 @@ function Quotations({
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-all active:scale-95 cursor-pointer"
+                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
-                  ยกเลิก
+                  {isViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
 
                 {editingDocId && (
@@ -2292,25 +2311,36 @@ function Quotations({
                       markup_percent: markupPercent,
                       final_price: finalPrice
                     })}
-                    className="py-3 px-4 sm:px-5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-2xl font-bold text-sm transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 border border-emerald-200/50"
+                    className="py-3 px-4 sm:px-5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-2xl font-bold text-sm transition-colors flex items-center gap-1.5 cursor-pointer active:scale-95 border border-emerald-200/50"
                   >
                     <Copy className="w-4 h-4" />
                     <span className="hidden sm:inline">โคลนเป็นรายการใหม่</span>
                   </button>
                 )}
 
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
-                >
-                  {isSaving ? (
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <Check className="w-4 h-4" />
-                  )}
-                  <span>{isSaving ? 'กำลังบันทึก...' : 'บันทึกราคาโปรเจกต์'}</span>
-                </button>
+                {isViewOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsViewOnly(false)}
+                    className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
+                  >
+                    <Edit className="w-4 h-4" />
+                    <span>แก้ไข</span>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSaving ? (
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4" />
+                    )}
+                    <span>{isSaving ? 'กำลังบันทึก...' : 'บันทึกราคาโปรเจกต์'}</span>
+                  </button>
+                )}
               </div>
             </div>
           </form>
@@ -2357,7 +2387,11 @@ function Quotations({
 
             <form onSubmit={handleSaveMasterRates} className="flex flex-col flex-1 overflow-hidden">
               {/* Scrollable Form Body */}
-              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-4 overscroll-contain">
+              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar overscroll-contain">
+                <fieldset
+                  disabled={isRatesViewOnly}
+                  className="block min-w-0 border-0 p-0 m-0 space-y-4 [&_input:disabled]:bg-slate-100 [&_input:disabled]:text-slate-500 [&_input:disabled]:cursor-not-allowed [&_button:disabled]:opacity-50 [&_button:disabled]:pointer-events-none"
+                >
                 <div className="text-xs sm:text-sm text-amber-900 bg-amber-50/90 p-4 rounded-2xl border border-amber-200/80 leading-relaxed font-medium">
                   💡 <b>กฎความถูกต้องของข้อมูล:</b> การแก้ไขราคากลางจะมีผลกับ <u>รายการคำนวณราคาใหม่</u> เท่านั้น จะไม่กระทบตัวเลขในรายการคำนวณราคาเดิมที่เคยบันทึกไปแล้ว
                 </div>
@@ -2414,6 +2448,7 @@ function Quotations({
                     + เพิ่ม
                   </button>
                 </div>
+                </fieldset>
               </div>
 
               {/* Sticky Footer */}
@@ -2421,17 +2456,28 @@ function Quotations({
                 <button
                   type="button"
                   onClick={() => setIsRatesModalOpen(false)}
-                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-all active:scale-95 cursor-pointer"
+                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
-                  ยกเลิก
+                  {isRatesViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
-                <button
-                  type="submit"
-                  className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>บันทึกราคากลาง</span>
-                </button>
+                {isRatesViewOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsRatesViewOnly(false)}
+                    className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
+                  >
+                    <Edit className="w-4 h-4" />
+                    <span>แก้ไข</span>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>บันทึกราคากลาง</span>
+                  </button>
+                )}
               </div>
             </form>
           </div>

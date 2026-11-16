@@ -50,6 +50,112 @@
 
 ## 3. ประวัติการทำงานและข้อตกลงล่าสุด (Session History)
 
+### [2026-11-16 - กะเช้า (Fix 5×5mm Micro QR Overlap + Fix 15×5mm Barcode Clipping & Ultra-Thin Bars + HTTPS Vite Dev Server + Filter Drawer Reset)]
+- **สิ่งที่ปรับปรุงตามข้อกำหนดทั้ง 4 ส่วน**:
+  1. **แก้ปัญหา QR จิ๋ว `5×5 มม.` (`micro_qr` `7×8.5 มม.`) พิมพ์ทับตัวเลขรหัส ([`src/utils/qrLabels.js`](file:///D:/WebappDreame/Flower2U/src/utils/qrLabels.js), [`src/components/inventory/QrLabelPrint.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/QrLabelPrint.jsx))**:
+     - ต้นเหตุเกิดจาก Chromium บังคับ Minimum Font Size (`6–10px`) ทับค่า `font-size: 3.6pt` เดิมร่วมกับ `overflow: hidden` ใน Flexbox ทำให้ข้อความรหัสขยายตัวขึ้นไปทับมุมล่างของ QR
+     - แก้โดยเรนเดอร์ `.label-code` ที่ `font-size: 10px` (เหนือเพดาน Min-Font ของเบราว์เซอร์) แล้วย่อด้วย `transform: scale(...)` ภายในกล่อง `.label-code-slot` (`flex: none`) พร้อมตั้ง `image-rendering: pixelated` บน `.qr-img` ได้ระยะห่างจริงใต้ภาพ `+1.2px` ไม่ทับและไม่ขาด
+  2. **แก้ปัญหา Barcode จิ๋ว `15×5 มม.` ตัดครึ่งตัวอักษร + ปรับเส้นบาร์โค้ดให้บางคมชัดและเลือกความบางได้ 3 ระดับ ([`src/utils/qrLabels.js`](file:///D:/WebappDreame/Flower2U/src/utils/qrLabels.js), [`src/components/inventory/QrLabelPrint.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/QrLabelPrint.jsx))**:
+     - ปรับงบความสูงของ `micro_barcode` (`15×5 มม.`) ให้แท่งบาร์โค้ดสูง `3.15 มม.` คู่กับช่องรหัส `.label-code-slot` สูง `1.12 มม.` ทำให้รหัส `ITEM0001` แสดงเต็มตัว 100% ไม่แหว่งครึ่งบรรทัด
+     - อัปเกรด `generateBarcodeSvgString` รวมโมดูลติดกันเป็น `<rect>` เดียว ถอด `shape-rendering="crispEdges"` ออกเพื่อให้พิมพ์เส้น Vector บางระดับ Sub-pixel พร้อมทำ Symmetrical Bar Width Reduction และเพิ่มตัวเลือกความบางเส้น 3 ระดับในหน้าพิมพ์ฉลาก (`บางพิเศษ` `0.067 มม.` / `เส้นบางคมชัด` ค่าเริ่มต้น `0.083 มม.` / `มาตรฐาน` `0.116 มม.`) ที่ยังถอดรหัส `CODE_128` ผ่าน ZXing ได้ 100%
+  3. **เปิดโหมด HTTPS อัตโนมัติเมื่อรัน `npm run dev -- --host` เพื่อให้มือถือเปิดกล้องสแกนผ่าน Wi-Fi ได้ทันที ([`vite.config.js`](file:///D:/WebappDreame/Flower2U/vite.config.js), [`package.json`](file:///D:/WebappDreame/Flower2U/package.json))**:
+     - ติดตั้ง `@vitejs/plugin-basic-ssl` และตั้งค่า `vite.config.js` ให้อ่าน IP ในวงแลนทุกการ์ดเครือข่าย (`os.networkInterfaces()`) สร้างใบรับรอง HTTPS อัตโนมัติ ทำให้ `window.isSecureContext === true` และ `navigator.mediaDevices.getUserMedia` ใช้งานบนมือถือผ่าน `https://<LAN-IP>:5174` ได้ทันที
+  4. **ตัดแถบล่างของถาดตัวกรองออกทั้งหมด + เพิ่มปุ่ม `รีเซ็ตการกรอง` ([`src/components/common/HeaderFilterPortal.jsx`](file:///D:/WebappDreame/Flower2U/src/components/common/HeaderFilterPortal.jsx))**:
+     - ลบแถบล่าง (`เลือกเงื่อนไขเพื่อกรองข้อมูลในหน้านี้` และปุ่ม `เสร็จสิ้น`) ออกจาก `#app-header-filter-drawer` ทั้งแถบ และเพิ่มปุ่ม **`รีเซ็ตการกรอง`** ไว้ด้านในถาดตัวกรองโดยตรง
+- **ผลการตรวจสอบ**:
+  - `impeccable detect --json`: `[]` (`0` issues)
+  - `npm test`: ผ่านครบ **215/215 ข้อ** (`fail 0`)
+  - `npm run build`: ผ่านสำเร็จ (`✓ built`) และวัดพิกัด DOM จริงใน Chromium (`getBoundingClientRect`) บน HTTPS ยืนยัน `overlapsGraphic: false`, `clipsBottom: false`, `isSecureContext: true`
+
+### [2026-11-16 - กะเช้ามืด (Mobile Magnifying Glass Deferred Filter + Universal Clear `[✕]` + View-Only Modal Lock + DB-Backed `<DbCombobox />`)]
+- **สิ่งที่ปรับปรุงตามข้อกำหนดทั้ง 4 ส่วน**:
+  1. **ซ่อนไอคอนตัวกรองบน AppBar มือถือ (`< lg`) จนกว่าจะกดแว่นขยาย `[🔍]` ([`src/components/common/HeaderFilterPortal.jsx`](file:///D:/WebappDreame/Flower2U/src/components/common/HeaderFilterPortal.jsx), [`src/App.jsx`](file:///D:/WebappDreame/Flower2U/src/App.jsx))**:
+     - เมื่อหน้านั้นมีช่องค้นหา (`hasSearch === true`) จะไม่เรนเดอร์ปุ่ม `[🎚️]` แยกบน `#app-header-filter-slot` ข้างแว่นขยาย เพื่อคืนพื้นที่บน AppBar ให้ปุ่มคำสั่งหลัก (เช่น หน้า `Quotations` บนมือถือโชว์ `[🔍]` + `[⚙️ ตั้งค่าราคากลางวัสดุ]` + `[⊞+ คำนวณราคา]` ครบในแถวเดียวโดยไม่ต้องพึ่งเมนู `⋯`)
+     - ปุ่ม `[🔍]` แสดงจุด/ป้ายแจ้งเตือนจำนวนตัวกรองที่เปิดอยู่ และเมื่อกด `[🔍]` แถบค้นหาจะกางออกเป็น `[←] [🔍 พิมพ์ค้นหา ... ✕] [🎚️]` กด `[🎚️]` จึงเปิดถาดตัวกรองใต้ `<header>` (`#app-header-filter-drawer`)
+  2. **เพิ่มปุ่ม `[✕]` ล้างข้อความในทุกช่องค้นหาทั่วทั้งระบบ (100% Coverage)**:
+     - ติดตั้งปุ่ม `[✕]` (`type="button"`, `aria-label="ล้างคำค้นหา"`) พร้อมระยะ `pr-8` / `pr-9` / `pr-14` ไม่ให้ตัวหนังสือทับไอคอน ครบทุกช่องค้นหาใน `HeaderFilterPortal.jsx`, `DbCombobox.jsx`, `Quotations.jsx`, `VenueDirectoryModal.jsx`, `GameActionModal.jsx`, `AddAssetUnitModal.jsx`, `CustodyFlowView.jsx`, `HistoryAuditView.jsx` (ทั้ง 3 แท็บ), `StockTable.jsx`, `ProductionHubView.jsx`, `PersonPicker.jsx`, และ `QrLabelPrint.jsx`
+  3. **ล็อก Modal รายการที่บันทึกไว้แล้วให้ดูได้อย่างเดียว (View-Only Lock) จนกว่าจะกดปุ่ม `แก้ไข`**:
+     - ล็อกฟิลด์ทั้งหมดเมื่อเปิดรายการเดิมใน `App.jsx` (Project Modal), `Finance.jsx` (`isEditTxModalOpen`), `Quotations.jsx` (ใบคำนวณราคา + ราคากลางวัสดุ), `Locations.jsx` (สถานที่จัดส่ง + ศูนย์ต้นทาง), `Customers.jsx`, `Artists.jsx`, `Staff.jsx`, และ `UserProfileModal.jsx` จนกว่าจะกดปุ่ม **`แก้ไข`**
+     - คงข้อยกเว้นตาม Logic เฉพาะของระบบไว้ครบถ้วน: Project Modal หมวด `3.2 รายการเสนอราคา` และ `3.3 รายจ่ายจริง` + ปุ่ม `บันทึกยอดเงิน` ยังกรอกต้นทุนหน้างานได้ทันทีโดยไม่ต้องปลดล็อกทั้งโปรเจกต์ และ `ItemFormModal` ของคลังที่เปิดผ่านปุ่ม `แก้ไข` ใน `GameActionModal` อยู่แล้ว
+  4. **รื้อ `<datalist>` แบบเดิมออก 100% เปลี่ยนเป็น `<DbCombobox />` ค้นหาจากฐานข้อมูลจริง ([`src/components/common/DbCombobox.jsx`](file:///D:/WebappDreame/Flower2U/src/components/common/DbCombobox.jsx))**:
+     - สร้าง `<DbCombobox />` ดึงข้อมูลจาก Local Cache (`Dexie` IndexedDB) + คิวรี Supabase แบบ Zero-Egress (ระบุคอลัมน์ชัดเจน `.limit(20)` ไร้ `SELECT *`) รองรับค้นหาชื่อ/คำย่อ/โซน, ป้ายโซน, คีย์บอร์ดลูกศร, ปุ่ม `[✕]`, และสถานะล็อก `disabled`
+     - แทนที่ `<datalist>` เดิมทั้งหมดใน `App.jsx` (`สถานที่จัดส่ง (Venue)`, `ศิลปิน`, `ลูกค้า`, `ผู้รับ`, หมวดหมู่และพัสดุในหมวดการเงิน) และ `Finance.jsx` จนไม่เหลือ `<datalist>` ใน `src/` แม้แต่จุดเดียว
+- **ผลการตรวจสอบ**:
+  - `impeccable detect --json`: `[]` (`0` issues)
+  - ชุดทดสอบอัตโนมัติ `npm test` (รวมชุดทดสอบใหม่ [`tests/searchComboboxAndModalLock.test.cjs`](file:///D:/WebappDreame/Flower2U/tests/searchComboboxAndModalLock.test.cjs)): ผ่านครบ **214/214 ข้อ** (`fail 0`)
+  - `npm run build`: ผ่านสำเร็จ (`exit code 0`) และตรวจสอบหน้าจริงด้วย `chrome-devtools` ครบทั้ง Mobile (`375×812`), Tablet (`768×1024`), และ PC (`1440×900`) ไร้ Console Error
+
+### [2026-11-16 - กะดึก (Full-Screen Mobile QR/Barcode Scanner UX + Unified 3-Zone AppBar & Icon-Only Filter)]
+- **สิ่งที่ปรับปรุงตามข้อกำหนดล่าสุด**:
+  1. **รื้อหน้าสแกน [`src/components/inventory/QrScanner.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/QrScanner.jsx) เป็น Full-Screen Mobile Scanner เต็มจอ 100% (`100dvh`) สไตล์แอปสแกนไทย**:
+     - แสดงภาพกล้องสดเต็มขอบหน้าจอ (`fixed inset-0 h-[100dvh] w-full bg-zinc-950 object-cover`) พร้อมเปิดกล้องหลัง (`environment`) ทันทีที่กดปุ่มสแกนจาก AppBar (`autoStart={true}` ใน [`src/Inventory.jsx`](file:///D:/WebappDreame/Flower2U/src/Inventory.jsx)) ไม่ต้องกดปุ่มซ้ำสองรอบ
+     - **Top Floating AppBar (`16pt` = `px-4` + `safe-area-inset-top`)**: ซ้ายเป็นปุ่ม `<` ย้อนกลับ/ปิดหน้าสแกน, กลางเป็นหัวข้อ **`สแกน`** พร้อมป้ายรองรับ `QR Code` และ `Barcode 128`, ขวาเป็นปุ่มวงกลม **ไฟฉาย (`Torch`)** เชื่อมต่อ `controls.switchTorch` / `track.applyConstraints({ advanced: [{ torch }] })` และปุ่มสลับกล้องอัตโนมัติเมื่อมีหลายตัว
+     - **Center Sweeping Laser Line**: เส้นสแกนแนวนอนสีขาวเรืองแสงพร้อมแถบไล่เฉดสีตามธีม (`--theme-main`) วิ่งขึ้น-ลงกลางหน้าจออย่างลื่นไหล (ปิดแอนิเมชันอัตโนมัติเมื่อตั้งค่า `prefers-reduced-motion: reduce`)
+     - **เลือกรูปจากอัลบั้ม (`#qr-album-file-input`)**: ปุ่มแคปซูลโปร่งแสง **`เลือกรูปจากอัลบั้ม`** ถอดรหัสทั้ง QR Code และ Code 128 จากไฟล์ภาพในเครื่องผ่าน `decodeFromImageUrl` พร้อมคืนหน่วยความจำ `URL.revokeObjectURL` ทุกครั้ง
+     - **แถบล่างสีขาว 2 แท็บ (`สแกน` | `พิมพ์รหัส`)**: สลับระหว่างกล้องเต็มจอ กับการ์ดพิมพ์รหัสเอง / ยิงด้วยปืนบาร์โค้ด USB/Bluetooth ได้ทันทีโดยคงระบบป้องกัน Stream Race (`generationTokenRef`) และคืนทรัพยากรกล้อง 100%
+  2. **Unified 3-Zone AppBar (`16pt` Base Padding) + ปุ่มตัวกรองแบบ Icon-Only**:
+     - ปรับ [`src/App.jsx`](file:///D:/WebappDreame/Flower2U/src/App.jsx) และ [`src/components/common/HeaderFilterPortal.jsx`](file:///D:/WebappDreame/Flower2U/src/components/common/HeaderFilterPortal.jsx) ให้ใช้โครงสร้าง 3 โซน (ซ้ายนำทาง / กลางชื่อหน้าหรือช่องค้นหา Spotlight / ขวาไม่เกิน 3 ปุ่ม + Overflow `⋯`) และย้ายปุ่มตัวกรองไปวางติดข้างขวาของแท็บค้นหาเป็นไอคอนล้วน (`w-10 h-10 rounded-full` ไร้คำว่า `"ตัวกรอง"`)
+- **ผลการตรวจสอบ**:
+  - `impeccable detect --json src/components/inventory/QrScanner.jsx`: `[]` (`0` issues)
+  - `tests/qrScanner.test.cjs` (`14/14` ข้อ รวมทดสอบใหม่ `autoStart`, `switchTorch`, `decodeFromImageUrl`) และ `tests/inventoryUi.test.cjs` (`17/17` ข้อ) ผ่านครบ 100%
+  - `npm run build` ผ่านสำเร็จ (`✓ built`) และตรวจสอบจอจริงผ่าน `chrome-devtools` บน Mobile (`375×812`), Tablet (`768×1024`), และ Desktop (`1440×900`) ไร้ Console Error
+
+### [2026-11-15 - กะค่ำ (Mobile Navbar Profile Popover + Global Header Search/Filter Portal + 5mm Retail-Style Micro QR/Barcode Stickers)]
+- **สิ่งที่ปรับปรุงตามข้อกำหนดทั้ง 3 ส่วน**:
+  1. **Mobile Bottom Navbar Profile Popover ([`src/App.jsx`](file:///D:/WebappDreame/Flower2U/src/App.jsx))**:
+     - แทนที่ช่องขวาสุดช่องที่ 5 ของแถบล่างมือถือ (`#mobile-bottom-nav`) จากเดิมหน้า `วิเคราะห์` เป็นปุ่ม **Avatar โปรไฟล์** ที่กดแล้วเปิด **Profile Popover** สไตล์เดียวกับบน PC Sidebar (`โปรไฟล์ของฉัน` + `ออกจากระบบ`)
+     - ย้ายหน้า `วิเคราะห์` (`Analytics`) ลงไปอยู่ในถาดเมนูเลื่อนขึ้นแถวที่ 2 (`grid-cols-4` ครบ `4 × 2 = 8` เมนูพอดี) พร้อมผูก Mutual Exclusion ไม่ให้ถาดเลื่อนขึ้นกับ Profile Popover เปิดซ้อนกัน
+  2. **ย้ายช่องค้นหาและตัวกรองขึ้นไปรวมใน `<header>` ของทุกหน้า + ปุ่มแว่นขยายบนมือถือ ([`src/components/common/HeaderFilterPortal.jsx`](file:///D:/WebappDreame/Flower2U/src/components/common/HeaderFilterPortal.jsx), [`src/components/common/PersistentPage.jsx`](file:///D:/WebappDreame/Flower2U/src/components/common/PersistentPage.jsx))**:
+     - สร้าง `<HeaderFilterPortal />` เชื่อมกับ `PageActiveContext` ใน `PersistentPage` เพื่อส่งช่องค้นหาและปุ่มตัวกรองขึ้นไปแสดงใน `#app-header-filter-slot` เฉพาะแท็บที่กำลังเปิดอยู่ (ไม่ชนกับหน้าอื่นที่ซ่อนอยู่)
+     - **หน้าจอคอมพิวเตอร์ (`lg+`)**: แสดงช่องค้นหากะทัดรัดใน `<header>` คู่กับปุ่ม `[🎚️]` เปิด/พับถาดตัวกรองรองใต้ `<header>` (`#app-header-filter-drawer`) และปุ่มรีเซ็ต `[↻]` ช่วยประหยัดพื้นที่แนวตั้งในตัวหน้า
+     - **หน้าจอมือถือและแท็บเล็ตแนวตั้ง (`< lg`)**: แสดงเป็นปุ่มแว่นขยาย `[🔍]` คู่กับ `[🎚️]` เมื่อกดแว่นขยายจะขยายเป็นแถบค้นหาเต็มความกว้างของ `<header>` (`#app-header-mobile-search`) พร้อมโฟกัสพิมพ์ได้ทันที
+     - อัปเกรดครบทุกหน้าที่มีระบบค้นหา/กรอง: `Plans` ([`src/App.jsx`](file:///D:/WebappDreame/Flower2U/src/App.jsx)), [`src/Finance.jsx`](file:///D:/WebappDreame/Flower2U/src/Finance.jsx), [`src/Quotations.jsx`](file:///D:/WebappDreame/Flower2U/src/Quotations.jsx), `Inventory` ([`src/components/inventory/GameBackpackGrid.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/GameBackpackGrid.jsx)), [`src/Locations.jsx`](file:///D:/WebappDreame/Flower2U/src/Locations.jsx), [`src/Artists.jsx`](file:///D:/WebappDreame/Flower2U/src/Artists.jsx), [`src/Customers.jsx`](file:///D:/WebappDreame/Flower2U/src/Customers.jsx), [`src/Staff.jsx`](file:///D:/WebappDreame/Flower2U/src/Staff.jsx), และ [`src/Calendar.jsx`](file:///D:/WebappDreame/Flower2U/src/Calendar.jsx)
+  3. **ปรับหน้าพิมพ์สติกเกอร์ QR / Barcode ให้เข้าใจง่ายในพริบตา + รองรับสติกเกอร์จิ๋ว `5 มม.` สไตล์บาร์โค้ดสินค้า ([`src/utils/qrLabels.js`](file:///D:/WebappDreame/Flower2U/src/utils/qrLabels.js), [`src/components/inventory/QrLabelPrint.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/QrLabelPrint.jsx))**:
+     - พับฟอร์มสร้างรหัสด่วนเก็บไว้ใต้ปุ่ม `+ สร้างรหัสใหม่ด่วน` และเปลี่ยนฝั่งขวาเป็น 2 แท็บชัดเจน (`QR Code` | `Barcode แท่ง`) พร้อมปุ่มเลือกขนาดแบบกดทีเดียวเห็นทันทีไม่ต้องเปิดเมนูซ่อน
+     - รองรับขนาดเล็กสุดติดด้ามกรรไกร: **Barcode จิ๋ว `15 × 5 มม.` (`1.5 × 0.5 ซม.`)** และ **QR จิ๋ว รูป QR `5 × 5 มม.` (ป้าย `7 × 8.5 มม.`)** รวมถึงตั้งขนาดเองได้ตั้งแต่ `5 มม.` ขึ้นไป
+     - **ตัดชื่อสินค้า (เช่น `กรรไกร`) ออกจากสติกเกอร์ทั้งหมด 100%** เหลือเฉพาะภาพ QR (`margin: 0`) หรือแท่ง Barcode คู่กับตัวอักษรรหัสขนาดเล็ก (`3.6pt–6pt`) ขยับชิดติดใต้ภาพระยะเพียง `0.12–0.25 มม.` เหมือนบาร์โค้ดสินค้าจริง ไม่กินพื้นที่แปะ
+- **ผลการตรวจสอบ**:
+  - ชุดทดสอบอัตโนมัติ (`barcodeLabels`, `qrLabels`, `qrLabelPrint`, `inventoryUi`) ผ่านครบ 100% (`36/36 passed`)
+  - `npm run build` ผ่านสำเร็จ (`exit code 0`) และตรวจสอบจอจริงผ่าน `chrome-devtools` ครบทั้ง Desktop (`1440×900`), Tablet (`768×1024`), และ Mobile (`375×812`) ไร้ Console Error/Warning
+
+### [2026-11-15 - ย้ายปุ่มคลังทั้งหมดขึ้น AppBar + มาตรฐาน Padding 16pt + รื้อหน้าพิมพ์สติกเกอร์ QR/Barcode ใหม่ทั้งหมด]
+- **สิ่งที่ปรับปรุงตามข้อกำหนดล่าสุด**:
+  1. **ย้ายปุ่มควบคุมหน้าคลังทั้งหมดขึ้น AppBar (`src/App.jsx` ↔ `src/Inventory.jsx` ↔ `src/components/inventory/GameBackpackGrid.jsx`)**:
+     - ย้ายปุ่ม `สแกนหยิบ / คืน`, `พิมพ์ฉลาก`, `ประวัติ` (สลับเป็น `กลับคลัง` เมื่อเปิดดูประวัติ), `รีเฟรช`, และ `เพิ่มพัสดุใหม่` ไปไว้บน `<header>` AppBar ใน [`src/App.jsx`](file:///D:/WebappDreame/Flower2U/src/App.jsx) แถวเดียวครบทุกขนาดหน้าจอ (Mobile `375px`, Tablet `768px`, Desktop `1440px`)
+     - ล้างปุ่มซ้ำซ้อนออกจากส่วนหัวของ [`src/components/inventory/GameBackpackGrid.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/GameBackpackGrid.jsx) เหลือเฉพาะช่องค้นหาและแถบหมวดหมู่ที่สะอาดตา พร้อมซ่อนแถบ Scrollbar แนวนอนของชิปหมวดหมู่
+  2. **มาตรฐานระยะเว้นขอบและช่องว่าง 16pt (`16px` = `p-4` / `px-4` / `gap-4` / `space-y-4`)**:
+     - ปรับระยะขอบซ้าย-ขวาของ AppBar หน้าคลัง (`px-4`), คอนเทนเนอร์หลักของ [`src/Inventory.jsx`](file:///D:/WebappDreame/Flower2U/src/Inventory.jsx) (`p-4 pb-28 md:pb-4 space-y-4`), กริดและการ์ดไอเทมใน [`src/components/inventory/GameBackpackGrid.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/GameBackpackGrid.jsx) (`p-4`, `gap-4`), และหน้าพิมพ์ฉลาก [`src/components/inventory/QrLabelPrint.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/QrLabelPrint.jsx) (`p-4`, `gap-4`) ให้ตรงกัน 16px ทุกจุด (ตรวจสอบผ่าน `getComputedStyle` ได้ `16px` ครบทุกแกน)
+  3. **รื้อหน้าพิมพ์ฉลาก [`src/components/inventory/QrLabelPrint.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/QrLabelPrint.jsx) ใหม่เป็น Visual Sticker Studio**:
+     - ตัดตารางแนวนอนขนาดใหญ่และฟอร์มตั้งค่าซับซ้อนออก เปลี่ยนเป็น **การ์ดแตะเลือกพิมพ์** พร้อมปุ่ม `- / +` ปรับจำนวนดวงบนการ์ดได้ทันที
+     - รองรับทั้ง **`อุปกรณ์รายชิ้น`** (พร้อมแถบสร้างรหัสติดอุปกรณ์ด่วนในหน้าเดียว เช่น `EQ-001` ไม่ต้องเด้งออกหลายหน้าต่าง) และ **`ป้ายติดกล่องวัสดุ`** (พิมพ์ QR/Barcode จากรหัสสินค้า เช่น `ITM-3826` เพื่อสแกนหยิบลงกระเป๋าได้ทันที)
+     - ฝั่งขวาเลือกเพียง 2 รูปแบบชัดเจน (`QR Code 30×40 มม.` vs `Barcode แนวยาว 50×15 มม.`), ปุ่มตั้งจำนวนดวงด่วน (`1 / 2 / 3 / 5`), เลือกกระดาษ (`A4` vs `Roll`), ตัวอย่างสติกเกอร์สัดส่วนจริงแบบสด, และซ่อนตั้งค่าขั้นสูงไว้ใน `<details>`
+- **ผลการตรวจสอบ**:
+  - `impeccable detect --json` บนไฟล์คลังทั้งหมด: `[]` (0 issues)
+  - `npm test`: ผ่านครบ 206/206 tests (`fail 0`)
+  - `npm run build`: ผ่านสมบูรณ์ (`✓ built`)
+  - ทดสอบผ่าน `chrome-devtools` บน Desktop (`1440×900`), Tablet (`768×1024`), และ Mobile (`375×812`) ไร้ Console Error
+
+### [2026-11-15 - รื้อระบบคลังสินค้าเป็น 1-Tap Game Backpack ของจริง + กวาดล้าง Mockup นอก Supabase + Auto-Sync การเงินไร้รอยต่อ]
+- **สาเหตุที่ต้องรื้อใหม่ทั้งหมด**:
+  - รุ่นแรกยังยึดติดกับโครงฟอร์ม ERP เดิม แปะปุ่มสลับ `โหมดตารางเดิม` ไว้ข้างบน มี Modal หลายแท็บซับซ้อน และยังมีข้อมูล Mockup ท้องถิ่น (`DEFAULT_INVENTORY_ITEMS_SPEC`, `DEFAULT_ASSET_UNITS`, บัญชีจำลอง `@nexusplan.com`, และการสร้างการ์ดธนบัตรจำลอง `x0 ใบ` ทั้งที่บน Supabase ยังไม่ได้เปิดใช้งาน) ปะปนจนสับสน
+- **สิ่งที่แก้ไขและออกแบบใหม่ (Zero-Legacy Game Backpack UX + 100% Real Supabase Data)**:
+  1. **กวาดล้าง Mockup นอก Supabase 100%**:
+     - ล้าง `DEFAULT_INVENTORY_ITEMS_SPEC` และ `DEFAULT_ASSET_UNITS` ใน [`src/services/syncService.js`](file:///D:/WebappDreame/Flower2U/src/services/syncService.js) ให้เป็น `[]`
+     - ปรับ `cacheCatalogRows` ใน [`src/services/warehouseService.js`](file:///D:/WebappDreame/Flower2U/src/services/warehouseService.js) ให้สั่ง `db.inventory_items.clear()` เมื่อรับข้อมูลชุดเต็มจาก Supabase เพื่อไม่ให้ของจำลองหรือของที่ลบไปแล้วฟื้นคืนชีพจาก IndexedDB
+     - ตัดการสร้างการ์ดธนบัตรจำลอง `x0 ใบ` ใน [`src/components/inventory/GameBackpackGrid.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/GameBackpackGrid.jsx) เมื่อ `cash_vault_denominations` บน Supabase ยังเป็น `is_initialized: false, physical_count: 0`
+     - แทนที่บัญชีจำลอง `@nexusplan.com` ใน [`src/App.jsx`](file:///D:/WebappDreame/Flower2U/src/App.jsx) ด้วยบัญชีพนักงานจริงของ Flower2U (`DEFAULT_STAFF_MEMBERS`) เพื่อให้ยืนยันตัวตนกับ Supabase Auth ได้ทันที
+  2. **1-Tap Game Backpack & Floating Bag Dock**:
+     - รื้อ [`src/components/inventory/GameBackpackGrid.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/GameBackpackGrid.jsx), [`src/components/inventory/GameActionModal.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/GameActionModal.jsx) และ [`src/Inventory.jsx`](file:///D:/WebappDreame/Flower2U/src/Inventory.jsx): ตัดปุ่มสลับโหมดตารางเดิมออก เหลือแถบค้นหา + ปุ่มกล้องอัจฉริยะปุ่มเดียว **`สแกนหยิบ / คืน`** (สแกนของว่าง = หยิบใส่กระเป๋า, สแกนของที่ยืมไป = คืนเข้าคลังทันทีในขั้นตอนเดียว)
+     - แตะการ์ดไอเทม 1 ครั้ง = หยิบลง **`กระเป๋าจัดของ` (`GameBagDock`)** ด้านล่างทันที พร้อมปุ่ม `- / +` บนการ์ด แนะนำของคู่กันอัตโนมัติ (เช่น ปืนกาว -> แท่งกาว, คัตเตอร์ -> ใบมีด), แบ่งธนบัตรให้คนพับหลายคนเท่าๆ กันอัตโนมัติ, และรองรับ **`พักกระเป๋าเตรียมไว้ก่อน`** (หากอีกทีมหยิบ `SC-001` ออกไปก่อน รายการจะขึ้นสีเทาพร้อมปุ่มกดสลับเป็น `SC-002` โดยไม่ลบทิ้งเอง)
+     - จัดตำแหน่ง `GameBagDock` บนจอมือถือ (`< md`) ให้ลอยเหนือแถบเมนูหลักด้านล่าง (`bottom-[calc(5rem+env(safe-area-inset-bottom))] z-[95]`) ไม่บังกัน
+  3. **เชื่อมหน้าการเงิน ↔ หน้าโปรเจกต์ ↔ กระเป๋าคลังอัตโนมัติ (100% Seamless Auto-Sync)**:
+     - เพิ่ม `shouldAutoSyncExpenseLine` และ `detectBanknoteDenomination` ใน [`src/utils/financeInventoryBridge.js`](file:///D:/WebappDreame/Flower2U/src/utils/financeInventoryBridge.js) และเปิดค่าเริ่มต้น Auto-Sync เป็น `true` ทั้งใน [`src/Finance.jsx`](file:///D:/WebappDreame/Flower2U/src/Finance.jsx) และ [`src/App.jsx`](file:///D:/WebappDreame/Flower2U/src/App.jsx) (ซื้อวัสดุ/แลกธนบัตรปุ๊บ เติมเข้าคลังให้อัตโนมัติ ส่วนค่ารถ/ค่าแรง/ทางด่วนข้ามให้อัตโนมัติ และป้องกันบวกซ้ำด้วย Deterministic UUID Idempotency) โดยรักษาลำดับการเงิน 4 ขั้นตอน (`1. เงินศิลปิน -> 2. รายได้ -> 3. ค่าใช้จ่าย -> 4. กำไรสุทธิ`) ครบถ้วน
+- **ผลการตรวจสอบ**:
+  - `impeccable detect --json`: `[]` (0 issues)
+  - `npm test`: ผ่านครบ 206/206 tests (`fail 0`)
+  - `npm run build`: ผ่านสมบูรณ์ใน 10.64s
+  - ตรวจสอบหน้าจริงด้วย `chrome-devtools` บน Supabase จริงทั้ง Desktop (`1440×900`), Tablet (`768×1024`), และ Mobile (`375×812`) แสดงเฉพาะรายการจริงบน Supabase 3 รายการ ไร้ Console Error
+
 ### [2026-11-10 - ติดตั้ง Compact Inventory Schema & Lossless Migration (Supabase Free Tier Optimization)]
 - **ผู้รับผิดชอบงาน Schema & Lossless Migration**: พัฒนาและส่งมอบ `database_scripts/drafts/compact_schema.sql.part`, `tests/inventoryCompactMigration.test.cjs`, `tests/helpers/compactMigrationFixture.cjs` และ `docs/inventory-compact-migration.md`
 - **สรุปผลงานและการปรับปรุงสำคัญ**:
@@ -1318,3 +1424,52 @@
 - Infinite catalog loads 50 rows per page, deduplicates concurrent requests, retains cart, resets filtered results and stops observers while inactive. Stable query callback avoids discarding accumulated rows on page return; deterministic SQL name/id ordering.
 - Verification: 79 affected UI/image/QR tests passed, final image/compression/scroll/empty-print workflows 5/5 passed. Compact installer/migration/production/runtime and service suites passed earlier this turn; updated read projections runtime passed. Inventory scoped lint clean; App/Settings retain existing broad lint errors, changed integration sections clean. Production build passed. See docs/inventory-images-and-scroll.md.
 - MCP still reports unavailable browser host/native pipe. No actual Drive upload, phone-camera scan, physical printer or all-viewport screenshots certified. No Git writes/deployment/live SQL.
+
+
+### 2026-11-15 — Game-Style Inventory Backpack, 1-Modal Hub, Shopping-Cart Staged Bags & Seamless Finance ↔ Inventory Sync
+- **Game-Style Inventory Backpack (`src/components/inventory/GameBackpackGrid.jsx`, `src/Inventory.jsx`)**:
+  - Redesigned the default Inventory experience (`defaultExperience="game"` in `App.jsx`, while preserving `โหมดตารางเดิม` & `สมุดประวัติคลัง`) into RPG item slots with clear product photos, remaining stack counters (`x120`), 1-click `+ เติมของ` / `+ เติมแบงค์`, Low-Stock Alert Banner + `กรองเฉพาะของใกล้หมด`, and 2-Level Category Hierarchy (Level 1: `ทั้งหมดในกระเป๋า`, `ของใช้แล้วหมดไป`, `ของวนใช้ซ้ำ`, `อุปกรณ์`, plus RBAC-gated `ธนบัตรจริง` 20/50/100/500/1000฿; Level 2: sub-category pills + `+ เพิ่ม/แก้หมวดย่อย`).
+  - Fixed `useWarehouseData.js` RBAC role normalization so `System Administrator` / `Administrator` / `ผู้ดูแลระบบ` / `ฝ่ายบัญชี` (in addition to `admin` / `accountant`) properly unlock `isPrivilegedCashUser` while keeping `cashSummary` 100% memory-only.
+- **1-Modal Seamless Action Hub (`src/components/inventory/GameActionModal.jsx`, `src/utils/inventoryCombos.js`, `src/utils/stagedBagsService.js`)**:
+  - Unified Project Loadout, Banknote Equal-Split distribution across helpers (`100 ใบ / 5 คน = คนละ 20 ใบ`) + per-helper status/return tracking, Reusable Salvage (`ใช้ต่อได้ 80 / พัง 20` with zero employee debt), Continuous Camera QR/Barcode Scan-to-Pick & Scan-to-Return, Smart Combo Hints (`ปืนกาว -> แท่งกาว`, `คัตเตอร์ -> ใบมีด`, `แท่นตัดเทป -> เทปกาว`), and Shopping-Cart Staged Bags (`พักกระเป๋าเตรียมไว้ก่อน` — if Team B checks out `SC-001` first, `SC-001` in Bag 1 turns greyed-out `สีเทา` without auto-deleting and offers 1-click unit swap `SC-002`).
+- **1-Click QR vs Narrow Barcode Labels (`src/components/inventory/QrLabelPrint.jsx`)**:
+  - Added prominent 1-click mode selector cards for `QR Code (ติดของชิ้นใหญ่ 30×40 มม.)` vs `Barcode แนวยาว (ติดของชิ้นเล็ก/ด้ามกรรไกร 50×15 มม.)`.
+- **Seamless Two-Way Finance ↔ Inventory Bridge & Project Card Shortcut (`src/utils/financeInventoryBridge.js`, `src/Finance.jsx`, `src/App.jsx`)**:
+  - Expense items in `Finance.jsx` and `App.jsx` auto-sync `+qty` into Inventory (`adjustStock` / `createItem`) with deterministic UUID + `db.sync_meta` idempotency so re-saving never double-counts; Customer Support banknotes optionally deposit + reserve into Cash Vault without touching P&L expenses; Backpack Quick Restock optionally creates an expense bill in Finance; added `จัดของ` shortcut button on project cards & table rows. Kept the 4-Step Financial Sequence strictly intact.
+- **Verification**:
+  - All 206/206 automated tests pass (`tests/inventoryUi.test.cjs` expanded to 17 assertions, `tests/inventoryFullPreview.test.cjs`, `tests/inventoryWorkflow.test.cjs`, and PGlite SQL suites).
+  - Clean `npm run build` (`vite build`) passed with lazy-split `QrScanner` and `QrLabelPrint` chunks.
+  - Live Chrome DevTools MCP verified Desktop (`1440×900`), Tablet (`768×1024`), and Mobile (`375×812`) viewports + zero JS runtime errors. No `git add`/`commit`/`push` executed.
+
+
+### 2026-11-15 (Evening) — Global AppBar Vertical Padding & Height Upgrade Across All 11 Pages + Inventory AppBar & QR Studio Redesign
+- **Global `<header>` Height & Vertical Breathing Room (`src/App.jsx`, `src/components/inventory/QrLabelPrint.jsx`)**:
+  - Replaced the cramped fixed `height: calc(56px + env(safe-area-inset-top, 0px))` header (which left only `8px` above/below `40px` buttons) with generous vertical padding across **all 11 tabs** (`Calendar`, `Plans`, `Finance`, `Quotations`, `Inventory`, `Locations`, `Artists`, `Customers`, `Staff`, `Analytics`, `Settings`) plus the full-screen `QrLabelPrint` studio `<header>`:
+    - **Mobile (`< 640px`)**: `16px` top/bottom padding (`pt-[calc(16px+env(safe-area-inset-top,0px))] pb-4`, `h-10` buttons -> `73px` total height).
+    - **Small (`640–767px`)**: `16px` top/bottom padding with `sm:h-11` (`44px`) buttons (`77px` total height).
+    - **Tablet & Desktop (`md+ >= 768px`)**: `20px` top/bottom padding (`md:py-5`, `md:min-h-[85px]`) matching the Sidebar brand logo container (`px-6 py-5 h-[85px]`) to the exact pixel (`centerY = 42.5px`), eliminating layout shift even when switching to button-less pages (`Analytics`, `Settings`).
+- **Mobile Sticky Sub-Header Synchronization**:
+  - Updated mobile sticky filter bar offsets (`56px` -> `72px`) across `src/App.jsx`, `src/hooks/useStickyFilter.js`, `src/Finance.jsx`, `src/Quotations.jsx`, `src/Locations.jsx`, `src/Artists.jsx`, `src/Customers.jsx`, `src/Staff.jsx`, and `src/Calendar.jsx` so sticky filter bars lock flush beneath the `73px` mobile `<header>` without overlapping.
+- **Inventory AppBar Consolidation, `16pt` (`16px`) Spacing & QR Sticker Studio Overhaul (`src/Inventory.jsx`, `src/components/inventory/GameBackpackGrid.jsx`, `src/components/inventory/QrLabelPrint.jsx`)**:
+  - Moved all 5 Inventory primary actions (`สแกนหยิบ / คืน`, `พิมพ์ฉลาก`, `ประวัติ`/`กลับคลัง`, `รีเฟรช`, `+ เพิ่มพัสดุใหม่`) into the global `<header>` AppBar via clean custom events; enforced `16pt` (`p-4` / `gap-4` / `space-y-4`) padding; rebuilt `QrLabelPrint.jsx` into a 2-step Visual Sticker Studio (`อุปกรณ์รายชิ้น` + inline 1-tap serial creator + `ป้ายติดกล่องวัสดุ` + QR vs Narrow Barcode cards + live SVG preview).
+- **Verification**:
+  - Verified live via `chrome-devtools` MCP across Desktop (`1440×900`), Tablet (`768×1024`), and Mobile (`375×812`) across all 11 tabs + `QrLabelPrint` studio (`headerHeight: 85px` desktop/tablet, `73px` mobile, sticky filter bar `top: 72px`, `overflowX: false`, zero console errors/warnings).
+  - Clean `npm run build` and full Node test suite passed. No `git add`/`commit`/`push` executed.
+
+
+### 2026-11-15 (Late Night) — Unified 3-Zone AppBar / Headline Redesign (Apple / IG / Facebook Style + Strict `≤ 3` Actions Overflow Menu + `16pt` Base Padding)
+- **Unified 3-Zone AppBar Architecture (`src/App.jsx`, `src/components/common/HeaderFilterPortal.jsx`, `src/components/inventory/QrLabelPrint.jsx`)**:
+  - Standardized all AppBars / Headlines to uniform **`16pt` (`16px` = `px-4 pt-[calc(16px+env(safe-area-inset-top,0px))] pb-4`, `73px` total height aligned 1:1 with the Desktop Sidebar header)**.
+  - **Zone 1 (Left Navigation)**:
+    - Mobile (`< md`): Minimal borderless `☰` (`เมนูนำทางด่วน`) opening a frosted Quick-Jump Navigation Sheet to switch across any allowed page in 1 tap.
+    - Tablet / Wide PC (`md+`): Minimal `PanelLeft` (`สลับแถบเมนูซ้าย`) toggling `isSidebarCollapsed` (removing the legacy floating `-right-3` sidebar chevron) + Page Title aligned beside it on `lg+`.
+    - Sub-views (`Inventory` History view & `QrLabelPrint` full-screen studio): Automatically switches to minimal `←` (`ArrowLeft`) Back button.
+  - **Zone 2 (Center)**:
+    - Mobile / Portrait Tablet (`< lg`): Dead-center `<h1>` Page Title (`titleCenterX = 187.5px` on `375px`).
+    - Wide PC (`lg+`): Centered Spotlight pill search bar (`#app-header-center-search-slot`) paired directly beside a minimal **icon-only** `[ 🎚️ ]` Filter circle button (zero `"ตัวกรอง"` text label), keeping Search + Filter together as one clean unit while leaving the Right Zone exclusively for pure page actions.
+  - **Zone 3 (Right Primary Actions — Strict `≤ 3` Visible Controls + `[ ⋯ ]` Overflow Menu)**:
+    - Mobile (`< lg`): Minimal borderless stroke icons (`Search`, `SlidersHorizontal`, `SquarePlus`, `QrCode`, `MoreHorizontal`), strictly `≤ 3` visible buttons on every page.
+    - Wide PC (`lg+`): Emphasizes 1 solid primary CTA pill (`bg-violet-600 rounded-full`) + clean subtle secondary pills + `[ ⋯ ]` Frosted Overflow Popover whenever actions exceed 3 (`Inventory` on all viewports, `Quotations` on `< lg`).
+    - Prevented `header-filter-state-sync` re-render loops by storing `resetHandlerRef` in a ref and shallow-comparing primitive filter metadata in `App.jsx`; layered `<header>` (`z-30`) above `#app-header-filter-drawer` (`z-20`) so popovers float cleanly above open filter drawers.
+- **Verification**:
+  - `impeccable detect --json` passed with `0` anti-patterns; `207` tests (`npm test` + new test #17 in `tests/inventoryUi.test.cjs` + `tests/qrLabelPrint.test.cjs`) passed 100%; `npm run build` exited 0 (`12.69s`); verified live via `chrome-devtools` across `375×812`, `768×1024`, and `1440×900` with zero JS runtime errors. Updated Graphify (`1371 nodes, 2828 edges`). No `git add`/`commit`/`push` executed.

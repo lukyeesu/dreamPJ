@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback, startTransition } from 'react';
 import { createPortal } from 'react-dom';
 import PersistentPage from './components/common/PersistentPage';
+import HeaderFilterPortal from './components/common/HeaderFilterPortal';
+import DbCombobox from './components/common/DbCombobox';
 import { resolveInventoryImageFolder } from './services/inventoryImageService.js';
 import {
   Home,
@@ -24,6 +26,9 @@ import {
   LogOut,
   ChevronRight,
   ChevronLeft,
+  ArrowLeft,
+  PanelLeft,
+  SquarePlus,
   ArrowUpRight,
   Folder,
   Plus,
@@ -98,8 +103,12 @@ import {
   LayoutGrid,
   Sparkles,
   Package,
+  ShoppingBag,
+  Banknote,
   UserCheck,
-  Calculator
+  Calculator,
+  QrCode,
+  RefreshCw
 } from 'lucide-react';
 import Finance from './Finance';
 import Calendar from './Calendar';
@@ -141,9 +150,16 @@ import {
   loadProjectsByMonth,
   subscribeToStaffRealtime,
   syncDeletedRecords,
-  resetProjectLoadCache
+  resetProjectLoadCache,
+  DEFAULT_STAFF_MEMBERS
 } from './services/syncService';
 import { db, clearAllLocalDatabase } from './services/db';
+import { loadWarehouseStock } from './services/warehouseService';
+import {
+  syncExpenseLinesToWarehouse,
+  syncSupportCashToWarehouse,
+  shouldAutoSyncExpenseLine
+} from './utils/financeInventoryBridge';
 
 
 // Constants & Utilities
@@ -323,6 +339,7 @@ const App = () => {
   
   // Profile Menu & Modal States
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isMobileProfileMenuOpen, setIsMobileProfileMenuOpen] = useState(false);
   const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
   const [settingsDefaultCategory, setSettingsDefaultCategory] = useState('permissions');
 
@@ -461,32 +478,30 @@ const App = () => {
     return false;
   });
   
-  // Auth Users
+  // Auth Users (Synced with real Flower2U Supabase staff; legacy NexusPlan mockups purged)
   const [authorizedUsers, setAuthorizedUsers] = useState(() => {
-    const defaultUsers = [
-        {
-          username: 'admin',
-          password: 'password1234',
-          name: 'Admin User',
-          role: 'System Administrator',
-          email: 'admin@nexusplan.com',
-          phone: '-'
-        },
-        {
-          username: 'john',
-          password: 'password1234', 
-          name: 'John Smith',
-          role: 'Project Manager',
-          email: 'john.smith@nexusplan.com',
-          phone: '081-234-5678'
-        }
-    ];
+    const defaultUsers = DEFAULT_STAFF_MEMBERS.map((s) => ({
+      username: s.username,
+      password: s.password,
+      name: s.name,
+      role: s.role,
+      email: s.email,
+      phone: s.phone,
+      staffCode: s.staff_code,
+      image: s.avatar_url || ''
+    }));
 
     try {
-        const saved = localStorage.getItem('nexus_authorized_users');
-        return saved ? JSON.parse(saved) : defaultUsers;
+      const saved = localStorage.getItem('nexus_authorized_users');
+      if (!saved) return defaultUsers;
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return defaultUsers;
+      const cleaned = parsed.filter(
+        (u) => u && !String(u.email || '').toLowerCase().endsWith('@nexusplan.com')
+      );
+      return cleaned.length > 0 ? cleaned : defaultUsers;
     } catch (e) {
-        return defaultUsers;
+      return defaultUsers;
     }
   });
 
@@ -713,8 +728,57 @@ const App = () => {
   const [selectedVenueForModal, setSelectedVenueForModal] = useState(null);
   const [isVenueDirectoryOpen, setIsVenueDirectoryOpen] = useState(false);
   // Inventory, Loans & Customers States
-  const [inventoryItems] = useState([]);
+  const [inventoryItems, setInventoryItems] = useState([]);
   const [assetLoans] = useState([]);
+  const [pendingGameInventoryAction, setPendingGameInventoryAction] = useState(null);
+  const [syncSupportToCashVault, setSyncSupportToCashVault] = useState(true);
+  const [syncExpensesToWarehouse, setSyncExpensesToWarehouse] = useState(true);
+
+  // Lazy-load non-cash catalog items for seamless Finance/Project <-> Inventory auto-matching
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setInventoryItems([]);
+      return;
+    }
+    if (inventoryItems.length > 0) return;
+    if (activeTab !== 'Finance' && activeTab !== 'Quotations' && !isAddModalOpen) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = await db.inventory_items.toArray();
+        if (!cancelled && Array.isArray(cached) && cached.length > 0) {
+          setInventoryItems(cached);
+          return;
+        }
+        const page = await loadWarehouseStock({ limit: 150, offset: 0 });
+        if (!cancelled && page && Array.isArray(page.items)) {
+          setInventoryItems(page.items);
+        }
+      } catch {
+        // Silent fallback if warehouse RPC is not initialized yet
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn, activeTab, isAddModalOpen, inventoryItems.length]);
+
+  const handleOpenProjectInventoryBag = useCallback((e, project) => {
+    if (e) e.stopPropagation();
+    if (!project || !project.id) return;
+    setPendingGameInventoryAction({ projectId: project.id, mode: 'project' });
+    startTransition(() => {
+      setVisitedTabs((prev) => {
+        if (prev.has('Inventory')) return prev;
+        const next = new Set(prev);
+        next.add('Inventory');
+        return next;
+      });
+      setActiveTab('Inventory');
+    });
+  }, []);
   const [customerList, setCustomerList] = useState([]);
   const [artistList, setArtistList] = useState([]);
   const [customerSummaryStats, setCustomerSummaryStats] = useState({});
@@ -723,9 +787,68 @@ const App = () => {
   const [isCreateCustomerOpen, setIsCreateCustomerOpen] = useState(false);
   const [isCreateArtistOpen, setIsCreateArtistOpen] = useState(false);
   const [isCreateInventoryOpen, setIsCreateInventoryOpen] = useState(false);
+  const [isInventoryHistoryOpen, setIsInventoryHistoryOpen] = useState(false);
   const [isCreateVenueOpen, setIsCreateVenueOpen] = useState(false);
   const [isCreateQuotationOpen, setIsCreateQuotationOpen] = useState(false);
   const [isCreateStaffOpen, setIsCreateStaffOpen] = useState(false);
+  const [isQuickNavOpen, setIsQuickNavOpen] = useState(false);
+  const [isHeaderOverflowOpen, setIsHeaderOverflowOpen] = useState(false);
+  const [headerFilterMeta, setHeaderFilterMeta] = useState({
+    hasFilters: false,
+    isFilterOpen: false,
+    activeFilterCount: 0,
+    isDirty: false
+  });
+
+  const toggleDesktopSidebar = useCallback(() => {
+    setIsSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('nexus_sidebar_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleFilterSync = (e) => {
+      const d = e?.detail;
+      if (!d) return;
+      setHeaderFilterMeta((prev) => {
+        if (
+          prev.hasFilters === d.hasFilters &&
+          prev.isFilterOpen === d.isFilterOpen &&
+          prev.activeFilterCount === d.activeFilterCount &&
+          prev.isDirty === d.isDirty
+        ) {
+          return prev;
+        }
+        return d;
+      });
+    };
+    window.addEventListener('header-filter-state-sync', handleFilterSync);
+    return () => window.removeEventListener('header-filter-state-sync', handleFilterSync);
+  }, []);
+
+  useEffect(() => {
+    setIsQuickNavOpen(false);
+    setIsHeaderOverflowOpen(false);
+    if (activeTab === 'Settings') {
+      setHeaderFilterMeta({ hasFilters: false, isFilterOpen: false, activeFilterCount: 0, isDirty: false });
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!isQuickNavOpen && !isHeaderOverflowOpen) return undefined;
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') {
+        setIsQuickNavOpen(false);
+        setIsHeaderOverflowOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [isQuickNavOpen, isHeaderOverflowOpen]);
   // Active drag states for modal & file dropzones
   const [isDraggingRef, setIsDraggingRef] = useState(false);
   const [isDraggingSlip, setIsDraggingSlip] = useState(false);
@@ -1123,7 +1246,7 @@ const App = () => {
     let shouldBeScrolled = false;
     if (sentinel && sentinel.getClientRects().length > 0) {
       const targetTop = isMobile
-        ? (headerRef.current ? headerRef.current.getBoundingClientRect().bottom : 56)
+        ? (headerRef.current ? headerRef.current.getBoundingClientRect().bottom : 72)
         : (mainRef.current ? mainRef.current.getBoundingClientRect().top : 0);
       const marginOffset = isMobile ? 8 : 12;
       shouldBeScrolled = sentinel.getBoundingClientRect().top <= targetTop - marginOffset + 1;
@@ -2991,31 +3114,43 @@ const App = () => {
     isModalClosing
   ]);
 
-  const handleCustomerChange = (e) => {
-    const value = e.target.value;
+  const applyMatchedCustomerDetails = (cust) => {
+    if (!cust) return;
+    setCustomerSocial(cust.social ?? cust.social_account ?? '');
+    setCustomerLine(cust.line ?? cust.line_id ?? '');
+    setCustomerPhone(formatPhoneNumber(cust.phone || ''));
+    setCustomerEmail(cust.email || '');
+    setCustomerTaxId(cust.taxId ?? cust.tax_id ?? '');
+    setCustomerAddress(cust.address ?? cust.billing_address ?? '');
+  };
+
+  const handleCustomerNameUpdate = (value) => {
     setCustomerName(value);
-    const existingCustomer = savedCustomers.find(c => c.name === value);
+    const trimmed = String(value || '').trim().toLowerCase();
+    if (!trimmed) return;
+    const existingCustomer = savedCustomers.find((c) => c.name?.toLowerCase() === trimmed);
     if (existingCustomer) {
-      setCustomerSocial(existingCustomer.social || '');
-      setCustomerLine(existingCustomer.line || '');
-      setCustomerPhone(formatPhoneNumber(existingCustomer.phone || '')); // [MODIFIED] Format phone
-      setCustomerEmail(existingCustomer.email || '');
-      setCustomerTaxId(existingCustomer.taxId || '');
-      setCustomerAddress(existingCustomer.address || ''); 
+      applyMatchedCustomerDetails(existingCustomer);
     }
   };
 
-  const handleRecipientChange = (e) => {
-    const value = e.target.value;
+  const handleRecipientNameUpdate = (value) => {
     setRecipientName(value);
-    const existingRecipient = savedRecipients.find(r => r.name === value);
+    const trimmed = String(value || '').trim().toLowerCase();
+    if (!trimmed) return;
+    const existingRecipient = savedRecipients.find((r) => r.name?.toLowerCase() === trimmed);
     if (existingRecipient) {
-      setRecipientPhone(formatPhoneNumber(existingRecipient.phone || '')); // [MODIFIED] Format phone
+      setRecipientPhone(formatPhoneNumber(existingRecipient.phone || ''));
     }
   };
 
-  const openModal = (activity = null, viewOnly = false) => {
-    setViewOnlyMode(viewOnly);
+  const openModal = (activityOrId = null, viewOnly) => {
+    const activity =
+      typeof activityOrId === 'string'
+        ? allActivities.find((a) => String(a.id) === String(activityOrId)) || null
+        : activityOrId;
+    const effectiveViewOnly = activity ? (viewOnly !== undefined ? Boolean(viewOnly) : true) : false;
+    setViewOnlyMode(effectiveViewOnly);
 
     if (activity) {
       setEditingId(activity.id);
@@ -3182,6 +3317,8 @@ const App = () => {
       setDealStatus(dealStatuses.length > 0 ? dealStatuses[0].value : ''); 
       setTransportStatus(transportStatuses.length > 0 ? transportStatuses[0].value : '');
     }
+    setSyncSupportToCashVault(true);
+    setSyncExpensesToWarehouse(true);
     setIsAddModalOpen(true);
   };
 
@@ -3372,6 +3509,32 @@ const App = () => {
         // 1. บันทึกลง Supabase และ IndexedDB แบบ Realtime
         await saveProjectSync(activityData);
 
+        // 2. Seamless Bridge: ซิงก์ธนบัตรสนับสนุนศิลปิน / รายการซื้อของเข้ากระเป๋าคลังอัตโนมัติ (Idempotent)
+        let syncedNotesMsg = '';
+        if (syncSupportToCashVault && Array.isArray(activityData.customerSupport) && activityData.customerSupport.length > 0) {
+          const supRes = await syncSupportCashToWarehouse({
+            projectId: activityData.id,
+            supportLines: activityData.customerSupport.map((l) => ({ ...l, syncToCashVault: true })),
+            autoReserveForProject: true
+          });
+          if (supRes.syncedCount > 0) {
+            syncedNotesMsg += ` + เติม/จองธนบัตรคลัง ${supRes.syncedCount} รายการ`;
+          }
+        }
+        if (syncExpensesToWarehouse && Array.isArray(activityData.expenses) && activityData.expenses.length > 0) {
+          const expRes = await syncExpenseLinesToWarehouse({
+            projectId: activityData.id,
+            expenseLines: activityData.expenses.map((l) => ({
+              ...l,
+              syncToWarehouse: shouldAutoSyncExpenseLine(l.detail, l.category, inventoryItems)
+            })),
+            catalogItems: inventoryItems
+          });
+          if (expRes.syncedCount > 0) {
+            syncedNotesMsg += ` + เติมของเข้ากระเป๋าคลัง ${expRes.syncedCount} รายการ`;
+          }
+        }
+
         setAllActivities(prev => {
            const exists = prev.some(item => item.id === activityData.id);
            if (exists) {
@@ -3383,7 +3546,7 @@ const App = () => {
 
         setIsSaving(false);
         closeModal();
-        showToast("บันทึกข้อมูลเรียบร้อยแล้ว", 'success');
+        showToast(`บันทึกข้อมูลเรียบร้อยแล้ว${syncedNotesMsg}`, 'success');
         return;
       } catch (error) {
         showToast("เกิดข้อผิดพลาดในการเชื่อมต่อ: " + error.message, 'error');
@@ -3769,27 +3932,34 @@ const App = () => {
                     <span className="font-bold text-yellow-600 mr-1">หมายเหตุ:</span> {item.note}
                   </div>
                 )}
-                {/* [MODIFIED] Mobile Action Buttons - Chatbot Button Removed */}
-                <div className="grid grid-cols-3 gap-2 mt-2">
+                {/* [MODIFIED] Mobile Action Buttons - Includes Game Inventory Shortcut */}
+                <div className="grid grid-cols-4 gap-1.5 mt-2">
                     <button 
                         onClick={(e) => handleDeleteFromTable(e, item.id)} 
-                        className="flex items-center justify-center gap-1.5 py-2.5 bg-rose-50 border border-rose-100 text-rose-600 font-bold hover:bg-rose-100 rounded-xl transition shadow-sm"
+                        className="flex items-center justify-center gap-1 py-2.5 bg-rose-50 border border-rose-100 text-rose-600 font-bold hover:bg-rose-100 rounded-xl transition shadow-sm cursor-pointer"
                         title="ลบรายการ"
                     >
                         <Trash2 className="w-4 h-4" /> 
                     </button>
                     <button 
-                        onClick={(e) => handleEditFromTable(e, item)} 
-                        className="flex items-center justify-center gap-1.5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition-colors shadow-sm"
+                        onClick={(e) => handleOpenProjectInventoryBag(e, item)} 
+                        className="flex items-center justify-center gap-1 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold hover:bg-emerald-100 rounded-xl transition-colors shadow-sm text-xs cursor-pointer"
+                        title="จัดของ / เบิกเงินพับคลังสินค้า"
                     >
-                        <Edit className="w-4 h-4" /> แก้ไข
+                        <ShoppingBag className="w-3.5 h-3.5 shrink-0" /> จัดของ
+                    </button>
+                    <button 
+                        onClick={(e) => handleEditFromTable(e, item)} 
+                        className="flex items-center justify-center gap-1 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition-colors shadow-sm text-xs cursor-pointer"
+                    >
+                        <Edit className="w-3.5 h-3.5 shrink-0" /> แก้ไข
                     </button>
                     <button 
                         onClick={(e) => { e.stopPropagation(); setShareData(item); }} 
-                        className="flex items-center justify-center gap-1.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl transition-colors shadow-sm"
+                        className="flex items-center justify-center gap-1 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl transition-colors shadow-sm text-xs cursor-pointer"
                         title="แชร์ให้ลูกค้า"
                     >
-                        <Share2 className="w-4 h-4" /> แชร์
+                        <Share2 className="w-3.5 h-3.5 shrink-0" /> แชร์
                     </button>
                 </div>
               </div>
@@ -4042,8 +4212,15 @@ const App = () => {
                           <td className="px-2 py-4 align-top text-right">
                             <div className="flex items-center justify-end gap-1">
                               <button
+                                onClick={(e) => handleOpenProjectInventoryBag(e, item)}
+                                className="p-2 bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 rounded-lg transition shadow-sm cursor-pointer"
+                                title="จัดของ / เบิกเงินพับคลังสินค้า"
+                              >
+                                <ShoppingBag className="w-4 h-4" />
+                              </button>
+                              <button
                                 onClick={(e) => { e.stopPropagation(); setShareData(item); }}
-                                className="p-2 bg-indigo-50 border border-indigo-100 text-indigo-600 hover:bg-indigo-100 rounded-lg transition shadow-sm"
+                                className="p-2 bg-indigo-50 border border-indigo-100 text-indigo-600 hover:bg-indigo-100 rounded-lg transition shadow-sm cursor-pointer"
                                 title="แชร์"
                               >
                                 <Share2 className="w-4 h-4" />
@@ -4119,263 +4296,88 @@ const App = () => {
     const setCurTransport = (val) => updateTabFilter(tabKey, { transport: val });
     const resetCurFilters = () => resetTabFilter(tabKey);
 
+    const activeFilterCount = [
+      curDateMode !== 'month',
+      curCategory !== 'all',
+      curStatus !== 'all',
+      curTransport !== 'all'
+    ].filter(Boolean).length;
+
     return (
-    <>
-      <div
-        ref={(el) => {
-          if (el) filterSentinelsRef.current[tabKey] = el;
-        }}
-        className="w-full h-0 -my-3 pointer-events-none opacity-0"
-      />
-      <div
-        className={`sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 z-40 bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out
-          ${isScrolled
-            ? 'mx-0 py-2.5 sm:py-3 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
-            : 'mx-4 sm:mx-8 lg:mx-10 p-3.5 sm:p-4 rounded-[2rem] sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
-          }
-        `}
+      <HeaderFilterPortal
+        active={activeTab === tabKey}
+        searchValue={curSearch}
+        onSearchChange={setCurSearch}
+        placeholder="ค้นหาชื่องาน, ศิลปิน, รหัส..."
+        activeFilterCount={activeFilterCount}
+        onReset={resetCurFilters}
       >
-      <div className="flex flex-col gap-2.5 md:hidden">
-         {/* Row 1: Search + Filter Toggle + Reset */}
-         <div className="flex items-center gap-2">
-            <div className="relative flex-1 bg-slate-50 border border-slate-200/70 rounded-xl h-10 flex items-center hover:bg-slate-100/60 focus-within:bg-white focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                    <Search className="w-4 h-4" />
-                </div>
-                <input
-                    type="text"
-                    placeholder="ค้นหา..."
-                    className="w-full h-full pl-9 pr-8 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-medium placeholder:text-slate-400 rounded-xl"
-                    value={curSearch}
-                    onChange={(e) => setCurSearch(e.target.value)}
-                />
-                {curSearch && (
-                  <button
-                    onClick={() => setCurSearch('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-md"
-                    title="ล้างข้อความค้นหา"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-            </div>
-
-            {/* ปุ่มเปิด/ซ่อนตัวกรอง (Icon Only) */}
-            <button
-              type="button"
-              onClick={() => setIsMobileFilterExpanded(!isMobileFilterExpanded)}
-              className={`h-10 w-10 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 border ${
-                isMobileFilterExpanded 
-                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-200' 
-                  : 'bg-slate-50 text-slate-600 border-slate-200/70 hover:bg-slate-100'
-              }`}
-              title={isMobileFilterExpanded ? "ซ่อนตัวกรอง" : "เปิดตัวกรองเพิ่มเติม"}
-              aria-label="ตัวกรอง"
-            >
-              <SlidersHorizontal className="w-4 h-4" />
-            </button>
-
-            {/* ปุ่มรีเซ็ตฟิลเตอร์ */}
-            <button
-              onClick={resetCurFilters}
-              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95"
-              title="ล้างค่าตัวกรองทั้งหมด"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
-         </div>
-
-         {/* แผงฟิลเตอร์เมื่อกดเปิด (Mobile Drawer) */}
-         {isMobileFilterExpanded && (
-            <div className="flex flex-col gap-2 pt-2 border-t border-slate-100 animate-in slide-in-from-top-2 fade-in duration-200">
-                {/* 1. Date Filter Control (Full Width) */}
-                <div className="w-full h-10">
-                    <DateFilterControl 
-                        mode={curDateMode} setMode={setCurDateMode}
-                        date={curDate} setDate={setCurDate}
-                        range={curDateRange} setRange={setCurDateRange}
-                    />
-                </div>
-
-                {/* 2. Grid of Dropdowns (2 columns for Category & Deal, full width for Transport) */}
-                <div className="grid grid-cols-2 gap-2">
-                    {/* หมวดหมู่ */}
-                    <div className="relative bg-slate-50 border border-slate-200/70 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
-                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                        <Tag className="w-3.5 h-3.5" />
-                      </div>
-                      <select
-                          className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer"
-                          value={curCategory}
-                          onChange={(e) => setCurCategory(e.target.value)}
-                      >
-                          <option value="all">ทุกหมวดหมู่</option>
-                          {projectCategories.map((cat, i) => (
-                            <option key={i} value={cat}>{cat}</option>
-                          ))}
-                      </select>
-                      <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    </div>
-
-                    {/* สถานะดีล */}
-                    <div className="relative bg-slate-50 border border-slate-200/70 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
-                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                        <Briefcase className="w-3.5 h-3.5" />
-                      </div>
-                      <select
-                          className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer"
-                          value={curStatus}
-                          onChange={(e) => setCurStatus(e.target.value)}
-                      >
-                          <option value="all">ทุกสถานะ (ดีล)</option>
-                          {dealStatuses.map((status, i) => (
-                            <option key={i} value={status.value}>{status.label}</option>
-                          ))}
-                      </select>
-                      <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    </div>
-
-                    {/* ขนส่ง (เต็มแถว 2 คอลัมน์) */}
-                    <div className="col-span-2 relative bg-slate-50 border border-slate-200/70 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
-                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                        <Truck className="w-3.5 h-3.5" />
-                      </div>
-                      <select
-                          className="w-full h-full pl-8 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer"
-                          value={curTransport}
-                          onChange={(e) => setCurTransport(e.target.value)}
-                      >
-                          <option value="all">ขนส่ง: ทั้งหมด</option>
-                          <option value="active_only">กำลังดำเนินการ (Active)</option>
-                          {transportStatuses.map((status, i) => (
-                            <option key={i} value={status.value}>{status.label}</option>
-                          ))}
-                      </select>
-                      <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    </div>
-                </div>
-            </div>
-         )}
-      </div>
-      
-      <div className="hidden md:flex flex-col gap-2.5">
-          {/* แถวที่ 1: ค้นหา + ตัวเลือกวันที่ + ปุ่มเปิด/ปิดตัวกรองเพิ่มเติม + ปุ่มรีเซ็ต */}
-          <div className="flex items-center gap-3 h-[48px]">
-              {/* ช่องค้นหา */}
-              <div className="relative flex-[1.2] min-w-[260px] h-full bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all shadow-xs">
-                   <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                        <Search className="w-5 h-5" />
-                   </div>
-                   <input
-                        type="text"
-                        placeholder="ค้นหาชื่องาน, ศิลปิน, รหัส..."
-                        className="w-full h-full pl-12 pr-10 bg-transparent outline-none text-slate-700 text-sm font-medium placeholder:text-slate-400 rounded-2xl"
-                        value={curSearch}
-                        onChange={(e) => setCurSearch(e.target.value)}
-                   />
-                   {curSearch && (
-                     <button
-                       onClick={() => setCurSearch('')}
-                       className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-md cursor-pointer"
-                       title="ล้างข้อความค้นหา"
-                     >
-                       <X className="w-4 h-4" />
-                     </button>
-                   )}
-              </div>
-
-              {/* ตัวกรองวันที่ */}
-              <div className="flex-1 min-w-[320px] max-w-[440px] h-full">
-                   <DateFilterControl 
-                        mode={curDateMode} setMode={setCurDateMode}
-                        date={curDate} setDate={setCurDate}
-                        range={curDateRange} setRange={setCurDateRange}
-                   />
-              </div>
-
-              {/* ปุ่มเปิด/ซ่อนตัวกรองเพิ่มเติม Desktop (Icon Only) */}
-              <button
-                type="button"
-                onClick={() => setIsDesktopFilterExpanded(!isDesktopFilterExpanded)}
-                className={`h-full px-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 active:scale-95 border cursor-pointer shadow-xs ${
-                  isDesktopFilterExpanded 
-                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-200' 
-                    : (curCategory !== 'all' || curStatus !== 'all' || curTransport !== 'all')
-                    ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-                    : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:bg-slate-50'
-                }`}
-                title={isDesktopFilterExpanded ? "ซ่อนตัวกรองเพิ่มเติม" : "เปิดตัวกรองเพิ่มเติม"}
-                aria-label="ตัวกรอง"
-              >
-                <SlidersHorizontal className="w-4 h-4" />
-                {(curCategory !== 'all' || curStatus !== 'all' || curTransport !== 'all') && (
-                  <span className={`px-1.5 py-0.5 rounded-full text-xs font-black ${
-                    isDesktopFilterExpanded ? 'bg-white text-indigo-600' : 'bg-indigo-200 text-indigo-800'
-                  }`}>
-                    {[curCategory !== 'all', curStatus !== 'all', curTransport !== 'all'].filter(Boolean).length}
-                  </span>
-                )}
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isDesktopFilterExpanded ? 'rotate-180' : ''}`} />
-              </button>
-
-              {/* ปุ่มรีเซ็ตตัวกรอง */}
-              <button
-                  onClick={resetCurFilters}
-                  className="h-full w-[48px] bg-white border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-2xl font-bold transition-colors flex items-center justify-center shadow-xs shrink-0 cursor-pointer active:scale-95"
-                  title="ล้างค่าตัวกรองทั้งหมด"
-              >
-                  <RotateCcw className="w-4 h-4" />
-              </button>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+          <div className="sm:col-span-2 lg:col-span-1 h-10">
+            <DateFilterControl
+              mode={curDateMode}
+              setMode={setCurDateMode}
+              date={curDate}
+              setDate={setCurDate}
+              range={curDateRange}
+              setRange={setCurDateRange}
+            />
           </div>
 
-          {/* แถวที่ 2: หมวดหมู่ + สถานะดีล + ขนส่ง (ซ่อนเริ่มต้น แสดงเมื่อกดปุ่มตัวกรอง) */}
-          {isDesktopFilterExpanded && (
-            <div className="flex gap-3 h-[48px] pt-1 animate-in slide-in-from-top-2 fade-in duration-200">
-                <div className="relative flex-1 bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs group">
-                     <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Tag className="w-4 h-4" /></div>
-                     <select
-                          className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
-                          value={curCategory}
-                          onChange={(e) => setCurCategory(e.target.value)}
-                     >
-                          <option value="all">ทุกหมวดหมู่</option>
-                          {projectCategories.map((cat, i) => <option key={i} value={cat}>{cat}</option>)}
-                     </select>
-                     <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-
-                <div className="relative flex-1 bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs group">
-                     <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Briefcase className="w-4 h-4" /></div>
-                     <select
-                          className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
-                          value={curStatus}
-                          onChange={(e) => setCurStatus(e.target.value)}
-                     >
-                          <option value="all">ทุกสถานะ (ดีล)</option>
-                          {dealStatuses.map((s, i) => <option key={i} value={s.value}>{s.label}</option>)}
-                     </select>
-                     <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-
-                <div className="relative flex-1 bg-white border border-slate-200 rounded-2xl hover:border-indigo-300 transition-colors shadow-xs group">
-                     <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-hover:text-indigo-500 transition-colors"><Truck className="w-4 h-4" /></div>
-                     <select
-                          className="w-full h-full pl-11 pr-8 bg-transparent outline-none text-slate-700 text-sm font-bold appearance-none cursor-pointer rounded-2xl"
-                          value={curTransport}
-                          onChange={(e) => setCurTransport(e.target.value)}
-                     >
-                          <option value="all">ขนส่ง (ทั้งหมด)</option>
-                          <option value="active_only">กำลังดำเนินการ (Active)</option>
-                          {transportStatuses.map((s, i) => <option key={i} value={s.value}>{s.label}</option>)}
-                     </select>
-                     <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
+          <div className="relative bg-slate-50 border border-slate-200/80 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+              <Tag className="w-3.5 h-3.5" />
             </div>
-          )}
-      </div>
-    </div>
-    </>
-  );
+            <select
+              className="w-full h-full pl-8 pr-7 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-bold appearance-none cursor-pointer"
+              value={curCategory}
+              onChange={(e) => setCurCategory(e.target.value)}
+            >
+              <option value="all">ทุกหมวดหมู่</option>
+              {projectCategories.map((cat, i) => (
+                <option key={i} value={cat}>{cat}</option>
+              ))}
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+
+          <div className="relative bg-slate-50 border border-slate-200/80 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+              <Briefcase className="w-3.5 h-3.5" />
+            </div>
+            <select
+              className="w-full h-full pl-8 pr-7 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-bold appearance-none cursor-pointer"
+              value={curStatus}
+              onChange={(e) => setCurStatus(e.target.value)}
+            >
+              <option value="all">ทุกสถานะ (ดีล)</option>
+              {dealStatuses.map((status, i) => (
+                <option key={i} value={status.value}>{status.label}</option>
+              ))}
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+
+          <div className="relative bg-slate-50 border border-slate-200/80 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+              <Truck className="w-3.5 h-3.5" />
+            </div>
+            <select
+              className="w-full h-full pl-8 pr-7 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-bold appearance-none cursor-pointer"
+              value={curTransport}
+              onChange={(e) => setCurTransport(e.target.value)}
+            >
+              <option value="all">ขนส่ง: ทั้งหมด</option>
+              <option value="active_only">กำลังดำเนินการ (Active)</option>
+              {transportStatuses.map((status, i) => (
+                <option key={i} value={status.value}>{status.label}</option>
+              ))}
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+        </div>
+      </HeaderFilterPortal>
+    );
   };
 
   const renderContent = () => {
@@ -4527,7 +4529,7 @@ const App = () => {
                   : venueOrName;
                 setSelectedVenueForModal(match);
               }}
-              onSelectProject={(project) => openModal(project, false)}
+              onSelectProject={(project) => openModal(project, true)}
             />
           </PersistentPage>
         )}
@@ -4546,7 +4548,7 @@ const App = () => {
                   activities={plansActivities}
                   dealStatuses={dealStatuses}
                   transportStatuses={transportStatuses}
-                  onSelectProject={(p) => openModal(p, false)}
+                  onSelectProject={(p) => openModal(p, true)}
                   onOpenVenueModal={(venueOrName) => {
                     const match = typeof venueOrName === 'string'
                       ? deliveryLocations.find(l => l.name.toLowerCase() === venueOrName.trim().toLowerCase()) || { name: venueOrName }
@@ -4564,6 +4566,7 @@ const App = () => {
           <PersistentPage active={activeTab === 'Finance'} className="block min-h-full pb-24 md:pb-6">
               <Finance
                   activities={allActivities}
+                  inventoryItems={inventoryItems}
                   dealStatuses={dealStatuses}
                   transportStatuses={transportStatuses}
                   shopInfo={shopInfo}
@@ -4614,13 +4617,29 @@ const App = () => {
         {visitedTabs.has('Inventory') && (
           <PersistentPage active={activeTab === 'Inventory'} className="block">
             <Inventory
+              defaultExperience="game"
               inventoryItems={inventoryItems}
               assetLoans={assetLoans}
               activities={allActivities}
               isCreateOpen={isCreateInventoryOpen}
               onCloseCreate={() => setIsCreateInventoryOpen(false)}
+              onHistoryModeChange={setIsInventoryHistoryOpen}
               onOpenProjectModal={openModal}
-
+              onSaveActivity={async (updatedActivity) => {
+                await saveProjectSync(updatedActivity);
+                setAllActivities((prev) => {
+                  const exists = prev.some((item) => item.id === updatedActivity.id);
+                  if (exists) {
+                    return prev.map((item) => (item.id === updatedActivity.id ? updatedActivity : item));
+                  }
+                  return [updatedActivity, ...prev];
+                });
+              }}
+              externalGameActionRequest={pendingGameInventoryAction}
+              onClearExternalGameAction={() => setPendingGameInventoryAction(null)}
+              onRefresh={fetchProjects}
+              inventoryImageFolderId={resolveInventoryImageFolder(driveFolders, assetsDriveFolderId)}
+              driveUploadUrl={GOOGLE_SCRIPT_URL}
               isActive={activeTab === 'Inventory'}
               userProfile={userProfile}
             />
@@ -4851,17 +4870,9 @@ const App = () => {
       {/* --- Desktop Sidebar --- */}
       {/* Only show sidebar if logged in AND NOT in tracking mode */}
       {isLoggedIn && !trackingId && !quotationId && (
-        <aside className={`hidden md:flex flex-col ${isSidebarCollapsed ? 'w-20' : 'w-72'} bg-white border-r border-slate-100 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-20 transition-all duration-300 relative`}>
-            {/* ... Sidebar Content ... */}
-            <button
-                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                className="absolute -right-3 top-1/2 -translate-y-1/2 p-1.5 bg-white border border-slate-200 rounded-full shadow-sm text-slate-400 hover:text-rose-600 transition-colors z-50"
-            >
-                {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-            </button>
-
-            <div className={`p-6 pb-4 flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
-            {/* Sidebar Brand Logo: Original Clipboard Icon with Dynamic Theme */}
+        <aside className={`hidden md:flex flex-col ${isSidebarCollapsed ? 'w-20' : 'w-72'} bg-white border-r border-slate-200/75 z-20 transition-all duration-300 relative`}>
+            <div className={`px-5 py-4 min-h-[72px] border-b border-slate-200/75 flex items-center shrink-0 ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+            {/* Sidebar Brand Logo */}
             <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 overflow-hidden relative ${shopInfo.logo ? '' : 'theme-logo-bg'}`}>
                 {shopInfo.logo ? (
                     <img 
@@ -4881,9 +4892,9 @@ const App = () => {
                 </div>
             </div>
             {!isSidebarCollapsed && (
-                <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent tracking-tight whitespace-nowrap overflow-hidden">
+                <span className="text-xl font-extrabold text-slate-900 tracking-[-0.02em] whitespace-nowrap overflow-hidden truncate">
                 {shopInfo.shopName || 'Flower2you'}
-                </h1>
+                </span>
             )}
             </div>
             
@@ -5030,135 +5041,427 @@ const App = () => {
 
       <div className="flex-1 flex flex-col min-h-screen md:min-h-0 md:h-full md:overflow-hidden relative">
         {/* Only show header if logged in AND NOT in tracking mode */}
-        {isLoggedIn && !trackingId && !quotationId && (
-            <header 
-              ref={headerRef}
-              className="bg-white/95 backdrop-blur-xl border-b border-slate-100 flex items-center justify-between px-4 sm:px-8 z-50 shrink-0 sticky top-0 left-0 right-0"
-              style={{
-                paddingTop: 'env(safe-area-inset-top, 0px)',
-                height: 'calc(56px + env(safe-area-inset-top, 0px))'
-              }}
-            >
-            <div className="flex items-center gap-3 sm:gap-4">
-                <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
-                {getPageTitle(activeTab)}
-                </h1>
-            </div>
+        {isLoggedIn && !trackingId && !quotationId && (() => {
+          const isInventorySubView = activeTab === 'Inventory' && isInventoryHistoryOpen;
+          const currentHeaderTitle = isInventorySubView ? 'ประวัติคลังสินค้า' : getPageTitle(activeTab);
+          const primaryActionBtnClass =
+            'min-w-9 min-h-9 w-9 h-9 sm:w-10 sm:h-10 lg:w-auto lg:h-10 lg:px-4 rounded-full text-slate-900 hover:bg-slate-100 lg:bg-violet-600 lg:hover:bg-violet-700 lg:text-white text-sm font-bold transition flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600';
 
-            <div className="flex items-center gap-2">
-              {activeTab === 'Plans' && (
-                <button
-                  onClick={() => openModal()}
-                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>เพิ่มแผนงาน</span>
-                </button>
-              )}
-              {activeTab === 'Calendar' && (
-                <button
-                  onClick={() => openModal()}
-                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>เพิ่มงาน</span>
-                </button>
-              )}
-              {activeTab === 'Quotations' && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => window.dispatchEvent(new CustomEvent('trigger-rates-quotation'))}
-                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                    title="ตั้งค่าราคากลางวัสดุ"
-                  >
-                    <SettingsIcon className="w-4 h-4 text-slate-500" />
-                    <span className="hidden sm:inline">ราคากลางวัสดุ</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsCreateQuotationOpen(true);
-                      window.dispatchEvent(new CustomEvent('trigger-create-quotation'));
-                    }}
-                    className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>คำนวณราคา</span>
-                  </button>
+          const singlePageCreateMap = {
+            Plans: { label: 'เพิ่มแผนงาน', onClick: () => openModal() },
+            Calendar: { label: 'เพิ่มงาน', onClick: () => openModal() },
+            Locations: {
+              label: 'เพิ่มสถานที่',
+              onClick: () => {
+                setIsCreateVenueOpen(true);
+                window.dispatchEvent(new CustomEvent('trigger-create-venue'));
+              }
+            },
+            Artists: {
+              label: 'เพิ่มศิลปินใหม่',
+              onClick: () => {
+                setIsCreateArtistOpen(true);
+                window.dispatchEvent(new CustomEvent('trigger-create-artist'));
+              }
+            },
+            Customers: {
+              label: 'เพิ่มลูกค้าใหม่',
+              onClick: () => {
+                setIsCreateCustomerOpen(true);
+                window.dispatchEvent(new CustomEvent('trigger-create-customer'));
+              }
+            },
+            Staff: {
+              label: 'เพิ่มพนักงานใหม่',
+              onClick: () => {
+                setIsCreateStaffOpen(true);
+                window.dispatchEvent(new CustomEvent('trigger-create-staff'));
+              }
+            },
+            Finance: {
+              label: 'เพิ่มรายรับ/จ่าย',
+              onClick: () => window.dispatchEvent(new CustomEvent('trigger-create-finance-tx'))
+            }
+          };
+          const singleCreateAction = singlePageCreateMap[activeTab] || null;
+
+          return (
+            <div className="sticky top-0 left-0 right-0 z-50 shrink-0">
+              <header
+                ref={headerRef}
+                className="relative z-30 bg-white/95 backdrop-blur-xl border-b border-slate-200/75 px-4 pt-[calc(16px+env(safe-area-inset-top,0px))] pb-4 min-h-[calc(72px+env(safe-area-inset-top,0px))] grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(320px,496px)_minmax(0,1fr)] items-center gap-x-1.5 sm:gap-x-2 lg:gap-x-4"
+              >
+                {/* ================= ZONE 1: LEFT NAVIGATION (+ TITLE ON WIDE PC) ================= */}
+                <div className="justify-self-start flex items-center gap-2.5 min-w-0 relative">
+                  {isInventorySubView ? (
+                    <button
+                      type="button"
+                      onClick={() => window.dispatchEvent(new CustomEvent('trigger-inventory-history'))}
+                      className="w-10 h-10 -ml-1.5 rounded-full text-slate-900 hover:bg-slate-100 flex items-center justify-center transition active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
+                      title="กลับคลังสินค้า"
+                      aria-label="กลับคลังสินค้า"
+                    >
+                      <ArrowLeft aria-hidden="true" className="w-[21px] h-[21px] stroke-[2.2]" />
+                    </button>
+                  ) : (
+                    <>
+                      {/* Mobile (< md): Smart Quick-Jump Navigation Menu [☰] */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsHeaderOverflowOpen(false);
+                          setIsQuickNavOpen((v) => !v);
+                        }}
+                        className={`md:hidden w-10 h-10 -ml-1.5 rounded-full flex items-center justify-center transition active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600 ${
+                          isQuickNavOpen ? 'bg-slate-900 text-white' : 'text-slate-900 hover:bg-slate-100'
+                        }`}
+                        title="เมนูนำทางด่วน"
+                        aria-label="เมนูนำทางด่วน"
+                        aria-expanded={isQuickNavOpen}
+                      >
+                        <Menu aria-hidden="true" className="w-[21px] h-[21px] stroke-[2]" />
+                      </button>
+
+                      {/* Tablet & Wide PC (md+): Minimal Sidebar Toggle */}
+                      <button
+                        type="button"
+                        onClick={toggleDesktopSidebar}
+                        className="hidden md:flex w-10 h-10 -ml-1.5 rounded-full text-slate-800 hover:text-slate-950 hover:bg-slate-100 items-center justify-center transition active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
+                        title={isSidebarCollapsed ? 'ขยายแถบเมนูซ้าย' : 'ย่อแถบเมนูซ้าย'}
+                        aria-label="สลับแถบเมนูซ้าย"
+                        aria-pressed={!isSidebarCollapsed}
+                      >
+                        <PanelLeft aria-hidden="true" className="w-[20px] h-[20px] stroke-[2]" />
+                      </button>
+                    </>
+                  )}
+
+                  {/* Wide PC (lg+): Page Title next to Nav Action */}
+                  <h1 className="hidden lg:block text-xl font-extrabold text-slate-900 tracking-[-0.02em] truncate">
+                    {currentHeaderTitle}
+                  </h1>
+
+                  {/* Mobile Quick-Jump Navigation Popover (Apple / IG Frosted Sheet) */}
+                  {isQuickNavOpen && (
+                    <>
+                      <div
+                        className="md:hidden fixed inset-0 z-40"
+                        onClick={() => setIsQuickNavOpen(false)}
+                      />
+                      <div className="md:hidden absolute left-0 top-[calc(100%+8px)] w-64 max-h-[min(74vh,480px)] overflow-y-auto bg-white/98 backdrop-blur-2xl rounded-2xl shadow-[0_16px_40px_rgba(15,23,42,0.14)] ring-1 ring-slate-900/10 p-1.5 z-50 animate-in fade-in zoom-in-95 origin-top-left duration-150">
+                        <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                          ไปยังหน้า
+                        </div>
+                        <div className="space-y-0.5">
+                          {allowedNavItems.map((item) => {
+                            const isCurrent = activeTab === item.name;
+                            return (
+                              <button
+                                key={item.name}
+                                type="button"
+                                onClick={() => {
+                                  setIsQuickNavOpen(false);
+                                  handleSelectTab(item.name);
+                                }}
+                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-600 ${
+                                  isCurrent
+                                    ? 'bg-violet-50 text-violet-700'
+                                    : 'text-slate-700 hover:bg-slate-100/80 hover:text-slate-950'
+                                }`}
+                              >
+                                <item.icon
+                                  aria-hidden="true"
+                                  className={`w-4 h-4 shrink-0 ${isCurrent ? 'text-violet-600' : 'text-slate-400'}`}
+                                />
+                                <span className="flex-1 truncate">{item.label}</span>
+                                {isCurrent && (
+                                  <Check aria-hidden="true" className="w-4 h-4 text-violet-600 shrink-0" />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
-              )}
-              {activeTab === 'Inventory' && (
-                <button
-                  onClick={() => {
-                    setIsCreateInventoryOpen(true);
-                    window.dispatchEvent(new CustomEvent('trigger-create-inventory'));
-                  }}
-                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>เพิ่มพัสดุใหม่</span>
-                </button>
-              )}
-              {activeTab === 'Locations' && (
-                <button
-                  onClick={() => {
-                    setIsCreateVenueOpen(true);
-                    window.dispatchEvent(new CustomEvent('trigger-create-venue'));
-                  }}
-                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>เพิ่มสถานที่</span>
-                </button>
-              )}
-              {activeTab === 'Artists' && (
-                <button
-                  onClick={() => {
-                    setIsCreateArtistOpen(true);
-                    window.dispatchEvent(new CustomEvent('trigger-create-artist'));
-                  }}
-                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>เพิ่มศิลปินใหม่</span>
-                </button>
-              )}
-              {activeTab === 'Customers' && (
-                <button
-                  onClick={() => {
-                    setIsCreateCustomerOpen(true);
-                    window.dispatchEvent(new CustomEvent('trigger-create-customer'));
-                  }}
-                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>เพิ่มลูกค้าใหม่</span>
-                </button>
-              )}
-              {activeTab === 'Staff' && (
-                <button
-                  onClick={() => {
-                    setIsCreateStaffOpen(true);
-                    window.dispatchEvent(new CustomEvent('trigger-create-staff'));
-                  }}
-                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>เพิ่มพนักงานใหม่</span>
-                </button>
-              )}
-              {activeTab === 'Finance' && (
-                <button
-                  onClick={() => window.dispatchEvent(new CustomEvent('trigger-create-finance-tx'))}
-                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-violet-200/50 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>เพิ่มรายรับ/จ่าย</span>
-                </button>
-              )}
-            </div>
 
-            </header>
-        )}
+                {/* ================= ZONE 2: CENTER TITLE (< lg) / SPOTLIGHT SEARCH (lg+) ================= */}
+                <div className="min-w-0 flex items-center justify-center w-full">
+                  <h1 className="lg:hidden text-base sm:text-lg font-extrabold text-slate-900 tracking-[-0.02em] truncate text-center">
+                    {currentHeaderTitle}
+                  </h1>
+                  <div
+                    id="app-header-center-search-slot"
+                    className="hidden lg:flex w-full items-center justify-center"
+                  />
+                </div>
+
+                {/* ================= ZONE 3: RIGHT PRIMARY ACTIONS (STRICT <= 3 + [⋯] OVERFLOW) ================= */}
+                <div className="justify-self-end flex items-center justify-end gap-0.5 sm:gap-1.5 lg:gap-2 shrink-0 min-w-0 relative">
+                  {/* Mobile (< lg) Search Trigger Slot [🔍] */}
+                  <div id="app-header-mobile-search-trigger-slot" className="lg:hidden flex items-center" />
+
+                  {/* Mobile (< lg) Inline Filter Slot [🎚️] beside [🔍] — hidden on lg+ (lives next to Center Search) and when folded into [⋯] */}
+                  <div
+                    id="app-header-filter-slot"
+                    className={`${
+                      activeTab === 'Inventory' || activeTab === 'Quotations'
+                        ? 'hidden'
+                        : 'flex lg:hidden'
+                    } items-center`}
+                  />
+
+                  {/* Standard Single-CTA Pages (<= 3 right actions across all viewports) */}
+                  {singleCreateAction && (
+                    <button
+                      type="button"
+                      onClick={singleCreateAction.onClick}
+                      className={primaryActionBtnClass}
+                      title={singleCreateAction.label}
+                      aria-label={singleCreateAction.label}
+                    >
+                      <SquarePlus aria-hidden="true" className="w-[21px] h-[21px] stroke-[2] lg:hidden" />
+                      <Plus aria-hidden="true" className="hidden lg:block w-4 h-4 stroke-[2.5]" />
+                      <span className="hidden lg:inline">{singleCreateAction.label}</span>
+                    </button>
+                  )}
+
+                  {/* Quotations: PC shows [⚙️ ราคากลางวัสดุ] + [+ คำนวณราคา]; Mobile shows [🔍] + [⚙️] + [⊞+] (= 3 actions, no overflow needed) */}
+                  {activeTab === 'Quotations' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => window.dispatchEvent(new CustomEvent('trigger-rates-quotation'))}
+                        className="min-w-9 min-h-9 w-9 h-9 sm:w-10 sm:h-10 lg:w-auto lg:h-10 lg:px-3.5 rounded-full text-slate-900 hover:bg-slate-100 lg:bg-slate-100/90 lg:hover:bg-slate-200/75 lg:text-slate-800 text-sm font-bold transition inline-flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
+                        title="ตั้งค่าราคากลางวัสดุ"
+                        aria-label="ตั้งค่าราคากลางวัสดุ"
+                      >
+                        <SettingsIcon aria-hidden="true" className="w-[20px] h-[20px] lg:w-4 lg:h-4 text-slate-700 lg:text-slate-600 stroke-[2]" />
+                        <span className="hidden lg:inline">ราคากลางวัสดุ</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreateQuotationOpen(true);
+                          window.dispatchEvent(new CustomEvent('trigger-create-quotation'));
+                        }}
+                        className={primaryActionBtnClass}
+                        title="คำนวณราคา"
+                        aria-label="คำนวณราคา"
+                      >
+                        <SquarePlus aria-hidden="true" className="w-[21px] h-[21px] stroke-[2] lg:hidden" />
+                        <Plus aria-hidden="true" className="hidden lg:block w-4 h-4 stroke-[2.5]" />
+                        <span className="hidden lg:inline">คำนวณราคา</span>
+                      </button>
+                    </>
+                  )}
+
+                  {/* Inventory: Mobile shows [🔍] + [📷] + [⋯] (= 3); PC shows [📷 สแกนหยิบ/คืน] + [+ เพิ่มพัสดุใหม่] + [⋯] (= 3) */}
+                  {activeTab === 'Inventory' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => window.dispatchEvent(new CustomEvent('trigger-inventory-scan'))}
+                        className="min-w-9 min-h-9 w-9 h-9 sm:w-10 sm:h-10 lg:w-auto lg:h-10 lg:px-3.5 rounded-full text-slate-900 hover:bg-slate-100 lg:bg-slate-100/90 lg:hover:bg-slate-200/75 text-sm font-bold transition flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
+                        title="เปิดกล้องสแกนหยิบหรือคืนของ"
+                        aria-label="สแกนหยิบ / คืน"
+                      >
+                        <QrCode aria-hidden="true" className="w-[20px] h-[20px] lg:w-4 lg:h-4 stroke-[2] shrink-0" />
+                        <span className="hidden lg:inline">สแกนหยิบ / คืน</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreateInventoryOpen(true);
+                          window.dispatchEvent(new CustomEvent('trigger-create-inventory'));
+                        }}
+                        className="hidden lg:inline-flex h-10 px-4 bg-violet-600 hover:bg-violet-700 text-white rounded-full text-sm font-bold transition items-center justify-center gap-1.5 active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
+                        title="เพิ่มพัสดุใหม่"
+                        aria-label="เพิ่มพัสดุใหม่"
+                      >
+                        <Plus aria-hidden="true" className="w-4 h-4 stroke-[2.5] shrink-0" />
+                        <span>เพิ่มพัสดุใหม่</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsQuickNavOpen(false);
+                          setIsHeaderOverflowOpen((v) => !v);
+                        }}
+                        className={`relative min-w-9 min-h-9 w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600 ${
+                          isHeaderOverflowOpen
+                            ? 'bg-slate-900 text-white'
+                            : 'text-slate-900 hover:bg-slate-100 lg:bg-slate-100/90 lg:hover:bg-slate-200/75'
+                        }`}
+                        title="คำสั่งเพิ่มเติม"
+                        aria-label="คำสั่งเพิ่มเติม"
+                        aria-expanded={isHeaderOverflowOpen}
+                      >
+                        <MoreHorizontal aria-hidden="true" className="w-[21px] h-[21px] lg:w-5 lg:h-5 stroke-[2]" />
+                        {headerFilterMeta.activeFilterCount > 0 && !isInventorySubView && (
+                          <span className="lg:hidden absolute top-1 right-1 w-2 h-2 rounded-full bg-violet-600 ring-2 ring-white" />
+                        )}
+                      </button>
+                    </>
+                  )}
+
+                  {/* Overflow Menu Popover [⋯] (Apple / IG Frosted Action Panel) */}
+                  {isHeaderOverflowOpen && (activeTab === 'Inventory' || activeTab === 'Quotations') && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-40"
+                        onClick={() => setIsHeaderOverflowOpen(false)}
+                      />
+                      <div className="absolute right-0 top-[calc(100%+8px)] w-64 bg-white/98 backdrop-blur-2xl rounded-2xl shadow-[0_16px_40px_rgba(15,23,42,0.14)] ring-1 ring-slate-900/10 p-1.5 z-50 animate-in fade-in zoom-in-95 origin-top-right duration-150">
+                        {activeTab === 'Quotations' && (
+                          <div className="space-y-0.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsHeaderOverflowOpen(false);
+                                window.dispatchEvent(new CustomEvent('trigger-toggle-header-filter'));
+                              }}
+                              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-100/85 transition text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-600"
+                            >
+                              <SlidersHorizontal aria-hidden="true" className="w-4 h-4 text-slate-500 shrink-0" />
+                              <span className="flex-1">ตัวกรองรายการ</span>
+                              {headerFilterMeta.activeFilterCount > 0 && (
+                                <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-violet-600 text-white text-[11px] font-extrabold flex items-center justify-center tabular-nums">
+                                  {headerFilterMeta.activeFilterCount}
+                                </span>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsHeaderOverflowOpen(false);
+                                window.dispatchEvent(new CustomEvent('trigger-rates-quotation'));
+                              }}
+                              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-100/85 transition text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-600"
+                            >
+                              <SettingsIcon aria-hidden="true" className="w-4 h-4 text-slate-500 shrink-0" />
+                              <span className="flex-1">ตั้งค่าราคากลางวัสดุ</span>
+                            </button>
+                            {headerFilterMeta.isDirty && (
+                              <>
+                                <hr className="my-1 border-slate-100" />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsHeaderOverflowOpen(false);
+                                    window.dispatchEvent(new CustomEvent('trigger-reset-header-filter'));
+                                  }}
+                                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold text-rose-600 hover:bg-rose-50 transition text-left cursor-pointer"
+                                >
+                                  <RotateCcw aria-hidden="true" className="w-4 h-4 shrink-0" />
+                                  <span className="flex-1">ล้างตัวกรองทั้งหมด</span>
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        {activeTab === 'Inventory' && (
+                          <div className="space-y-0.5">
+                            {/* Mobile (< lg): + เพิ่มพัสดุใหม่ inside top of overflow menu */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsHeaderOverflowOpen(false);
+                                setIsCreateInventoryOpen(true);
+                                window.dispatchEvent(new CustomEvent('trigger-create-inventory'));
+                              }}
+                              className="lg:hidden w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold text-violet-700 hover:bg-violet-50 transition text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-600"
+                              aria-label="เพิ่มพัสดุใหม่"
+                            >
+                              <Plus aria-hidden="true" className="w-4 h-4 text-violet-600 shrink-0" />
+                              <span className="flex-1">เพิ่มพัสดุใหม่</span>
+                            </button>
+
+                            {!isInventorySubView && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsHeaderOverflowOpen(false);
+                                  window.dispatchEvent(new CustomEvent('trigger-toggle-header-filter'));
+                                }}
+                                className="lg:hidden w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-100/85 transition text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-600"
+                              >
+                                <SlidersHorizontal aria-hidden="true" className="w-4 h-4 text-slate-500 shrink-0" />
+                                <span className="flex-1">ตัวกรองหมวดหมู่</span>
+                                {headerFilterMeta.activeFilterCount > 0 && (
+                                  <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-violet-600 text-white text-[11px] font-extrabold flex items-center justify-center tabular-nums">
+                                    {headerFilterMeta.activeFilterCount}
+                                  </span>
+                                )}
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsHeaderOverflowOpen(false);
+                                window.dispatchEvent(new CustomEvent('trigger-inventory-print'));
+                              }}
+                              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-100/85 transition text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-600"
+                              aria-label="พิมพ์ฉลาก"
+                            >
+                              <Printer aria-hidden="true" className="w-4 h-4 text-slate-500 shrink-0" />
+                              <span className="flex-1">พิมพ์สติกเกอร์ QR / Barcode</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsHeaderOverflowOpen(false);
+                                window.dispatchEvent(new CustomEvent('trigger-inventory-history'));
+                              }}
+                              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-100/85 transition text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-600"
+                              aria-label={isInventorySubView ? 'กลับคลังสินค้า' : 'ประวัติคลังสินค้า'}
+                            >
+                              {isInventorySubView ? (
+                                <ShoppingBag aria-hidden="true" className="w-4 h-4 text-violet-600 shrink-0" />
+                              ) : (
+                                <Clock aria-hidden="true" className="w-4 h-4 text-slate-500 shrink-0" />
+                              )}
+                              <span className="flex-1">
+                                {isInventorySubView ? 'กลับกระเป๋าคลังสินค้า' : 'ประวัติคลังสินค้า'}
+                              </span>
+                            </button>
+
+                            <hr className="my-1 border-slate-100" />
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsHeaderOverflowOpen(false);
+                                window.dispatchEvent(new CustomEvent('trigger-inventory-refresh'));
+                              }}
+                              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-100/85 transition text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-600"
+                              aria-label="รีเฟรชข้อมูลคลัง"
+                            >
+                              <RefreshCw aria-hidden="true" className="w-4 h-4 text-slate-500 shrink-0" />
+                              <span className="flex-1">รีเฟรชข้อมูลคลัง</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Full-width Mobile Search Overlay Portal Target */}
+                <div id="app-header-mobile-search" className="contents" />
+              </header>
+              {/* Collapsible Page Filter Drawer Portal Target */}
+              <div id="app-header-filter-drawer" className="relative z-20" />
+            </div>
+          );
+        })()}
 
         <main
           ref={mainRef}
@@ -5204,6 +5507,7 @@ const App = () => {
             <div 
               onClick={() => {
                 if (!wasDraggingNavRef.current) {
+                  setIsMobileProfileMenuOpen(false);
                   setIsMobileNavExpanded(prev => !prev);
                 }
               }}
@@ -5310,35 +5614,58 @@ const App = () => {
                     </div>
                 </button>
 
-                {/* 5. Analytics */}
+                {/* 5. Profile Popover Button (เหมือน PC Sidebar มุมซ้ายล่าง) */}
                 <button
+                    type="button"
                     onClick={() => {
-                      handleSelectTab('Analytics');
+                      setIsMobileProfileMenuOpen((prev) => !prev);
                       if (isMobileNavExpanded) setIsMobileNavExpanded(false);
                     }}
                     className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10 active:scale-95 transition-transform"
-                    title="วิเคราะห์"
+                    title="โปรไฟล์และบัญชีผู้ใช้"
+                    aria-label="เมนูโปรไฟล์ผู้ใช้"
+                    aria-expanded={isMobileProfileMenuOpen}
                 >
-                    <div className={`transition-all duration-200 flex flex-col items-center justify-center ${
-                        activeTab === 'Analytics' ? 'text-violet-600' : 'text-slate-400 hover:text-slate-600'
-                    }`}>
-                        <BarChart2 
-                          className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
-                          strokeWidth={activeTab === 'Analytics' ? 2.5 : 2} 
-                        />
+                    <div className="transition-all duration-200 flex flex-col items-center justify-center">
+                        <div
+                          className={`rounded-full bg-slate-900 flex items-center justify-center text-white text-xs font-bold overflow-hidden transition-all duration-200 ${
+                            isMobileNavExpanded ? 'w-6 h-6' : 'w-7 h-7'
+                          } ${
+                            isMobileProfileMenuOpen
+                              ? 'ring-2 ring-violet-600 ring-offset-2'
+                              : 'ring-2 ring-slate-200'
+                          }`}
+                        >
+                          {userProfile?.image ? (
+                            <img
+                              src={processImageUrl(userProfile.image)}
+                              alt="Profile"
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                                if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                              }}
+                            />
+                          ) : (
+                            userProfile?.name?.charAt(0) || 'U'
+                          )}
+                          {userProfile?.image && (
+                            <div className="hidden w-full h-full items-center justify-center bg-slate-900 text-white">
+                              {userProfile?.name?.charAt(0) || 'U'}
+                            </div>
+                          )}
+                        </div>
                         <span className={`text-xs leading-none transition-all duration-200 ${
                           isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Analytics' ? 'font-bold text-violet-600' : 'font-semibold text-slate-600'}`}>
-                          วิเคราะห์
+                        } ${isMobileProfileMenuOpen ? 'font-bold text-violet-600' : 'font-semibold text-slate-600'}`}>
+                          โปรไฟล์
                         </span>
-                        {activeTab === 'Analytics' && (
-                            <span className={`w-1.5 h-1.5 bg-violet-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
-                        )}
                     </div>
                 </button>
             </div>
 
-            {/* Row 2: Secondary Navigation Section (Grid 4 คอลัมน์ ไม่ชิดติดกัน เป็นระเบียบ) */}
+            {/* Row 2: Secondary Navigation Section (Grid 4 คอลัมน์ × 2 แถว = 8 เมนูพอดี) */}
             <div 
               ref={expandSectionRef}
               className="overflow-hidden"
@@ -5457,7 +5784,25 @@ const App = () => {
                   )}
                 </button>
 
-                {/* 7. Settings (ตั้งค่า) */}
+                {/* 7. Analytics (วิเคราะห์ธุรกิจ) */}
+                <button
+                  onClick={() => {
+                    handleSelectTab('Analytics');
+                    setIsMobileNavExpanded(false);
+                  }}
+                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
+                  title="วิเคราะห์ธุรกิจ"
+                >
+                  <BarChart2 className={`w-6 h-6 transition-colors ${activeTab === 'Analytics' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Analytics' ? 2.5 : 2} />
+                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Analytics' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
+                    วิเคราะห์
+                  </span>
+                  {activeTab === 'Analytics' && (
+                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
+                  )}
+                </button>
+
+                {/* 8. Settings (ตั้งค่า) */}
                 <button
                   onClick={() => {
                     handleSelectTab('Settings');
@@ -5477,6 +5822,93 @@ const App = () => {
               </div>
             </div>
           </nav>
+
+          {/* Mobile Profile Popover (เหมือน PC Sidebar Popover) */}
+          {isMobileProfileMenuOpen && (
+            <div className="md:hidden">
+              <div
+                className="fixed inset-0 z-[92] bg-slate-900/20 backdrop-blur-[1px]"
+                onClick={() => setIsMobileProfileMenuOpen(false)}
+              />
+              <div className="fixed right-3 bottom-[calc(76px+env(safe-area-inset-bottom,0px))] w-72 max-w-[calc(100vw-24px)] bg-white rounded-3xl shadow-2xl border border-slate-100 p-2.5 z-[95] animate-in fade-in zoom-in-95 origin-bottom-right flex flex-col gap-1.5">
+                <div
+                  onClick={() => {
+                    setIsUserProfileModalOpen(true);
+                    setIsMobileProfileMenuOpen(false);
+                  }}
+                  className="p-3 bg-gradient-to-br from-indigo-50/90 via-slate-50 to-purple-50/50 rounded-2xl border border-indigo-100/70 hover:bg-indigo-50 transition cursor-pointer group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-slate-900 text-white font-bold flex items-center justify-center text-lg overflow-hidden shrink-0 ring-2 ring-white shadow-md">
+                      {userProfile?.image ? (
+                        <img
+                          src={processImageUrl(userProfile.image)}
+                          alt="Profile"
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        userProfile?.name?.charAt(0) || 'U'
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-black text-slate-900 truncate group-hover:text-indigo-600 transition">
+                        {userProfile?.name || 'Guest User'}
+                      </h4>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="font-mono text-xs font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-100">
+                          {userProfile?.id || userProfile?.staff_code || '2611001'}
+                        </span>
+                        <span className="text-xs text-slate-500 font-medium truncate">
+                          @{userProfile?.username || 'user'}
+                        </span>
+                      </div>
+                      <div className="mt-1">
+                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-indigo-600 text-white inline-block">
+                          {userProfile?.role_label || (userProfile?.role === 'admin' ? 'ผู้ดูแลระบบ' : userProfile?.role || 'พนักงาน')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUserProfileModalOpen(true);
+                    setIsMobileProfileMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 text-slate-700 text-xs font-bold transition text-left cursor-pointer"
+                >
+                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                    <User className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-slate-900 font-bold">โปรไฟล์ของฉัน (My Profile)</div>
+                    <div className="text-xs text-slate-500 font-normal truncate">แก้ไขข้อมูลส่วนตัวและรหัสผ่าน</div>
+                  </div>
+                </button>
+
+                <div className="h-px bg-slate-100 my-0.5" />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMobileProfileMenuOpen(false);
+                    handleLogout();
+                  }}
+                  className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-rose-50 text-rose-600 text-xs font-bold transition text-left cursor-pointer"
+                >
+                  <div className="p-2 bg-rose-100 text-rose-500 rounded-xl">
+                    <LogOut className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold">ออกจากระบบ</div>
+                  </div>
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -5732,28 +6164,32 @@ const App = () => {
 
                            <div className="space-y-2">
                              <label className="text-sm font-bold text-slate-700 ml-1">ศิลปิน</label>
-                             <input
-                               type="text"
-                               list="artist-list"
-                               placeholder="เลือกหรือพิมพ์..."
+                             <DbCombobox
+                               options={artistList?.length ? artistList : savedArtists}
+                               dbTable="artists"
+                               placeholder="ค้นหาหรือพิมพ์ชื่อศิลปิน..."
                                value={artistName}
                                disabled={viewOnlyMode}
-                               onChange={(e) => setArtistName(e.target.value)}
-                               className={`w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
+                               onChange={(val) => setArtistName(val)}
+                               inputClassName="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors font-medium text-sm text-slate-800 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
                              />
                            </div>
                            
                            {/* ส่วนลูกค้า */}
                            <div className="space-y-2">
                              <label className="text-sm font-bold text-slate-700 ml-1">ลูกค้า</label>
-                             <input
-                               type="text"
-                               list="customer-list"
-                               placeholder="ชื่อลูกค้า (พิมพ์เพื่อค้นหา)"
+                             <DbCombobox
+                               options={savedCustomers}
+                               dbTable="customers"
+                               placeholder="ชื่อลูกค้า (พิมพ์ค้นหาจากฐานข้อมูล)"
                                value={customerName}
                                disabled={viewOnlyMode}
-                               onChange={handleCustomerChange} 
-                               className={`w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium mb-3 ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
+                               onChange={handleCustomerNameUpdate}
+                               onSelectOption={(opt) => {
+                                 if (opt?.raw) applyMatchedCustomerDetails(opt.raw);
+                               }}
+                               containerClassName="mb-3"
+                               inputClassName="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors font-medium text-sm text-slate-800 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
                              />
                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                  <input
@@ -5986,28 +6422,33 @@ const App = () => {
                                        </button>
                                      )}
                                    </div>
-                                   <div className="relative">
-                                     <MapPin className="absolute left-4 top-3.5 w-5 h-5 text-slate-400" />
-                                     <input
-                                       type="text"
-                                       list="venue-list"
-                                       placeholder="พิมพ์หรือเลือกสถานที่จัดส่ง (เช่น CentralWorld, Impact Arena)"
-                                       value={locationName}
-                                       disabled={viewOnlyMode}
-                                       onChange={(e) => {
-                                         const val = e.target.value;
-                                         setLocationName(val);
-                                         const found = deliveryLocations.find(l => 
-                                           l.name.toLowerCase() === val.trim().toLowerCase() ||
-                                           (Array.isArray(l.aliases) && l.aliases.some(a => a.toLowerCase() === val.trim().toLowerCase()))
-                                         );
-                                         if (found && !mapLink && found.default_map_link) {
-                                           setMapLink(found.default_map_link);
-                                         }
-                                       }}
-                                       className={`w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
-                                     />
-                                   </div>
+                                   <DbCombobox
+                                     leftIcon={MapPin}
+                                     options={deliveryLocations}
+                                     dbTable="delivery_locations"
+                                     placeholder="ค้นหาสถานที่จัดส่งจากฐานข้อมูล (เช่น CentralWorld, Impact Arena)"
+                                     value={locationName}
+                                     disabled={viewOnlyMode}
+                                     onChange={(val) => {
+                                       setLocationName(val);
+                                       const found = deliveryLocations.find(
+                                         (l) =>
+                                           l.name?.toLowerCase() === String(val || '').trim().toLowerCase() ||
+                                           (Array.isArray(l.aliases) &&
+                                             l.aliases.some((a) => a.toLowerCase() === String(val || '').trim().toLowerCase()))
+                                       );
+                                       if (found && !mapLink && (found.loading_dock_map_link || found.default_map_link)) {
+                                         setMapLink(found.loading_dock_map_link || found.default_map_link);
+                                       }
+                                     }}
+                                     onSelectOption={(opt) => {
+                                       const loc = opt?.raw;
+                                       if (loc && (loc.loading_dock_map_link || loc.default_map_link)) {
+                                         setMapLink(loc.loading_dock_map_link || loc.default_map_link);
+                                       }
+                                     }}
+                                     inputClassName="w-full py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors font-medium text-sm text-slate-800 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                   />
 
                                    {/* Venue Intel Micro-Card */}
                                    {matchedVenue && (
@@ -6068,14 +6509,25 @@ const App = () => {
                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                               <div className="space-y-2">
                                 <label className="text-sm font-bold text-slate-700 ml-1">ผู้รับ</label>
-                                <input
-                                  type="text"
-                                  list="recipient-list"
-                                  placeholder="ชื่อผู้รับ (พิมพ์เพื่อค้นหา)"
+                                <DbCombobox
+                                  options={savedRecipients.map((r) => ({
+                                    id: r.name,
+                                    value: r.name,
+                                    label: r.name,
+                                    sublabel: r.phone || '',
+                                    raw: r
+                                  }))}
+                                  dbTable="staff"
+                                  placeholder="ชื่อผู้รับ (พิมพ์ค้นหา)"
                                   value={recipientName}
                                   disabled={viewOnlyMode}
-                                  onChange={handleRecipientChange}
-                                  className={`w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
+                                  onChange={handleRecipientNameUpdate}
+                                  onSelectOption={(opt) => {
+                                    if (opt?.raw?.phone) {
+                                      setRecipientPhone(formatPhoneNumber(opt.raw.phone));
+                                    }
+                                  }}
+                                  inputClassName="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium text-sm text-slate-800 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
                                 />
                               </div>
                               <div className="space-y-2">
@@ -6615,15 +7067,31 @@ const App = () => {
                               </div>
 
                               {/* Footer Action Bar */}
-                              <div className="flex justify-between items-center mt-4 pt-3 border-t border-indigo-100/80">
-                                  <button
-                                      type="button"
-                                      onClick={handleAddSupportItem}
-                                      className="flex items-center gap-2 text-xs font-bold text-indigo-700 hover:text-indigo-900 bg-white hover:bg-indigo-50 px-3.5 py-2 rounded-xl border border-indigo-200 transition shadow-2xs cursor-pointer w-fit"
-                                  >
-                                      <Plus className="w-4 h-4 text-indigo-600" />
-                                      เพิ่มรายการเงิน
-                                  </button>
+                              <div className="flex flex-wrap justify-between items-center gap-2 mt-4 pt-3 border-t border-indigo-100/80">
+                                  <div className="flex flex-wrap items-center gap-3">
+                                    {!viewOnlyMode && (
+                                      <button
+                                          type="button"
+                                          onClick={handleAddSupportItem}
+                                          className="flex items-center gap-2 text-xs font-bold text-indigo-700 hover:text-indigo-900 bg-white hover:bg-indigo-50 px-3.5 py-2 rounded-xl border border-indigo-200 transition shadow-2xs cursor-pointer w-fit"
+                                      >
+                                          <Plus className="w-4 h-4 text-indigo-600" />
+                                          เพิ่มรายการเงิน
+                                      </button>
+                                    )}
+                                    {!viewOnlyMode && (
+                                      <label className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-800 bg-white/80 px-3 py-2 rounded-xl border border-indigo-200 cursor-pointer select-none">
+                                        <input
+                                          type="checkbox"
+                                          checked={syncSupportToCashVault}
+                                          onChange={(e) => setSyncSupportToCashVault(e.target.checked)}
+                                          className="w-4 h-4 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                        />
+                                        <Banknote className="w-3.5 h-3.5 text-indigo-600" />
+                                        <span>เติม+จองธนบัตรเข้าคลังอัตโนมัติตอนบันทึก</span>
+                                      </label>
+                                    )}
+                                  </div>
                                   <div className="text-xs sm:text-sm font-black text-indigo-900 bg-white px-3.5 py-1.5 rounded-xl border border-indigo-200 shadow-2xs font-mono">
                                       รวม: ฿{customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0).toLocaleString()}
                                   </div>
@@ -6688,13 +7156,12 @@ const App = () => {
                                        </div>
                                        <div className="sm:col-span-2">
                                           <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">หมวดหมู่</span>
-                                          <input
-                                            type="text"
-                                            list="expense-categories" 
+                                          <DbCombobox
+                                            options={expenseCategories}
                                             placeholder="ระบุหมวดหมู่..."
                                             value={item.category}
-                                            onChange={(e) => handleQuotationItemChange(idx, 'category', e.target.value)}
-                                            className="w-full px-2 py-2 bg-white border border-emerald-200 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                                            onChange={(val) => handleQuotationItemChange(idx, 'category', val)}
+                                            inputClassName="w-full px-2 py-2 bg-white border border-emerald-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-800"
                                           />
                                        </div>
                                        <div className="sm:col-span-3">
@@ -6817,23 +7284,23 @@ const App = () => {
                                             </div>
                                             <div className="sm:col-span-2">
                                                <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">หมวดหมู่</span>
-                                               <input
-                                                 type="text"
-                                                 list="expense-categories" 
+                                               <DbCombobox
+                                                 options={expenseCategories}
                                                  placeholder="หมวดหมู่..."
                                                  value={item.category}
-                                                 onChange={(e) => handleExpenseChange(idx, 'category', e.target.value)}
-                                                 className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs focus:ring-2 focus:ring-rose-500/20"
+                                                 onChange={(val) => handleExpenseChange(idx, 'category', val)}
+                                                 inputClassName="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-slate-800"
                                                />
                                             </div>
                                             <div className="sm:col-span-3">
                                                <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">รายละเอียด</span>
-                                               <input
-                                                 type="text"
-                                                 placeholder="รายละเอียด..."
+                                               <DbCombobox
+                                                 options={inventoryItems}
+                                                 dbTable="inventory_items"
+                                                 placeholder="รายละเอียด (เช่น โฟม, ดอกไม้)..."
                                                  value={item.detail}
-                                                 onChange={(e) => handleExpenseChange(idx, 'detail', e.target.value)}
-                                                 className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs focus:ring-2 focus:ring-rose-500/20"
+                                                 onChange={(val) => handleExpenseChange(idx, 'detail', val)}
+                                                 inputClassName="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-slate-800"
                                                />
                                             </div>
                                             <div className="sm:col-span-1">
@@ -6873,14 +7340,29 @@ const App = () => {
                                  ))}
                               </div>
 
-                              <div className="flex justify-between items-center mt-4">
-                                  <button
-                                    onClick={handleAddExpense}
-                                    className="flex items-center gap-2 text-xs font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-3 py-2 rounded-lg transition w-fit"
-                                  >
-                                    <Plus className="w-4 h-4" />
-                                    เพิ่มรายการจ่าย
-                                  </button>
+                              <div className="flex flex-wrap justify-between items-center gap-2 mt-4">
+                                  <div className="flex flex-wrap items-center gap-3">
+                                      <button
+                                        type="button"
+                                        onClick={handleAddExpense}
+                                        className="flex items-center gap-2 text-xs font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-3 py-2 rounded-lg transition w-fit cursor-pointer"
+                                      >
+                                        <Plus className="w-4 h-4" />
+                                        เพิ่มรายการจ่าย
+                                      </button>
+                                    {!viewOnlyMode && (
+                                      <label className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-800 bg-white px-3 py-1.5 rounded-xl border border-rose-200 cursor-pointer select-none">
+                                        <input
+                                          type="checkbox"
+                                          checked={syncExpensesToWarehouse}
+                                          onChange={(e) => setSyncExpensesToWarehouse(e.target.checked)}
+                                          className="w-4 h-4 rounded border-rose-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
+                                        />
+                                        <Package className="w-3.5 h-3.5 text-rose-600" />
+                                        <span>เติมของที่ซื้อเข้ากระเป๋าคลังอัตโนมัติตอนบันทึก</span>
+                                      </label>
+                                    )}
+                                  </div>
                                   <div className="text-sm font-bold text-rose-800 bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-100">
                                       รวม: ฿{expenses.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0).toLocaleString()}
                                   </div>
@@ -7028,41 +7510,6 @@ const App = () => {
            </div>
         </div>
       )}
-
-      {/* Datalist for Autocomplete - Artists */}
-      <datalist id="artist-list">
-        {savedArtists.map((artist, i) => (
-          <option key={i} value={artist} />
-        ))}
-      </datalist>
-
-      {/* Datalist for Autocomplete - Customers */}
-      <datalist id="customer-list">
-        {savedCustomers.map((customer, i) => (
-          <option key={i} value={customer.name} />
-        ))}
-      </datalist>
-
-      {/* Datalist for Autocomplete - Recipients (New) */}
-      <datalist id="recipient-list">
-        {savedRecipients.map((recipient, i) => (
-          <option key={i} value={recipient.name} />
-        ))}
-      </datalist>
-
-      {/* Datalist for Autocomplete - Expenses */}
-      <datalist id="expense-categories">
-        {expenseCategories.map((cat, i) => (
-          <option key={i} value={cat} />
-        ))}
-      </datalist>
-
-      {/* Datalist for Autocomplete - Delivery Locations / Venues */}
-      <datalist id="venue-list">
-        {deliveryLocations.map((loc, i) => (
-          <option key={loc.id || i} value={loc.name} label={loc.zone ? `[${loc.zone}] ${loc.gate_info || ''}` : loc.gate_info} />
-        ))}
-      </datalist>
 
       {/* Venue Detail / Loading Dock Intelligence Modal */}
       {selectedVenueForModal && (

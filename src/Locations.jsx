@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import HeaderFilterPortal from './components/common/HeaderFilterPortal';
 import {
   MapPin,
   Truck,
@@ -279,6 +280,8 @@ function Locations({
   }, [shopInfo?.gpsLocation, shopInfo?.shopName, shopInfo?.address, shopInfo?.mapLink]);
 
   const [isEditHubModalOpen, setIsEditHubModalOpen] = useState(false);
+  const [isHubViewOnly, setIsHubViewOnly] = useState(true);
+  const [isVenueViewOnly, setIsVenueViewOnly] = useState(false);
   const [hubForm, setHubForm] = useState({
     name: DEFAULT_FLOWER2U_HUB.name,
     description: DEFAULT_FLOWER2U_HUB.description,
@@ -293,11 +296,13 @@ function Locations({
       locationInput: hubSettings.coords.join(', '),
       mapLink: hubSettings.mapLink || ''
     });
+    setIsHubViewOnly(true);
     setIsEditHubModalOpen(true);
   };
 
   const handleSaveHub = (e) => {
     e.preventDefault();
+    if (isHubViewOnly) return;
     const parsedCoords = parseCoordinatesFromInput(hubForm.locationInput);
     if (!parsedCoords) {
       showToast('กรุณาระบุพิกัดละติจูด,ลองจิจูด หรือลิงก์ Google Maps ที่ถูกต้อง', 'error');
@@ -785,6 +790,7 @@ function Locations({
 
   const handleOpenCreateModal = (venue = null) => {
     if (venue) {
+      setIsVenueViewOnly(true);
       setEditingVenue(venue);
       reset({
         name: venue.name || '',
@@ -797,6 +803,7 @@ function Locations({
         delivery_tips: venue.delivery_tips || ''
       });
     } else {
+      setIsVenueViewOnly(false);
       setEditingVenue(null);
       reset({
         name: '',
@@ -813,6 +820,7 @@ function Locations({
   };
 
   const onSubmitVenue = async (formData) => {
+    if (isVenueViewOnly) return;
     setIsSaving(true);
     try {
       await saveLocationSync({
@@ -1078,70 +1086,31 @@ function Locations({
         )}
       </div>
 
-      {/* Search & Filter Toolbar */}
-      <div 
-        ref={filterSentinelRef} 
-        className="w-full h-0 -my-3 pointer-events-none opacity-0"
-      />
-      <div className={`bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out z-20 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 ${
-        isFilterStuck
-          ? '-mx-4 sm:-mx-8 lg:-mx-10 py-2 sm:py-2.5 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
-          : 'p-3 sm:p-3.5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
-      }`}>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
-          {/* Search Box */}
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="ค้นหาชื่อสถานที่ ประตู หรือคำค้น (เช่น อิมแพ็ค, CTW, สยาม, ไบเทค)..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-medium"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition cursor-pointer"
-                title="ล้างข้อความค้นหา"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Zone Dropdown */}
-            <div className="relative w-44 sm:w-56 shrink-0">
-              <select
-                value={selectedZone}
-                onChange={(e) => setSelectedZone(e.target.value)}
-                className="w-full pl-3.5 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
-              >
-                <option value="all">ทุกโซนพื้นที่ ({venues.length})</option>
-                {zones.map(z => (
-                  <option key={z} value={z}>{z}</option>
-                ))}
-              </select>
-              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            {/* Reset Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('');
-                setSelectedZone('all');
-              }}
-              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer shadow-2xs"
-              title="ล้างค่าตัวกรองทั้งหมด"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
-          </div>
+      {/* Header-Integrated Search & Zone Filter */}
+      <HeaderFilterPortal
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+        placeholder="ค้นหาสถานที่, ประตู หรือโซน..."
+        activeFilterCount={selectedZone !== 'all' ? 1 : 0}
+        onReset={() => {
+          setSearchQuery('');
+          setSelectedZone('all');
+        }}
+      >
+        <div className="relative w-full sm:w-72">
+          <select
+            value={selectedZone}
+            onChange={(e) => setSelectedZone(e.target.value)}
+            className="w-full h-10 pl-3.5 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 appearance-none cursor-pointer"
+          >
+            <option value="all">ทุกโซนพื้นที่ ({venues.length})</option>
+            {zones.map((z) => (
+              <option key={z} value={z}>{z}</option>
+            ))}
+          </select>
+          <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
-      </div>
+      </HeaderFilterPortal>
 
       {/* Desktop Table View */}
       <div className="hidden md:block bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
@@ -1454,7 +1423,7 @@ function Locations({
                 <div>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                     <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
-                      {editingVenue ? 'แก้ไขข้อมูลสถานที่' : 'เพิ่มสถานที่จัดส่งใหม่'}
+                      {editingVenue ? (isVenueViewOnly ? 'รายละเอียดสถานที่จัดส่ง' : 'แก้ไขข้อมูลสถานที่') : 'เพิ่มสถานที่จัดส่งใหม่'}
                     </h3>
                     {editingVenue?.name && (
                       <span className="bg-indigo-50 text-indigo-600 text-xs sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-indigo-100 w-fit">
@@ -1463,7 +1432,7 @@ function Locations({
                     )}
                   </div>
                   <p className="text-xs sm:text-sm text-slate-500 font-medium">
-                    บันทึกพิกัด ประตูเทียบรถ และกฎระเบียบการขนของ
+                    {isVenueViewOnly ? 'ล็อกป้องกันการแก้ไขโดยไม่ตั้งใจ กดปุ่มแก้ไขด้านล่างเพื่อปรับข้อมูล' : 'บันทึกพิกัด ประตูเทียบรถ และกฎระเบียบการขนของ'}
                   </p>
                 </div>
               </div>
@@ -1478,7 +1447,11 @@ function Locations({
 
             <form onSubmit={handleSubmit(onSubmitVenue)} className="flex flex-col flex-1 overflow-hidden">
               {/* Scrollable Form Body */}
-              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-5 overscroll-contain">
+              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar overscroll-contain">
+                <fieldset
+                  disabled={isVenueViewOnly}
+                  className="block min-w-0 border-0 p-0 m-0 space-y-5 [&_input:disabled]:bg-slate-100 [&_input:disabled]:text-slate-500 [&_input:disabled]:cursor-not-allowed [&_textarea:disabled]:bg-slate-100 [&_textarea:disabled]:text-slate-500 [&_textarea:disabled]:cursor-not-allowed"
+                >
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                   <div className="sm:col-span-2">
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">ชื่อสถานที่จัดงาน *</label>
@@ -1562,9 +1535,10 @@ function Locations({
                     rows="3"
                     placeholder="เช่น ต้องแลกบัตร ปชช. ที่ป้อม 3, ห้ามนำรถเข้าช่วง 11.00-13.00 น."
                     {...register('delivery_tips')}
-                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
+                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors resize-none"
                   ></textarea>
                 </div>
+                </fieldset>
               </div>
 
               {/* Sticky Footer */}
@@ -1572,22 +1546,33 @@ function Locations({
                 <button
                   type="button"
                   onClick={() => setIsCreateModalOpen(false)}
-                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-all active:scale-95 cursor-pointer"
+                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
-                  ยกเลิก
+                  {isVenueViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
-                >
-                  {isSaving ? (
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <Check className="w-4 h-4" />
-                  )}
-                  <span>{isSaving ? 'กำลังบันทึก...' : (editingVenue ? 'บันทึกการแก้ไข' : 'บันทึกสถานที่')}</span>
-                </button>
+                {isVenueViewOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsVenueViewOnly(false)}
+                    className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
+                  >
+                    <Edit className="w-4 h-4" />
+                    <span>แก้ไข</span>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSaving ? (
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4" />
+                    )}
+                    <span>{isSaving ? 'กำลังบันทึก...' : (editingVenue ? 'บันทึกการแก้ไข' : 'บันทึกสถานที่')}</span>
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -1632,7 +1617,10 @@ function Locations({
 
             {/* Form */}
             <form onSubmit={handleSaveHub} className="overflow-y-auto custom-scrollbar flex-1 flex flex-col">
-              <div className="p-5 sm:p-8 space-y-4 flex-1">
+              <fieldset
+                disabled={isHubViewOnly}
+                className="p-5 sm:p-8 space-y-4 flex-1 min-w-0 border-0 m-0 [&_input:disabled]:bg-slate-100 [&_input:disabled]:text-slate-500 [&_input:disabled]:cursor-not-allowed [&_button:disabled]:opacity-40 [&_button:disabled]:pointer-events-none"
+              >
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">
                     ชื่อจุดเริ่มต้น / โกดัง / ออฟฟิศ <span className="text-rose-500">*</span>
@@ -1718,39 +1706,54 @@ function Locations({
                 <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-800">
                   💡 <b>ระบบนำทาง:</b> เมื่อบันทึกแล้ว หมุดจุดเริ่มต้น 🌸 บนแผนที่ และการคำนวณระยะทาง/เวลาขับรถไปยังสถานที่จัดส่งทุกแห่งจะอิงจากพิกัดนี้ทันที
                 </div>
-              </div>
+              </fieldset>
 
               {/* Footer */}
               <div className="px-5 py-4 sm:px-8 sm:py-5 border-t border-slate-100 bg-white sticky bottom-0 z-20 flex items-center justify-between gap-3 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setHubForm({
-                      name: DEFAULT_FLOWER2U_HUB.name,
-                      description: DEFAULT_FLOWER2U_HUB.description,
-                      locationInput: DEFAULT_FLOWER2U_HUB.coords.join(', '),
-                      mapLink: DEFAULT_FLOWER2U_HUB.mapLink
-                    });
-                  }}
-                  className="py-2.5 px-4 rounded-xl text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 font-bold text-xs transition cursor-pointer"
-                >
-                  คืนค่าเริ่มต้น
-                </button>
+                {!isHubViewOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHubForm({
+                        name: DEFAULT_FLOWER2U_HUB.name,
+                        description: DEFAULT_FLOWER2U_HUB.description,
+                        locationInput: DEFAULT_FLOWER2U_HUB.coords.join(', '),
+                        mapLink: DEFAULT_FLOWER2U_HUB.mapLink
+                      });
+                    }}
+                    className="py-2.5 px-4 rounded-xl text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 font-bold text-xs transition cursor-pointer"
+                  >
+                    คืนค่าเริ่มต้น
+                  </button>
+                ) : (
+                  <div />
+                )}
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setIsEditHubModalOpen(false)}
                     className="py-2.5 px-5 rounded-xl text-slate-600 bg-slate-100 hover:bg-slate-200 font-bold text-xs transition cursor-pointer"
                   >
-                    ยกเลิก
+                    {isHubViewOnly ? 'ปิด' : 'ยกเลิก'}
                   </button>
-                  <button
-                    type="submit"
-                    className="py-2.5 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Check className="w-4 h-4" />
-                    <span>บันทึกจุดเริ่มต้น</span>
-                  </button>
+                  {isHubViewOnly ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsHubViewOnly(false)}
+                      className="py-2.5 px-6 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Edit className="w-4 h-4" />
+                      <span>แก้ไข</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      className="py-2.5 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>บันทึกจุดเริ่มต้น</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </form>

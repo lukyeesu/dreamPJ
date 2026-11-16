@@ -34,7 +34,18 @@ function loadJsxComponent(filePath, mockModules = {}) {
     if (specifier === 'react') {
       return React;
     }
-    if (specifier === 'react-dom') return require('react-dom');
+    if (specifier === 'react-dom') {
+      const realReactDom = require('react-dom');
+      return {
+        ...realReactDom,
+        createPortal: (children) => children
+      };
+    }
+    if (specifier.includes('useStickyFilter')) {
+      return {
+        useStickyFilter: () => ({ filterSentinelRef: { current: null }, isFilterSticky: false })
+      };
+    }
     if (specifier.includes('useWarehouseCommandKey')) {
       const source = loadJsxComponent(path.join(root, 'src/hooks/useWarehouseCommandKey.js'), mockModules);
       return { useWarehouseCommandKey: source };
@@ -81,6 +92,7 @@ function loadJsxComponent(filePath, mockModules = {}) {
         inventory_recipients: mockTable(),
         inventory_field_rounds: mockTable(),
         asset_units: mockTable(),
+        sync_meta: mockTable(),
         version: () => ({ stores: () => ({}) })
       };
       return mockModules.db || {
@@ -149,6 +161,7 @@ function loadJsxComponent(filePath, mockModules = {}) {
     }
     if (specifier.includes('syncService') || specifier.includes('syncService.js')) {
       return mockModules.syncService || {
+        saveProjectSync: async (proj) => proj,
         loadProjectChecklistLocalFirst: async (_id, cb) => {
           if (cb) cb([]);
           return [];
@@ -202,7 +215,13 @@ function loadJsxComponent(filePath, mockModules = {}) {
     Array,
     Object,
     Set,
-    Map
+    Map,
+    Promise,
+    setTimeout,
+    clearTimeout,
+    URL,
+    crypto: require('node:crypto').webcrypto,
+    document: { body: {} }
   };
 
   vm.createContext(sandbox);
@@ -559,5 +578,297 @@ test('Inventory UI Suite — Plan C Component Rendering & State Validation', asy
 
     const resolved = resolveItems(authoritativeCloudResult, staleLocalItems);
     assert.equal(resolved.length, 0, 'Must return 0 items; deleted items must never be resurrected from cache');
+  });
+
+  await t.test('11. GameBackpackGrid: renders 1-tap RPG slots, 2-level categories, low-stock pill, zero fake x0 banknotes, and strict RBAC', () => {
+    const GameBackpackGrid = loadJsxComponent('src/components/inventory/GameBackpackGrid.jsx');
+
+    const mockItems = [
+      { id: 'it-foam', name: 'โฟมโอเอซิส', item_type: 'consumable', category_id: 'cat-foam', current_stock: 2, min_alert_threshold: 5, unit: 'ก้อน' },
+      { id: 'it-tulip', name: 'ดอกทิวลิปพลาสติก', item_type: 'reusable', category_id: 'cat-flower', current_stock: 80, min_alert_threshold: 10, unit: 'ดอก' },
+      { id: 'it-gluegun', name: 'ปืนยิงกาวร้อน', item_type: 'asset', category_id: 'cat-gun', current_stock: 0, min_alert_threshold: 1, unit: 'กระบอก' }
+    ];
+    const mockCategories = [
+      { id: 'cat-foam', name: 'โฟมและฐาน', type: 'consumable', is_active: true },
+      { id: 'cat-flower', name: 'ดอกไม้ประดิษฐ์', type: 'reusable', is_active: true },
+      { id: 'cat-gun', name: 'ปืนกาวและงานไฟ', type: 'asset', is_active: true }
+    ];
+    const mockUnits = [
+      { unit_code: 'GG-001', item_id: 'it-gluegun', status: 'AVAILABLE', borrowed_by: null }
+    ];
+
+    // Staff (unprivileged): NO banknote tab or banknote slots
+    const staffHtml = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(GameBackpackGrid, {
+        items: mockItems,
+        categories: mockCategories,
+        assetUnits: mockUnits,
+        isPrivilegedCashUser: false,
+        cashSummary: { denominations: [{ denomination: 50, physical_count: 100, reserved_count: 0, is_initialized: true }] }
+      })
+    );
+    assert(staffHtml.includes('โฟมโอเอซิส'), 'Must render consumable slot');
+    assert(staffHtml.includes('ใกล้หมด 2'), 'Must show low-stock pill when foam (2 <= 5) and gluegun (1 <= 1) are at/below threshold');
+    assert(staffHtml.includes('ใช้แล้วหมดไป'), 'Must render Level 1 category tab');
+    assert(staffHtml.includes('โฟมและฐาน'), 'Must render Level 2 sub-category pill');
+    assert(!staffHtml.includes('ธนบัตร 50 บาท'), 'Staff must NOT see banknote slots');
+
+    // Admin with uninitialized zero-count cash rows: ZERO fabricated x0 banknote cards!
+    const uninitAdminHtml = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(GameBackpackGrid, {
+        items: mockItems,
+        categories: mockCategories,
+        assetUnits: mockUnits,
+        isPrivilegedCashUser: true,
+        cashSummary: {
+          denominations: [
+            { denomination: 20, physical_count: 0, reserved_count: 0, is_initialized: false },
+            { denomination: 50, physical_count: 0, reserved_count: 0, is_initialized: false }
+          ]
+        }
+      })
+    );
+    assert(!uninitAdminHtml.includes('ธนบัตร 20 บาท'), 'Must NOT fabricate x0 banknote slots when uninitialized on Supabase');
+
+    // Admin with real initialized banknote count: renders real 50 THB banknote card
+    const adminHtml = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(GameBackpackGrid, {
+        items: mockItems,
+        categories: mockCategories,
+        assetUnits: mockUnits,
+        isPrivilegedCashUser: true,
+        cashSummary: {
+          denominations: [
+            { denomination: 50, physical_count: 100, reserved_count: 20, low_alert_threshold: 10, is_initialized: true }
+          ]
+        }
+      })
+    );
+    assert(adminHtml.includes('ธนบัตร'), 'Admin must see Level 1 banknote category tab');
+    assert(adminHtml.includes('ธนบัตร 50 บาท'), 'Admin must see real 50 THB banknote slot');
+  });
+
+  await t.test('12. Smart Combo Hints (inventoryCombos.js): pairs Glue Gun -> Glue Sticks and Cutter -> Blades', () => {
+    const { getRecommendedCombos } = loadJsxComponent('src/utils/inventoryCombos.js');
+
+    const catalog = [
+      { id: 'i-gun', name: 'ปืนยิงกาวซิลิโคน', item_type: 'asset', current_stock: 2 },
+      { id: 'i-stick', name: 'แท่งกาวซิลิโคนใส', item_type: 'consumable', current_stock: 50 },
+      { id: 'i-cutter', name: 'มีดคัตเตอร์', item_type: 'asset', current_stock: 3 },
+      { id: 'i-blade', name: 'ใบมีดคัตเตอร์ 45 องศา', item_type: 'consumable', current_stock: 20 }
+    ];
+
+    const hints1 = getRecommendedCombos([{ id: 'i-gun', name: 'ปืนยิงกาวซิลิโคน' }], catalog);
+    assert.equal(hints1.length, 1);
+    assert.equal(hints1[0].item.id, 'i-stick');
+
+    // Once glue stick is also picked, hint disappears!
+    const hintsAfterPick = getRecommendedCombos(
+      [
+        { id: 'i-gun', name: 'ปืนยิงกาวซิลิโคน' },
+        { id: 'i-stick', name: 'แท่งกาวซิลิโคนใส' }
+      ],
+      catalog
+    );
+    assert.equal(hintsAfterPick.length, 0);
+  });
+
+  await t.test('13. Shopping-Cart Staged Bags (stagedBagsService.js): greyed-out conflict without auto-delete + 1-click unit swap', () => {
+    const {
+      evaluateStagedBagAvailability,
+      replaceUnitInStagedBagObject,
+      buildCheckoutFromEvaluatedBag
+    } = loadJsxComponent('src/utils/stagedBagsService.js');
+
+    const bag1 = {
+      id: 'bag-storm-1',
+      title: 'กระเป๋า 1 (ติดพายุ รอออกพรุ่งนี้)',
+      items: [
+        { item_id: 'item-scissors', name: 'กรรไกร', item_type: 'asset', unit: 'อัน', quantity: 1, unitCodes: ['SC-001'] },
+        { item_id: 'item-tape', name: 'เทปกาว', item_type: 'consumable', unit: 'ม้วน', quantity: 3, unitCodes: [] }
+      ]
+    };
+
+    const catalog = [
+      { id: 'item-scissors', name: 'กรรไกร', item_type: 'asset', unit: 'อัน', current_stock: 0 },
+      { id: 'item-tape', name: 'เทปกาว', item_type: 'consumable', unit: 'ม้วน', current_stock: 10 }
+    ];
+
+    // Team B took SC-001 out first; SC-002 is still available in warehouse
+    const liveUnits = [
+      { unit_code: 'SC-001', item_id: 'item-scissors', status: 'BORROWED', borrowed_by: 'ทีม B' },
+      { unit_code: 'SC-002', item_id: 'item-scissors', status: 'AVAILABLE', borrowed_by: null }
+    ];
+
+    const evaluated = evaluateStagedBagAvailability(bag1, catalog, liveUnits);
+    assert.equal(evaluated.hasAnyGreyedOut, true, 'Must flag conflict because SC-001 was taken by Team B');
+    assert.equal(evaluated.evaluatedLines.length, 2, 'Must NOT auto-delete SC-001 line from Bag 1');
+    const scissorUnitStatus = evaluated.evaluatedLines[0].unitEvaluations[0];
+    assert.equal(scissorUnitStatus.unitCode, 'SC-001');
+    assert.equal(scissorUnitStatus.isGreyedOut, true, 'SC-001 must render greyed-out');
+    assert(scissorUnitStatus.takenBy.includes('ทีม B'), 'Must explain who took SC-001');
+    assert.deepEqual(Array.from(scissorUnitStatus.replacementCandidates), ['SC-002'], 'Must offer SC-002 for 1-click swap');
+
+    // Checkout before swap skips greyed-out SC-001 safely while keeping available tape & preserving grey item
+    const partialCheckout = buildCheckoutFromEvaluatedBag(evaluated);
+    assert.deepEqual(Array.from(partialCheckout.toolUnits), []);
+    assert.equal(partialCheckout.remainingGreyItems.length, 1);
+    assert.deepEqual(Array.from(partialCheckout.remainingGreyItems[0].unitCodes), ['SC-001']);
+    assert.equal(partialCheckout.materialLines[0].quantity, 3);
+
+    // 1-Click Swap SC-001 -> SC-002 makes Bag 1 100% conflict-free!
+    const swappedBag = replaceUnitInStagedBagObject(bag1, 'item-scissors', 'SC-001', 'SC-002');
+    const reEvaluated = evaluateStagedBagAvailability(swappedBag, catalog, liveUnits);
+    assert.equal(reEvaluated.hasAnyGreyedOut, false);
+    assert.deepEqual(Array.from(buildCheckoutFromEvaluatedBag(reEvaluated).toolUnits), ['SC-002']);
+  });
+
+  await t.test('14. Seamless Finance <-> Inventory Bridge (financeInventoryBridge.js): auto-stock sync + banknote detect + strict idempotency', async () => {
+    const {
+      syncExpenseLinesToWarehouse,
+      buildProjectWithWarehouseExpense,
+      shouldAutoSyncExpenseLine,
+      detectBanknoteDenomination
+    } = loadJsxComponent('src/utils/financeInventoryBridge.js');
+
+    assert.equal(detectBanknoteDenomination('แลกธนบัตร 50 บาท'), 50);
+    assert.equal(detectBanknoteDenomination('แบงค์ 1,000'), 1000);
+    assert.equal(detectBanknoteDenomination('โฟมโอเอซิส 50 ก้อน'), null);
+
+    const catalog = [{ id: 'it-foam-1', name: 'โฟมจัดดอกไม้', code: 'FM-01', item_type: 'consumable', unit: 'ก้อน', is_active: true }];
+    assert.equal(shouldAutoSyncExpenseLine('โฟมจัดดอกไม้', 'ค่าวัสดุ', catalog), true);
+    assert.equal(shouldAutoSyncExpenseLine('เทปใสแปะกล่อง', 'อุปกรณ์จัดงาน', catalog), true);
+    assert.equal(shouldAutoSyncExpenseLine('ค่ารถแท็กซี่ไปส่งงาน', 'ค่าเดินทาง', catalog), false);
+    assert.equal(shouldAutoSyncExpenseLine('ค่าแรงพับดอกไม้', 'ค่าจ้าง', catalog), false);
+
+    const adjustCalls = [];
+    const mockAdjustStock = async (payload) => {
+      adjustCalls.push(payload);
+      return { success: true };
+    };
+
+    const expenseLine = {
+      id: 'exp-line-999',
+      detail: 'ซื้อ โฟมจัดดอกไม้ เพิ่ม',
+      quantity: 12,
+      price: 600,
+      syncToWarehouse: true
+    };
+
+    // First save -> adds +12 stock
+    const firstRun = await syncExpenseLinesToWarehouse({
+      projectId: 'P-0088',
+      expenseLines: [expenseLine],
+      catalogItems: catalog,
+      adjustStockFn: mockAdjustStock
+    });
+    assert.equal(firstRun.syncedCount, 1);
+    assert.equal(adjustCalls.length, 1);
+    assert.equal(adjustCalls[0].itemId, 'it-foam-1');
+    assert.equal(adjustCalls[0].deltaQuantity, 12);
+
+    // Second save of the exact same expense line -> strictly deduplicated (zero double-counting!)
+    const secondRun = await syncExpenseLinesToWarehouse({
+      projectId: 'P-0088',
+      expenseLines: [expenseLine],
+      catalogItems: catalog,
+      adjustStockFn: mockAdjustStock
+    });
+    assert.equal(secondRun.syncedCount, 0, 'Must NOT double-add stock on re-save');
+    assert.equal(adjustCalls.length, 1);
+
+    // Reverse flow: Quick Restock in Backpack creates Finance expense pre-stamped in ledger
+    const updatedProj = await buildProjectWithWarehouseExpense({
+      targetProject: null,
+      projectId: 'SHOP-STOCK',
+      itemName: 'โฟมจัดดอกไม้',
+      itemId: 'it-foam-1',
+      quantity: 5,
+      totalCost: 250
+    });
+    assert.equal(updatedProj.expenses.length, 1);
+    assert.equal(updatedProj.totalExpenses, 250);
+
+    // Saving that reverse-created project later must NOT re-trigger stock adjustment!
+    const reverseResave = await syncExpenseLinesToWarehouse({
+      projectId: 'SHOP-STOCK',
+      expenseLines: updatedProj.expenses.map((e) => ({ ...e, syncToWarehouse: true })),
+      catalogItems: catalog,
+      adjustStockFn: mockAdjustStock
+    });
+    assert.equal(reverseResave.syncedCount, 0, 'Reverse expense bill must already be marked synced');
+  });
+
+  await t.test('15. QrLabelPrint: renders simplified 2-tab QR vs Barcode switcher & visible 5mm micro scissor presets without item name on sticker', () => {
+    const QrLabelPrint = loadJsxComponent('src/components/inventory/QrLabelPrint.jsx');
+    const html = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(QrLabelPrint, {
+        units: [{ unit_code: 'SC-001', item_id: 'it-1', status: 'AVAILABLE' }],
+        items: [{ id: 'it-1', name: 'กรรไกรตัดริบบิ้น', item_type: 'asset' }],
+        categories: [],
+        initialSelectedUnitCodes: ['SC-001']
+      })
+    );
+    assert(html.includes('QR Code'));
+    assert(html.includes('Barcode แท่ง'));
+    assert(html.includes('จิ๋วติดกรรไกร'));
+    assert(html.includes('รูป QR 5×5 มม.'));
+  });
+
+  await t.test('16. Pure Game Mode UX & GameBagDock: zero legacy mode-switcher clutter + 1-tap Smart Combo dock', () => {
+    const Inventory = loadJsxComponent('src/Inventory.jsx');
+    const GameActionModal = loadJsxComponent('src/components/inventory/GameActionModal.jsx');
+
+    const html = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(Inventory, {
+        defaultExperience: 'game',
+        inventoryItems: [{ id: 'it-1', name: 'แท่งกาวร้อน', item_type: 'consumable', current_stock: 50, unit: 'แท่ง' }],
+        activities: [{ id: 'P-0001', name: 'งานแต่งงานคุณมายด์' }],
+        isActive: true,
+        userProfile: { role: 'admin', name: 'Admin' }
+      })
+    );
+    assert(!html.includes('โหมดตารางเดิม'), 'Must NOT show legacy ERP table mode switcher in Game Mode');
+
+    const dockHtml = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(GameActionModal, {
+        bagItems: [{ id: 'i-gun', name: 'ปืนยิงกาวร้อน', item_type: 'asset', quantity: 1, unitCodes: ['GG-01'] }],
+        bagCashLines: [{ denomination: 50, noteCount: 100 }],
+        isExpanded: true,
+        items: [
+          { id: 'i-gun', name: 'ปืนยิงกาวร้อน', item_type: 'asset', current_stock: 1 },
+          { id: 'i-stick', name: 'แท่งกาวซิลิโคน', item_type: 'consumable', current_stock: 30, unit: 'แท่ง' }
+        ],
+        assetUnits: [{ unit_code: 'GG-01', item_id: 'i-gun', status: 'AVAILABLE' }],
+        recipients: [{ id: 'r1', name: 'AOM' }, { id: 'r2', name: 'หมูดรีม' }],
+        isPrivilegedCashUser: true
+      })
+    );
+    assert(dockHtml.includes('หยิบคู่กันไหม:'), 'Dock must display 1-tap Smart Combo bar');
+    assert(dockHtml.includes('แท่งกาวซิลิโคน'), 'Dock must suggest glue sticks when glue gun is picked');
+    assert(dockHtml.includes('พักกระเป๋าเตรียมไว้ก่อน'), 'Dock must offer Stage Bag action');
+    assert(dockHtml.includes('เอาออกใช้งานเลย'), 'Dock must offer Checkout Now action');
+  });
+
+  await t.test('17. Unified 3-Zone AppBar (16pt base padding, Left Nav / Center Title or Search / Right <=3 + Overflow)', () => {
+    const QrLabelPrint = loadJsxComponent('src/components/inventory/QrLabelPrint.jsx');
+    const studioHtml = ReactDOMServer.renderToStaticMarkup(
+      React.createElement(QrLabelPrint, {
+        units: [{ unit_code: 'SC-001', item_id: 'it-1', status: 'AVAILABLE' }],
+        items: [{ id: 'it-1', name: 'กรรไกรตัดริบบิ้น', item_type: 'asset' }],
+        categories: [],
+        initialSelectedUnitCodes: ['SC-001'],
+        onClose: () => {}
+      })
+    );
+    assert(studioHtml.includes('aria-label="ปิดหน้าต่างพิมพ์ฉลาก"'), 'Left slot must render navigation back button');
+    assert(studioHtml.includes('พิมพ์สติกเกอร์ QR / Barcode'), 'Center slot must render title');
+    assert(studioHtml.includes('พิมพ์ฉลาก (1 ดวง)'), 'Right slot must render primary print action');
+
+    const appSource = fs.readFileSync(path.join(root, 'src/App.jsx'), 'utf8');
+    assert(appSource.includes('id="app-header-center-search-slot"'), 'Wide PC must expose centered Spotlight search slot');
+    assert(appSource.includes('id="app-header-mobile-search-trigger-slot"'), 'Mobile must expose minimal search icon slot');
+    assert(appSource.includes('aria-label="คำสั่งเพิ่มเติม"'), 'Pages with >3 actions must expose Overflow Menu trigger');
+    assert(appSource.includes('aria-label="เมนูนำทางด่วน"'), 'Mobile left slot must expose Smart Quick-Jump Nav trigger');
   });
 });

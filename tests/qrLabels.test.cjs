@@ -182,10 +182,33 @@ test('QR Labels - Unit & Integration Test Suite', async (t) => {
     assert.ok(scissorVal.warning != null);
     assert.match(scissorVal.warning, /ทดลอง|ด้ามกรรไกร/);
 
-    // Impossible tiny dimensions (e.g. 8x8mm): must be BLOCKED
+    // Micro QR preset (7x8.5mm with exact 5x5mm QR graphic) and Micro Barcode (15x5mm): valid!
+    assert.equal(qrUtils.LABEL_PRESETS.micro_qr.qrGraphicMm, 5);
+    assert.equal(qrUtils.LABEL_PRESETS.micro_barcode.widthMm, 15);
+    assert.equal(qrUtils.LABEL_PRESETS.micro_barcode.heightMm, 5);
+
+    const microQrVal = qrUtils.validateLabelDimensions({
+      widthMm: 7,
+      heightMm: 8.5,
+      qrGraphicMm: 5,
+      payload: 'F2U:T:ITEM0001'
+    });
+    assert.equal(microQrVal.valid, true);
+    assert.equal(microQrVal.blocked, false);
+    assert.equal(microQrVal.qrSizeMm, 5);
+
+    const microBarVal = qrUtils.validateBarcodeDimensions({
+      widthMm: 15,
+      heightMm: 5,
+      unitCodes: ['ITEM0001', 'SC-001']
+    });
+    assert.equal(microBarVal.valid, true);
+    assert.equal(microBarVal.blocked, false);
+
+    // Impossible tiny dimensions (< 5mm, e.g. 3x3mm): must be BLOCKED
     const tinyVal = qrUtils.validateLabelDimensions({
-      widthMm: 8,
-      heightMm: 8,
+      widthMm: 3,
+      heightMm: 3,
       payload: 'F2U:T:SC-001'
     });
     assert.equal(tinyVal.blocked, true);
@@ -304,7 +327,7 @@ test('QR Labels - Unit & Integration Test Suite', async (t) => {
     assert.equal(excessiveRoll.valid, false);
   });
 
-  await t.test('9. buildPrintHtml: calibration page is always A4, CSS injection blocked, total limit enforced', () => {
+  await t.test('9. buildPrintHtml: calibration page is always A4, CSS injection blocked, total limit enforced', async () => {
     // Calibration sheet is ALWAYS A4 portrait even if printMode is ROLL
     const calibHtml = qrUtils.buildPrintHtml({
       labels: [{ unitCode: 'SC-001', itemName: 'กรรไกร' }],
@@ -325,6 +348,38 @@ test('QR Labels - Unit & Integration Test Suite', async (t) => {
       }
     });
     assert.equal(injectionHtml.includes('body { background: red; }'), false);
+
+    // Stickers print ONLY the unit code tightly flush underneath (never item name "กรรไกร")
+    assert.equal(injectionHtml.includes('กรรไกร'), false);
+    assert.ok(injectionHtml.includes('SC-001'));
+    assert.ok(injectionHtml.includes('margin-top: 0.25mm;'));
+
+    const microBarHtml = qrUtils.buildPrintHtml({
+      labels: [{ unitCode: 'ITEM0001', itemName: 'กรรไกร', svg: qrUtils.generateBarcodeSvgString('ITEM0001', qrUtils.LABEL_PRESETS.micro_barcode) }],
+      preset: qrUtils.LABEL_PRESETS.micro_barcode,
+      mode: qrUtils.PRINT_MODES.SHEET_A4,
+      format: qrUtils.LABEL_FORMATS.BARCODE
+    });
+    assert.equal(microBarHtml.includes('กรรไกร'), false);
+    assert.ok(microBarHtml.includes('ITEM0001'));
+    assert.ok(microBarHtml.includes('font-size: 10px;'));
+    assert.ok(microBarHtml.includes('transform: scale('));
+    assert.ok(microBarHtml.includes('margin-top: 0.16mm;'));
+    assert.ok(microBarHtml.includes('height: 3.15mm;'));
+
+    const microQrDataUrl = await qrUtils.generateQrDataUrl(qrUtils.encodeQrPayload('ITEM0001'), { margin: 0, errorCorrectionLevel: 'M' });
+    const microQrHtml = qrUtils.buildPrintHtml({
+      labels: [{ unitCode: 'ITEM0001', itemName: 'กรรไกร', dataUrl: microQrDataUrl }],
+      preset: qrUtils.LABEL_PRESETS.micro_qr,
+      mode: qrUtils.PRINT_MODES.SHEET_A4,
+      format: qrUtils.LABEL_FORMATS.QR
+    });
+    assert.equal(microQrHtml.includes('กรรไกร'), false);
+    assert.ok(microQrHtml.includes('width: 5mm;'));
+    assert.ok(microQrHtml.includes('height: 5mm;'));
+    assert.ok(microQrHtml.includes('image-rendering: pixelated;'));
+    assert.ok(microQrHtml.includes('height: 1.25mm;'));
+    assert.ok(microQrHtml.includes('margin-top: 0.32mm;'));
 
     // Enforce MAX_TOTAL_LABELS limit (no silent truncation)
     const tooManyLabels = new Array(501).fill({ unitCode: 'SC-001' });

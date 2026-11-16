@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import HeaderFilterPortal from './components/common/HeaderFilterPortal';
 import {
   Users,
   Search,
@@ -366,8 +367,11 @@ function Artists({
   const totalJobsAll = artistDirectory.reduce((sum, a) => sum + a.projectCount, 0);
 
   // Open Create / Edit Modal
-  const handleOpenCreateModal = (artist = null) => {
+  const [isViewOnly, setIsViewOnly] = useState(false);
+
+  const handleOpenCreateModal = (artist = null, startLocked = true) => {
     if (artist) {
+      setIsViewOnly(Boolean(startLocked));
       setEditingArtist(artist);
       reset({
         name: artist.name || '',
@@ -388,6 +392,7 @@ function Artists({
         notes: artist.notes || ''
       });
     } else {
+      setIsViewOnly(false);
       setEditingArtist(null);
       reset({
         name: '',
@@ -414,6 +419,7 @@ function Artists({
 
   // Submit Save Artist (React Hook Form onSubmit)
   const onSubmitArtist = async (formData) => {
+    if (isViewOnly) return;
     setIsSaving(true);
     try {
       const payload = {
@@ -504,70 +510,31 @@ function Artists({
         </div>
       </div>
 
-      {/* Search & Agency Filter Toolbar */}
-      <div 
-        ref={filterSentinelRef} 
-        className="w-full h-0 -my-3 pointer-events-none opacity-0"
-      />
-      <div className={`bg-white/95 backdrop-blur-md transition-all duration-200 ease-in-out z-20 sticky top-[calc(56px+env(safe-area-inset-top,0px))] md:top-0 ${
-        isFilterStuck
-          ? '-mx-4 sm:-mx-8 lg:-mx-10 py-2 sm:py-2.5 px-4 sm:px-8 lg:px-10 border-b border-slate-100 shadow-sm rounded-b-[2rem] sm:rounded-b-3xl rounded-t-none'
-          : 'p-3 sm:p-3.5 rounded-2xl sm:rounded-3xl border border-slate-100 shadow-[0_2px_12px_rgb(0,0,0,0.03)]'
-      }`}>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
-          {/* Search Box */}
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="ค้นหาชื่อศิลปิน, ค่ายสังกัด, ชื่อแฟนด้อม, หรือข้อมูลประวัติ..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 font-medium"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition cursor-pointer"
-                title="ล้างข้อความค้นหา"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Agency Dropdown */}
-            <div className="relative w-44 sm:w-56 shrink-0">
-              <select
-                value={selectedAgency}
-                onChange={(e) => setSelectedAgency(e.target.value)}
-                className="w-full pl-3.5 pr-8 py-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 appearance-none cursor-pointer shadow-2xs transition-colors"
-              >
-                <option value="all">ทุกสังกัด / ค่าย ({artistDirectory.length})</option>
-                {agencies.map(ag => (
-                  <option key={ag} value={ag}>{ag}</option>
-                ))}
-              </select>
-              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            {/* Reset Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('');
-                setSelectedAgency('all');
-              }}
-              className="h-10 w-10 bg-slate-50 border border-slate-200/70 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 cursor-pointer shadow-2xs"
-              title="ล้างค่าตัวกรองทั้งหมด"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
-          </div>
+      {/* Header-Integrated Search & Agency Filter */}
+      <HeaderFilterPortal
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+        placeholder="ค้นหาชื่อศิลปิน, ค่ายสังกัด, แฟนด้อม..."
+        activeFilterCount={selectedAgency !== 'all' ? 1 : 0}
+        onReset={() => {
+          setSearchQuery('');
+          setSelectedAgency('all');
+        }}
+      >
+        <div className="relative w-full sm:w-72">
+          <select
+            value={selectedAgency}
+            onChange={(e) => setSelectedAgency(e.target.value)}
+            className="w-full h-10 pl-3.5 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 appearance-none cursor-pointer"
+          >
+            <option value="all">ทุกสังกัด / ค่าย ({artistDirectory.length})</option>
+            {agencies.map((ag) => (
+              <option key={ag} value={ag}>{ag}</option>
+            ))}
+          </select>
+          <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
-      </div>
+      </HeaderFilterPortal>
 
       {/* Desktop Table View */}
       <div className="hidden md:block bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
@@ -838,7 +805,7 @@ function Artists({
                 <div>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                     <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
-                      {editingArtist ? 'แก้ไขข้อมูลศิลปิน' : 'เพิ่มข้อมูลศิลปินใหม่'}
+                      {editingArtist ? (isViewOnly ? 'รายละเอียดข้อมูลศิลปิน' : 'แก้ไขข้อมูลศิลปิน') : 'เพิ่มข้อมูลศิลปินใหม่'}
                     </h3>
                     {editingArtist?.name && (
                       <span className="bg-purple-50 text-purple-600 text-xs sm:text-xs px-2.5 py-0.5 sm:py-1 rounded-lg font-bold border border-purple-100 w-fit">
@@ -847,7 +814,7 @@ function Artists({
                     )}
                   </div>
                   <p className="text-xs sm:text-sm text-slate-500 font-medium">
-                    บันทึกประวัติ สังกัด แฟนด้อม สีประจำตัว และช่องทางติดต่อโซเชียล
+                    {isViewOnly ? 'ล็อกป้องกันการแก้ไขโดยไม่ตั้งใจ กดปุ่มแก้ไขด้านล่างเพื่อปรับข้อมูล' : 'บันทึกประวัติ สังกัด แฟนด้อม สีประจำตัว และช่องทางติดต่อโซเชียล'}
                   </p>
                 </div>
               </div>
@@ -862,7 +829,11 @@ function Artists({
 
             {/* Modal Form */}
             <form onSubmit={handleSubmit(onSubmitArtist)} className="flex flex-col flex-1 overflow-hidden">
-              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar space-y-6 overscroll-contain">
+              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar overscroll-contain">
+                <fieldset
+                  disabled={isViewOnly}
+                  className="block min-w-0 border-0 p-0 m-0 space-y-6 [&_input:disabled]:bg-slate-100 [&_input:disabled]:text-slate-500 [&_input:disabled]:cursor-not-allowed [&_textarea:disabled]:bg-slate-100 [&_textarea:disabled]:text-slate-500 [&_textarea:disabled]:cursor-not-allowed [&_button:disabled]:opacity-50 [&_button:disabled]:pointer-events-none"
+                >
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">ชื่อศิลปิน *</label>
@@ -929,6 +900,7 @@ function Artists({
                           value={field.value}
                           onChange={field.onChange}
                           hasTime={false}
+                          disabled={isViewOnly}
                           placeholder="เลือกวันเกิด..."
                           className="w-full bg-slate-50 border-slate-200"
                         />
@@ -952,9 +924,12 @@ function Artists({
                     <div className="flex items-center gap-3 p-2 bg-slate-50/90 rounded-2xl border border-slate-200/90 shadow-2xs">
                       {/* Avatar Preview Box (Clickable & Droppable) */}
                       <div
-                        onClick={() => !isUploadingAvatar && fileInputRef.current?.click()}
-                        onDragOver={(e) => e.preventDefault()}
+                        onClick={() => !isViewOnly && !isUploadingAvatar && fileInputRef.current?.click()}
+                        onDragOver={(e) => {
+                          if (!isViewOnly) e.preventDefault();
+                        }}
                         onDrop={(e) => {
+                          if (isViewOnly) return;
                           e.preventDefault();
                           if (e.dataTransfer.files?.[0]) handleUploadAvatarFile(e.dataTransfer.files[0]);
                         }}
@@ -1060,6 +1035,7 @@ function Artists({
                     />
                   </div>
                 </div>
+                </fieldset>
               </div>
 
               {/* Modal Footer (Sticky at Bottom) */}
@@ -1067,22 +1043,33 @@ function Artists({
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-all active:scale-95 cursor-pointer"
+                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
-                  ยกเลิก
+                  {isViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="py-3 px-7 sm:px-8 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-purple-200 hover:shadow-purple-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
-                >
-                  {isSaving ? (
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="w-4 h-4" />
-                  )}
-                  <span>{isSaving ? 'กำลังบันทึก...' : 'บันทึกข้อมูลศิลปิน'}</span>
-                </button>
+                {isViewOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsViewOnly(false)}
+                    className="py-3 px-7 sm:px-8 bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
+                  >
+                    <Edit className="w-4 h-4" />
+                    <span>แก้ไข</span>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="py-3 px-7 sm:px-8 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-purple-200 hover:shadow-purple-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSaving ? (
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-4 h-4" />
+                    )}
+                    <span>{isSaving ? 'กำลังบันทึก...' : 'บันทึกข้อมูลศิลปิน'}</span>
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -1248,7 +1235,7 @@ function Artists({
                 type="button"
                 onClick={() => {
                   setIsDetailModalOpen(false);
-                  handleOpenCreateModal(selectedArtistForDetail);
+                  handleOpenCreateModal(selectedArtistForDetail, false);
                 }}
                 className="py-3 px-5 sm:px-6 rounded-2xl text-slate-700 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-all active:scale-95 cursor-pointer flex items-center gap-2"
               >

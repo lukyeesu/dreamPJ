@@ -20,12 +20,17 @@ let authSubscriptionInitialized = false;
 
 async function cacheCatalogRows(items, totalCount = null) {
   try {
-    const cached = await db.inventory_items.toArray();
-    const cashIds = cached.filter(item => String(item.item_type || '').toLowerCase() === 'banknote').map(item => item.id);
-    await Promise.all(cashIds.map(id => db.inventory_items.delete(id)));
-    const rows = items.filter(item => String(item.item_type || '').toLowerCase() !== 'banknote');
-    if (rows.length) await db.inventory_items.bulkPut(rows);
-    else if (totalCount === 0) await db.inventory_items.clear();
+    const rows = (items || []).filter(item => String(item.item_type || '').toLowerCase() !== 'banknote');
+    if (totalCount !== null && (totalCount === 0 || rows.length >= totalCount)) {
+      // Authoritative full-catalog sync: wipe any deleted or local mockup items not on Supabase
+      await db.inventory_items.clear();
+      if (rows.length) await db.inventory_items.bulkPut(rows);
+    } else {
+      const cached = await db.inventory_items.toArray();
+      const cashIds = cached.filter(item => String(item.item_type || '').toLowerCase() === 'banknote').map(item => item.id);
+      await Promise.all(cashIds.map(id => db.inventory_items.delete(id)));
+      if (rows.length) await db.inventory_items.bulkPut(rows);
+    }
   } catch { /* Cache failure must not hide confirmed server data. */ }
 }
 

@@ -18,7 +18,8 @@ import {
   ChevronLeft,
   ChevronRight,
   RefreshCw,
-  Banknote
+  Banknote,
+  X
 } from 'lucide-react';
 import { loadWarehouseHistory, loadWarehouseChecklists } from '../../services/warehouseService.js';
 
@@ -296,14 +297,25 @@ export default function HistoryAuditView({
 
           {/* Search bar */}
           <div className="relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
               value={movementSearchQuery}
               onChange={(e) => setMovementSearchQuery(e.target.value)}
               placeholder="ค้นหาชื่อรายการ, รหัสเอกสาร, โปรเจกต์ หรือหมายเหตุ..."
-              className="w-full h-11 pl-9 pr-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm outline-hidden focus:border-[var(--theme-main)]"
+              className="w-full h-11 pl-9 pr-9 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm outline-hidden focus:border-[var(--theme-main)]"
             />
+            {movementSearchQuery && (
+              <button
+                type="button"
+                onClick={() => setMovementSearchQuery('')}
+                aria-label="ล้างคำค้นหา"
+                title="ล้างคำค้นหา"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200/70 rounded-full transition-colors cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           {/* Error Notice */}
@@ -459,14 +471,25 @@ export default function HistoryAuditView({
               </select>
 
               <div className="relative min-w-[200px]">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
                   value={checklistSearchQuery}
                   onChange={(e) => setChecklistSearchQuery(e.target.value)}
                   placeholder="ค้นหาชื่อรายการ..."
-                  className="w-full h-10 pl-9 pr-3 bg-white border border-slate-200 rounded-xl text-xs outline-hidden focus:border-[var(--theme-main)]"
+                  className="w-full h-10 pl-9 pr-9 bg-white border border-slate-200 rounded-xl text-xs outline-hidden focus:border-[var(--theme-main)]"
                 />
+                {checklistSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setChecklistSearchQuery('')}
+                    aria-label="ล้างคำค้นหา"
+                    title="ล้างคำค้นหา"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             </div>
           </header>
@@ -567,14 +590,25 @@ export default function HistoryAuditView({
               </p>
             </div>
             <div className="relative min-w-[200px]">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
                 value={loanSearchQuery}
                 onChange={(e) => setLoanSearchQuery(e.target.value)}
                 placeholder="ค้นหาผู้ยืมหรือหมายเหตุ..."
-                className="w-full h-10 pl-9 pr-3 bg-white border border-slate-200 rounded-xl text-xs outline-hidden focus:border-[var(--theme-main)]"
+                className="w-full h-10 pl-9 pr-9 bg-white border border-slate-200 rounded-xl text-xs outline-hidden focus:border-[var(--theme-main)]"
               />
+              {loanSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setLoanSearchQuery('')}
+                  aria-label="ล้างคำค้นหา"
+                  title="ล้างคำค้นหา"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           </header>
 

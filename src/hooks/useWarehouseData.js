@@ -33,10 +33,15 @@ export function useWarehouseData({
 
   // Strictly server-aligned role hint (server remains the ultimate enforcer)
   // Fail-closed: No profile => false (deny)
+  const normalizedRole = String(authUserRole || '').trim().toLowerCase();
   const isPrivilegedCashUser = Boolean(
     userProfile && (
-      authUserRole === 'admin' ||
-      authUserRole === 'accountant' ||
+      normalizedRole === 'admin' ||
+      normalizedRole === 'system administrator' ||
+      normalizedRole === 'administrator' ||
+      normalizedRole === 'accountant' ||
+      normalizedRole === 'ผู้ดูแลระบบ' ||
+      normalizedRole === 'ฝ่ายบัญชี' ||
       userProfile.can_manage_cash === true
     )
   );
@@ -208,23 +213,39 @@ export function useWarehouseData({
 
       const errMessage = String(err?.message || '');
       const isMissingRpc = (
-        errMessage.includes('warehouse_get_summary') ||
-        (errMessage.includes('function') && errMessage.includes('does not exist')) ||
-        errMessage.includes('42883') ||
-        errMessage.includes('42P01') ||
-        errMessage.includes('PGRST202')
+        errMessage.includes('warehouse_get_summary') && (
+          errMessage.includes('does not exist') ||
+          errMessage.includes('42883') ||
+          errMessage.includes('PGRST202')
+        )
+      ) || errMessage.includes('42P01') || errMessage.includes('PGRST202');
+
+      const isAuthOrPermissionError = (
+        errMessage.includes('permission denied') ||
+        errMessage.includes('42501') ||
+        errMessage.includes('Unauthorized') ||
+        errMessage.includes('JWT')
       );
 
       if (isMissingRpc) {
         setIsMigrationRequired(true);
         setSummaryError('ต้องติดตั้ง inventory_compact.sql รุ่นใหม่ก่อนใช้งาน ข้อมูลแคชเปิดอ่านได้เท่านั้น');
+        setCapabilities({});
+        await loadFallbackData();
+      } else if (isAuthOrPermissionError) {
+        setIsMigrationRequired(false);
+        setSummaryError('เซสชันการเชื่อมต่อ Supabase ยังไม่ยืนยันตัวตน กรุณาเข้าสู่ระบบด้วยบัญชีพนักงานจริงเพื่อโหลดคลังสินค้าจากเซิร์ฟเวอร์');
+        setCapabilities({});
+        setItems([]);
+        setCategories([]);
+        setRecipients([]);
+        setRounds([]);
+        setAssetUnits([]);
       } else {
         setSummaryError(errMessage || 'ไม่สามารถโหลดข้อมูลคลังสินค้าจากเซิร์ฟเวอร์ได้');
+        setCapabilities({});
+        await loadFallbackData();
       }
-
-      // Safe local-first read-only fallback
-      setCapabilities({});
-      await loadFallbackData();
     } finally {
       if (isMountedRef.current && token === currentSummaryTokenRef.current) {
         setIsLoading(false);
@@ -264,10 +285,10 @@ export function useWarehouseData({
 
   /**
    * Load Cash Summary (STRICT SERVER-VERIFIED RBAC)
-   * Only called when activeMainTab === 'cash' AND user is privileged.
+   * Called when warehouse/action hub is active AND user is privileged.
    */
   const fetchCash = useCallback(async () => {
-    if (!isActive || activeMainTab !== 'cash') return;
+    if (!isActive) return;
 
     if (!isPrivilegedCashUser) {
       setCashError('คุณไม่มีสิทธิ์เข้าถึงข้อมูลเงินสด (จำกัดเฉพาะบทบาทผู้ดูแลระบบและฝ่ายบัญชี)');
@@ -311,7 +332,7 @@ export function useWarehouseData({
         setIsCashLoading(false);
       }
     }
-  }, [isActive, activeMainTab, isPrivilegedCashUser]);
+  }, [isActive, isPrivilegedCashUser]);
 
   // Initial and active-page gated effect (depends ONLY on primitive isActive, authUserId, and authSessionVersion)
   useEffect(() => {
@@ -326,26 +347,26 @@ export function useWarehouseData({
     };
   }, [isActive, authUserId, authSessionVersion, fetchSummary]);
 
-  // Operations fetch effect when entering 'flows' or 'history'
+  // Operations fetch effect when warehouse or unified action modal is active
   useEffect(() => {
-    if (isActive && (activeMainTab === 'flows')) {
+    if (isActive) {
       fetchOperations();
     }
-  }, [isActive, activeMainTab, authUserId, authSessionVersion, fetchOperations]);
+  }, [isActive, authUserId, authSessionVersion, fetchOperations]);
 
-  // Cash loading & immediate clearance effect
+  // Cash loading & immediate clearance effect (Strictly memory-only, cleared when inactive or unprivileged)
   useEffect(() => {
-    if (isActive && activeMainTab === 'cash' && isPrivilegedCashUser) {
+    if (isActive && isPrivilegedCashUser) {
       fetchCash();
     } else {
-      // Immediately clear sensitive cash state from memory on tab deactivation or role change
+      // Immediately clear sensitive cash state from memory on deactivation or role change
       setCashSummary(null);
       setCashError(null);
       setCashErrorType(null);
       setIsCashLoading(false);
       currentCashTokenRef.current++;
     }
-  }, [isActive, activeMainTab, isPrivilegedCashUser, authUserId, authSessionVersion, fetchCash]);
+  }, [isActive, isPrivilegedCashUser, authUserId, authSessionVersion, fetchCash]);
 
   // Unmount cleanup
   useEffect(() => {
