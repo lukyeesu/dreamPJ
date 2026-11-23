@@ -4309,7 +4309,7 @@ const App = () => {
             if (typeof imgUrl === 'string' && imgUrl.startsWith('data:image')) {
               const mimeType = imgUrl.split(',')[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
               const rawBase64 = imgUrl.substring(imgUrl.indexOf(',') + 1);
-              const fileName = `ref_${activityData.id}_${Date.now()}_${i + 1}.jpg`;
+              const fileName = `${activityData.id}_${Date.now()}_${i + 1}.jpg`;
               let uploadedLink = null;
               let uploadedFileId = null;
               try {
