@@ -52,7 +52,7 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
   reader.onerror = (err) => reject(err);
 });
 
-const compressImage = (file) => new Promise((resolve, reject) => {
+const compressImage = (file, maxWidth = 800, quality = 0.82) => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.readAsDataURL(file);
   reader.onload = (event) => {
@@ -60,10 +60,9 @@ const compressImage = (file) => new Promise((resolve, reject) => {
     img.src = event.target.result;
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      const MAX_WIDTH = 800;
-      const scaleSize = MAX_WIDTH / img.width;
+      const scaleSize = maxWidth / img.width;
       if (scaleSize < 1) {
-        canvas.width = MAX_WIDTH;
+        canvas.width = maxWidth;
         canvas.height = img.height * scaleSize;
       } else {
         canvas.width = img.width;
@@ -71,7 +70,7 @@ const compressImage = (file) => new Promise((resolve, reject) => {
       }
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL('image/jpeg', 0.85));
+      resolve(canvas.toDataURL('image/jpeg', quality));
     };
     img.onerror = (err) => reject(err);
   };
@@ -109,6 +108,7 @@ function Artists({
     handleSubmit,
     reset,
     setValue,
+    getValues,
     watch,
     control,
     formState: { errors, isDirty }
@@ -142,26 +142,25 @@ function Artists({
       return;
     }
 
+    const prevAvatar = getValues('avatar_url') || '';
+    const targetFolderId = (assetsDriveFolderId || '').trim();
+    if (!targetFolderId) {
+      setValue('avatar_url', prevAvatar, { shouldDirty: false });
+      showToast('กรุณาตั้งค่าโฟลเดอร์รูปศิลปินในหน้าตั้งค่าระบบก่อนอัปโหลด', 'error');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
     setIsUploadingAvatar(true);
     try {
-      let base64Data = '';
-      if (file.size > 1 * 1024 * 1024) {
-        base64Data = await compressImage(file);
-      } else {
-        base64Data = await fileToBase64(file);
-      }
+      const base64Data = await compressImage(file, 800, 0.82);
 
       // Show temporary preview immediately
       setValue('avatar_url', base64Data, { shouldDirty: true });
 
-      // Target Google Drive Folder ID
-      const targetFolderId = assetsDriveFolderId && assetsDriveFolderId.trim() !== ''
-        ? assetsDriveFolderId.trim()
-        : '1SRD4Qr9X5XgD4niCwlmDyZR78pWUx-XX';
-
       const cleanArtistName = (watchedName || 'artist').replace(/[^a-zA-Z0-9_\u0E00-\u0E7F]/g, '_');
-      const fileName = `artist_${cleanArtistName}_${Date.now()}.png`;
-      const mimeType = base64Data.split(',')[0].match(/:(.*?);/)?.[1] || 'image/png';
+      const fileName = `artist_${cleanArtistName}_${Date.now()}.jpg`;
+      const mimeType = base64Data.split(',')[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
 
       const response = await fetch(GOOGLE_DRIVE_UPLOAD_URL, {
         method: 'POST',
@@ -178,16 +177,20 @@ function Artists({
       });
 
       const result = await response.json();
-      if (result.status === 'success' && (result.url || result.fileId)) {
+      const hasValidDriveUrl = Boolean(
+        result.fileId || (result.url && !result.url.startsWith('data:'))
+      );
+      if (result.status === 'success' && hasValidDriveUrl) {
         const directUrl = result.fileId
           ? `https://lh3.googleusercontent.com/d/${result.fileId}`
-          : (result.url || base64Data);
+          : result.url;
         setValue('avatar_url', directUrl, { shouldDirty: true });
         showToast('อัปโหลดรูปภาพไปยัง Google Drive สำเร็จ', 'success');
       } else {
         throw new Error(result.message || 'ไม่สามารถอัปโหลดไปยัง Google Drive ได้');
       }
     } catch (err) {
+      setValue('avatar_url', prevAvatar, { shouldDirty: false });
       console.error('Error uploading artist avatar:', err);
       showToast('เกิดข้อผิดพลาดในการอัปโหลด: ' + err.message, 'error');
     } finally {
@@ -1078,15 +1081,15 @@ function Artists({
                   <button
                     key="submit-save-btn"
                     type="submit"
-                    disabled={isSaving}
+                    disabled={isSaving || isUploadingAvatar}
                     className="py-3 px-7 sm:px-8 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-purple-200 hover:shadow-purple-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
                   >
-                    {isSaving ? (
+                    {(isSaving || isUploadingAvatar) ? (
                       <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     ) : (
                       <CheckCircle2 className="w-4 h-4" />
                     )}
-                    <span>{isSaving ? 'กำลังบันทึก...' : 'บันทึกข้อมูลศิลปิน'}</span>
+                    <span>{isUploadingAvatar ? 'กำลังอัปโหลดรูป...' : isSaving ? 'กำลังบันทึก...' : 'บันทึกข้อมูลศิลปิน'}</span>
                   </button>
                 )}
               </div>

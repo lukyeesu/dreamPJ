@@ -143,6 +143,58 @@ table tr.transition-all {
   color: #94a3b8 !important;
 }
 
+/* Prevent GPU layer thrashing & backdrop-blur re-rasterization during sidebar resize (60-120fps GPU compositor) */
+body.is-dragging-sidebar {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+aside[data-desktop-sidebar="true"] {
+  touch-action: pan-y;
+  contain: layout style;
+}
+
+aside[data-desktop-sidebar="true"] .sidebar-inner-rail {
+  contain: layout style paint;
+}
+
+aside[data-desktop-sidebar="true"] .sidebar-drag-handle {
+  touch-action: none;
+}
+
+aside[data-desktop-sidebar="true"] .sidebar-text-label {
+  opacity: var(--sidebar-p, 1);
+  transform: translate3d(calc((1 - var(--sidebar-p, 1)) * -8px), 0, 0);
+  will-change: opacity, transform;
+}
+
+@media (min-width: 768px) {
+  [data-main-shell="true"][data-has-desktop-sidebar="true"] {
+    margin-left: var(--sidebar-layout-w, 80px);
+  }
+}
+
+body.is-dragging-sidebar [data-main-shell="true"],
+body.is-sidebar-animating [data-main-shell="true"] {
+  will-change: transform;
+}
+
+#main-scroll-container {
+  contain: layout style;
+}
+
+body.is-sidebar-animating [class*="backdrop-blur"],
+body.is-dragging-sidebar [class*="backdrop-blur"] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Eliminate pointer-event hit-testing overhead on main view during sidebar transition for solid 60-120fps */
+body.is-dragging-sidebar #main-scroll-container,
+body.is-sidebar-animating #main-scroll-container {
+  pointer-events: none !important;
+}
+
 @media print {
   .no-print {
     display: none !important;

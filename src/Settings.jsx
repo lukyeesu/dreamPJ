@@ -59,7 +59,7 @@ import StatusDropdown from './components/common/StatusDropdown';
 import { useModalCloseGuard } from './hooks/useModalCloseGuard';
 import { saveStaffSync, broadcastPermissionsUpdated, extractGoogleDriveFolderId } from './services/syncService';
 import { getActiveClient } from './services/supabaseClient';
-import db from './services/db';
+import db, { clearAllLocalDatabase } from './services/db';
 import { applyThemeVariables, broadcastShopInfoSync } from './utils/themeManager';
 import { parseCoordinatesFromInput, DEFAULT_FLOWER2U_HUB } from './Locations';
 
@@ -724,25 +724,27 @@ function Settings({
       try {
         const client = getActiveClient();
         if (!client) return;
-        const { data, error } = await client.from('roles').select('*');
+        const { data, error } = await client
+          .from('roles')
+          .select('id,name,label,code,allowed_pages,can_edit_pricing,can_delete_project,can_borrow_tools,can_manage_users,is_system_role');
         if (!error && Array.isArray(data) && data.length > 0) {
-          const cloudMatrix = {};
-          data.forEach(r => {
-            const def = DEFAULT_PERMISSION_MATRIX[r.name] || {};
-            cloudMatrix[r.name] = {
-              label: r.label || def.label || r.name,
-              code: r.code || def.code || '99',
-              description: r.description || def.description || '',
-              allowed_pages: Array.isArray(r.allowed_pages) && r.allowed_pages.length > 0 ? r.allowed_pages : (def.allowed_pages || []),
-              can_edit_pricing: r.can_edit_pricing !== undefined ? !!r.can_edit_pricing : !!def.can_edit_pricing,
-              can_delete_project: r.can_delete_project !== undefined ? !!r.can_delete_project : !!def.can_delete_project,
-              can_borrow_tools: r.can_borrow_tools !== undefined ? !!r.can_borrow_tools : (def.can_borrow_tools !== undefined ? def.can_borrow_tools : true),
-              can_manage_users: r.can_manage_users !== undefined ? !!r.can_manage_users : !!def.can_manage_users,
-              is_system_role: ['admin', 'technician', 'driver', 'accountant'].includes(r.name) || !!r.is_system_role
-            };
-          });
           setPermissionMatrix(prev => {
-            const merged = { ...DEFAULT_PERMISSION_MATRIX, ...prev, ...cloudMatrix };
+            const cloudMatrix = {};
+            data.forEach(r => {
+              const def = DEFAULT_PERMISSION_MATRIX[r.name] || {};
+              cloudMatrix[r.name] = {
+                label: r.label || def.label || r.name,
+                code: r.code || def.code || '99',
+                description: r.description || prev?.[r.name]?.description || def.description || '',
+                allowed_pages: Array.isArray(r.allowed_pages) && r.allowed_pages.length > 0 ? r.allowed_pages : (def.allowed_pages || []),
+                can_edit_pricing: r.can_edit_pricing !== undefined ? !!r.can_edit_pricing : !!def.can_edit_pricing,
+                can_delete_project: r.can_delete_project !== undefined ? !!r.can_delete_project : !!def.can_delete_project,
+                can_borrow_tools: r.can_borrow_tools !== undefined ? !!r.can_borrow_tools : (def.can_borrow_tools !== undefined ? def.can_borrow_tools : true),
+                can_manage_users: r.can_manage_users !== undefined ? !!r.can_manage_users : !!def.can_manage_users,
+                is_system_role: ['admin', 'technician', 'driver', 'accountant'].includes(r.name) || !!r.is_system_role
+              };
+            });
+            const merged = { ...DEFAULT_PERMISSION_MATRIX, ...cloudMatrix };
             localStorage.setItem('f2u_role_permissions', JSON.stringify(merged));
             return merged;
           });
@@ -806,23 +808,24 @@ function Settings({
       localStorage.setItem('f2u_role_permissions', JSON.stringify(permissionMatrix));
       broadcastPermissionsUpdated(permissionMatrix);
 
-      // Upsert all roles to Supabase roles table
+      // Batch upsert all roles to Supabase roles table in a single HTTP request
       try {
         const client = getActiveClient();
         if (client) {
-          for (const [roleName, p] of Object.entries(permissionMatrix)) {
-            await client.from('roles').upsert({
-              name: roleName,
-              label: p.label || roleName,
-              code: p.code || '99',
-              description: p.description || '',
-              allowed_pages: p.allowed_pages || [],
-              can_edit_pricing: !!p.can_edit_pricing,
-              can_delete_project: !!p.can_delete_project,
-              can_borrow_tools: !!p.can_borrow_tools,
-              can_manage_users: !!p.can_manage_users,
-              is_system_role: p.is_system_role !== undefined ? p.is_system_role : ['admin', 'technician', 'driver', 'accountant'].includes(roleName)
-            }, { onConflict: 'name' });
+          const rolePayloads = Object.entries(permissionMatrix).map(([roleName, p]) => ({
+            name: roleName,
+            label: p.label || roleName,
+            code: p.code || '99',
+            description: p.description || '',
+            allowed_pages: p.allowed_pages || [],
+            can_edit_pricing: !!p.can_edit_pricing,
+            can_delete_project: !!p.can_delete_project,
+            can_borrow_tools: !!p.can_borrow_tools,
+            can_manage_users: !!p.can_manage_users,
+            is_system_role: p.is_system_role !== undefined ? p.is_system_role : ['admin', 'technician', 'driver', 'accountant'].includes(roleName)
+          }));
+          if (rolePayloads.length > 0) {
+            await client.from('roles').upsert(rolePayloads, { onConflict: 'name' });
           }
         }
       } catch (cErr) {
@@ -1435,41 +1438,46 @@ function Settings({
                 </h3>
 
                 {/* Logo Uploader */}
-                <div className="flex flex-col sm:flex-row items-center gap-5 p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                  <div className="w-20 h-20 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center overflow-hidden shrink-0">
-                    {shopInfo.logoUrl ? (
-                      <img src={processImageUrl(shopInfo.logoUrl)} alt="Logo" className="w-full h-full object-contain p-2" />
-                    ) : (
-                      <ImageIcon className="w-8 h-8 text-slate-300" />
-                    )}
-                  </div>
+                {(() => {
+                  const currentLogo = shopInfo.logo || shopInfo.logoUrl || '';
+                  return (
+                    <div className="flex flex-col sm:flex-row items-center gap-5 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <div className="w-20 h-20 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center overflow-hidden shrink-0">
+                        {currentLogo ? (
+                          <img src={processImageUrl(currentLogo)} alt="Logo" className="w-full h-full object-contain p-2" />
+                        ) : (
+                          <ImageIcon className="w-8 h-8 text-slate-300" />
+                        )}
+                      </div>
 
-                  <div className="space-y-2 text-center sm:text-left flex-1">
-                    <h4 className="font-bold text-sm text-slate-800">โลโก้ร้านค้า (Shop Logo)</h4>
-                    <p className="text-xs text-slate-500">สำหรับแสดงบนหัวบิล หัวเอกสารเสนอราคา และหัวตาราง</p>
-                    <div className="flex items-center justify-center sm:justify-start gap-2 pt-1">
-                      <label className="px-3.5 py-1.5 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-violet-200/40">
-                        {isUploadingLogo ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
-                        <span>อัปโหลดโลโก้</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => e.target.files[0] && handleLogoUpload(e.target.files[0])}
-                        />
-                      </label>
-                      {shopInfo.logoUrl && (
-                        <button
-                          type="button"
-                          onClick={requestDeleteLogo}
-                          className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-bold border border-rose-100 transition cursor-pointer"
-                        >
-                          ลบโลโก้
-                        </button>
-                      )}
+                      <div className="space-y-2 text-center sm:text-left flex-1">
+                        <h4 className="font-bold text-sm text-slate-800">โลโก้ร้านค้า (Shop Logo)</h4>
+                        <p className="text-xs text-slate-500">สำหรับแสดงบนหัวบิล หัวเอกสารเสนอราคา และหัวตาราง</p>
+                        <div className="flex items-center justify-center sm:justify-start gap-2 pt-1">
+                          <label className="px-3.5 py-1.5 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-violet-200/40">
+                            {isUploadingLogo ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+                            <span>อัปโหลดโลโก้</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => e.target.files[0] && handleLogoUpload(e.target.files[0])}
+                            />
+                          </label>
+                          {currentLogo && (
+                            <button
+                              type="button"
+                              onClick={requestDeleteLogo}
+                              className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-bold border border-rose-100 transition cursor-pointer"
+                            >
+                              ลบโลโก้
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* Shop Details */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2099,8 +2107,18 @@ function Settings({
                 <div className="pt-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      localStorage.removeItem('f2u_projects_cache');
+                    onClick={async () => {
+                      await clearAllLocalDatabase();
+                      try {
+                        const keysToRemove = [];
+                        for (let i = 0; i < localStorage.length; i++) {
+                          const key = localStorage.key(i);
+                          if (key && (key.startsWith('f2u_') || key === 'nexus_shop_info')) {
+                            keysToRemove.push(key);
+                          }
+                        }
+                        keysToRemove.forEach((k) => localStorage.removeItem(k));
+                      } catch (e) {}
                       showToast('ล้างแคชเรียบร้อยแล้ว กำลังโหลดข้อมูลใหม่', 'info');
                       setTimeout(() => window.location.reload(), 800);
                     }}

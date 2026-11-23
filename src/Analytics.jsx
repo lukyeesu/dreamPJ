@@ -97,9 +97,6 @@ const Analytics = ({
   resetFilters,
   setFilterStatus,
   setFilterTransport,
-  openModal,
-  renderTable,
-  filteredAndSortedActivities = [],
   isActive = true,
   onOpenVenueModal,
   onSelectProject

@@ -190,15 +190,26 @@ export function useWarehouseData({
       if (result) {
         setCapabilities(result.capabilities || {});
         // Authoritative: If cloud returns items: [], it means 0 items exist (do not resurrect deleted stock!)
-        if (!hasInitializedSummaryRef.current) {
-          setItems(Array.isArray(result.items) ? result.items : []);
-          setStockPage({items: result.items || [], total_count: Number(result.total_items_count) || 0, offset: 0, limit: 50, has_more: Number(result.total_items_count) > (result.items || []).length, facets: result.facets || {}});
-        }
+        const summaryItems = Array.isArray(result.items) ? result.items : [];
+        setItems(summaryItems);
+        setStockPage({
+          items: summaryItems,
+          total_count: Number(result.total_items_count) || 0,
+          offset: 0,
+          limit: 50,
+          has_more: Number(result.total_items_count) > summaryItems.length,
+          facets: result.facets || {}
+        });
         setSummaryCounts(result.counts || {pending_recoveries: result.pending_recoveries ?? result.pending_recovery_count, borrowed_tools: result.borrowed_tools});
         setCategories(Array.isArray(result.categories) ? result.categories : []);
         setRecipients(Array.isArray(result.recipients) ? result.recipients : []);
         setRounds(Array.isArray(result.rounds) ? result.rounds : []);
-        if (!hasInitializedSummaryRef.current || isManualRefresh) setAssetUnits(Array.isArray(result.asset_units) ? result.asset_units : []);
+        if (
+          !hasInitializedSummaryRef.current ||
+          (Array.isArray(result.asset_units) && result.asset_units.length > 0)
+        ) {
+          setAssetUnits(Array.isArray(result.asset_units) ? result.asset_units : []);
+        }
         setLegacyBorrowedUnits(Array.isArray(result.legacy_borrowed_units) ? result.legacy_borrowed_units : []);
 
         setIsMigrationRequired(false);
@@ -354,19 +365,42 @@ export function useWarehouseData({
     }
   }, [isActive, authUserId, authSessionVersion, fetchOperations]);
 
-  // Cash loading & immediate clearance effect (Strictly memory-only, cleared when inactive or unprivileged)
+  // Cash loading & RBAC clearance effect (Strictly memory-only, cleared when unprivileged)
   useEffect(() => {
-    if (isActive && isPrivilegedCashUser) {
-      fetchCash();
-    } else {
-      // Immediately clear sensitive cash state from memory on deactivation or role change
+    if (!isPrivilegedCashUser) {
       setCashSummary(null);
       setCashError(null);
       setCashErrorType(null);
       setIsCashLoading(false);
       currentCashTokenRef.current++;
+      return;
+    }
+    if (isActive) {
+      fetchCash();
+    } else {
+      setIsCashLoading(false);
+      currentCashTokenRef.current++;
     }
   }, [isActive, isPrivilegedCashUser, authUserId, authSessionVersion, fetchCash]);
+
+  // Live Supabase Realtime subscription on public.inventory_documents (active-only, debounced 500ms)
+  useEffect(() => {
+    if (!isActive || typeof warehouseService.subscribeWarehouseInventoryDocuments !== 'function') {
+      return undefined;
+    }
+    const unsub = warehouseService.subscribeWarehouseInventoryDocuments(
+      () => {
+        if (!isMountedRef.current) return;
+        lastSummaryLoadedAtRef.current = 0;
+        fetchSummary(false);
+        fetchOperations();
+      },
+      { debounceMs: 500 }
+    );
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [isActive, authUserId, authSessionVersion, fetchSummary, fetchOperations]);
 
   // Unmount cleanup
   useEffect(() => {

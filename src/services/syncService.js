@@ -1,6 +1,5 @@
 import { supabase, getActiveClient } from './supabaseClient';
 import { db } from './db';
-import { generateTrackingToken } from '../utils/formatters';
 import {
   validatePayload,
   projectPayloadSchema,
@@ -44,7 +43,6 @@ export const PROJECT_LIST_COLUMNS = [
   'total_expenses',
   'net_profit',
   'customer_support_total',
-  'primary_image_url',
   'note',
   'version',
   'updated_at'
@@ -52,6 +50,7 @@ export const PROJECT_LIST_COLUMNS = [
 
 export const PROJECT_DETAIL_COLUMNS = [
   'id',
+  'primary_image_url',
   'images',
   'slips',
   'customer_phone',
@@ -59,16 +58,20 @@ export const PROJECT_DETAIL_COLUMNS = [
   'customer_social',
   'customer_email',
   'customer_tax_id',
-  'customer_address'
+  'customer_address',
+  'updated_at'
 ].join(',');
 
-export const QUOTATION_COLUMNS = 'id,project_id,category,detail,quantity,unit_price,price,item_date';
+export const QUOTATION_LEGACY_COLUMNS = 'id,project_id,category,detail,quantity,unit_price,price,item_date';
+export const QUOTATION_COLUMNS = 'id,project_id,category,detail,quantity,unit_price,price,item_date,is_voided';
 export const SUPPORT_COLUMNS = 'id,project_id,denomination,quantity,price,item_date';
-export const EXPENSE_COLUMNS = 'id,project_id,category,detail,quantity,unit_price,price,item_date';
+export const EXPENSE_LEGACY_COLUMNS = 'id,project_id,category,detail,quantity,unit_price,price,item_date';
+export const EXPENSE_COLUMNS = 'id,project_id,category,detail,quantity,unit_price,price,item_date,is_voided';
 export const LOCATION_COLUMNS = 'id,name,zone,gate_info,parking_height_limit,dock_contact_phone,default_map_link,loading_dock_map_link,delivery_tips,is_active';
 export const SHOP_SETTINGS_LEGACY_COLUMNS = 'id,shop_name,phone,email,address,line_id,facebook,instagram,tiktok,twitter,wechat,telegram,logo_url,theme_color,theme_mode,custom_color_value,drive_folders,reference_folder_id,assets_folder_id,slips_folder_id,line_bot_token,telegram_bot_token,telegram_chat_id,project_categories,expense_categories,deal_statuses,transport_statuses,updated_at';
 export const SHOP_SETTINGS_COLUMNS = 'id,shop_name,phone,email,address,line_id,facebook,instagram,tiktok,twitter,wechat,telegram,logo_url,theme_color,theme_mode,custom_color_value,drive_folders,reference_folder_id,assets_folder_id,slips_folder_id,line_bot_token,telegram_bot_token,telegram_chat_id,project_categories,expense_categories,deal_statuses,transport_statuses,payment_statuses,updated_at';
-export const STAFF_COLUMNS = 'id,username,full_name,nickname,phone,email,citizen_id,birth_date,address,emergency_contact,role_id,is_active,profile_image_url,roles(id,name,label,code,allowed_pages)';
+export const STAFF_LEGACY_COLUMNS = 'id,username,full_name,nickname,phone,email,citizen_id,birth_date,address,emergency_contact,role_id,is_active,profile_image_url,roles(id,name,label,code,allowed_pages)';
+export const STAFF_COLUMNS = 'id,username,full_name,nickname,phone,email,citizen_id,birth_date,address,emergency_contact,role_id,is_active,banned_until,is_banned_permanent,ban_reason,profile_image_url,roles(id,name,label,code,allowed_pages)';
 export const ROLE_COLUMNS = 'id,name,code,label,description,allowed_pages,can_edit_pricing,can_delete_project,can_borrow_tools,can_manage_users,is_system_role';
 export const CUSTOMER_COLUMNS = 'id,name,phone,line_id,social_account,email,tax_id,billing_address,vip_tier,primary_artist_id,created_at';
 export const INVENTORY_COLUMNS = 'id,code,name,category_id,item_type,unit,current_stock,min_alert_threshold,average_cost,storage_location,color,size,status,is_active';
@@ -79,6 +82,45 @@ export const QUOTATION_DOC_COLUMNS = 'id,quote_no,title,client_name,project_code
 export const MATERIAL_RATE_COLUMNS = 'id,name,default_price_sqm,is_active,updated_at';
 export const ARTIST_COLUMNS = 'id,name,agency,fandom_name,fandom_color,birth_date,debut_date,bio,social_links,favorite_flowers,avatar_url,notes,created_at';
 
+export const DEFAULT_PERMISSION_MATRIX = {
+  admin: {
+    label: 'แอดมิน (Admin)',
+    code: '11',
+    allowed_pages: ['Calendar', 'Plans', 'Finance', 'Quotations', 'Inventory', 'Locations', 'Artists', 'Customers', 'Staff', 'Analytics', 'Settings'],
+    can_edit_pricing: true,
+    can_delete_project: true,
+    can_borrow_tools: true,
+    can_manage_users: true
+  },
+  technician: {
+    label: 'ช่างจัดดอกไม้ (Technician)',
+    code: '21',
+    allowed_pages: ['Calendar', 'Plans', 'Inventory', 'Locations', 'Artists'],
+    can_edit_pricing: false,
+    can_delete_project: false,
+    can_borrow_tools: true,
+    can_manage_users: false
+  },
+  driver: {
+    label: 'พนักงานจัดส่ง (Driver)',
+    code: '31',
+    allowed_pages: ['Calendar', 'Plans', 'Locations'],
+    can_edit_pricing: false,
+    can_delete_project: false,
+    can_borrow_tools: false,
+    can_manage_users: false
+  },
+  accountant: {
+    label: 'ฝ่ายบัญชี/การเงิน (Accountant)',
+    code: '41',
+    allowed_pages: ['Calendar', 'Plans', 'Finance', 'Quotations', 'Customers', 'Analytics'],
+    can_edit_pricing: true,
+    can_delete_project: false,
+    can_borrow_tools: false,
+    can_manage_users: false
+  }
+};
+
 export const DEFAULT_PAYMENT_STATUSES = [
   { value: 'unpaid', label: 'รอชำระเงิน (Unpaid)', color: 'bg-amber-50 text-amber-700 border-amber-200' },
   { value: 'deposit', label: 'ชำระมัดจำแล้ว (Partial / Deposit)', color: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -87,11 +129,11 @@ export const DEFAULT_PAYMENT_STATUSES = [
 ];
 
 export const DEFAULT_MATERIAL_RATES = [
-  { id: 'mat-fb-3mm', name: 'ฟิวเจอร์บอร์ด 3 มม. พิมพ์สติ๊กเกอร์', default_price_sqm: 350, is_active: true },
-  { id: 'mat-fb-5mm', name: 'ฟิวเจอร์บอร์ด 5 มม. พร้อมไดคัท', default_price_sqm: 450, is_active: true },
-  { id: 'mat-vinyl-hd', name: 'ป้ายไวนิลความละเอียดสูง', default_price_sqm: 180, is_active: true },
-  { id: 'mat-foamboard-5mm', name: 'โฟมบอร์ด 5 มม. เคลือบด้าน', default_price_sqm: 550, is_active: true },
-  { id: 'mat-plaswood-5mm', name: 'พลาสวูด 5 มม. แข็งพิเศษ + ไดคัท', default_price_sqm: 750, is_active: true }
+  { id: '00000000-0000-4000-8000-000000000101', name: 'ฟิวเจอร์บอร์ด 3 มม. พิมพ์สติ๊กเกอร์', default_price_sqm: 350, is_active: true },
+  { id: '00000000-0000-4000-8000-000000000102', name: 'ฟิวเจอร์บอร์ด 5 มม. พร้อมไดคัท', default_price_sqm: 450, is_active: true },
+  { id: '00000000-0000-4000-8000-000000000103', name: 'ป้ายไวนิลความละเอียดสูง', default_price_sqm: 180, is_active: true },
+  { id: '00000000-0000-4000-8000-000000000104', name: 'โฟมบอร์ด 5 มม. เคลือบด้าน', default_price_sqm: 550, is_active: true },
+  { id: '00000000-0000-4000-8000-000000000105', name: 'พลาสวูด 5 มม. แข็งพิเศษ + ไดคัท', default_price_sqm: 750, is_active: true }
 ];
 
 export const isMissingPaymentStatusesColumnError = (error) => {
@@ -107,7 +149,120 @@ export const isMissingPaymentStatusesColumnError = (error) => {
   );
 };
 
+export const isMissingIsVoidedColumnError = (error) => {
+  if (!error) return false;
+  const msg = `${error.message || ''} ${error.details || ''} ${error.hint || ''}`.toLowerCase();
+  if (error.code === '42703' || error.code === 'PGRST204') {
+    return !msg.trim() || msg.includes('is_voided');
+  }
+  return msg.includes('is_voided') && (
+    msg.includes('does not exist') ||
+    msg.includes('schema cache') ||
+    msg.includes('could not find')
+  );
+};
+
+export const isMissingStaffBanColumnError = (error) => {
+  if (!error) return false;
+  const msg = `${error.message || ''} ${error.details || ''} ${error.hint || ''}`.toLowerCase();
+  if (error.code === '42703' || error.code === 'PGRST204') {
+    return !msg.trim() || msg.includes('banned_until') || msg.includes('is_banned_permanent') || msg.includes('ban_reason');
+  }
+  return (msg.includes('banned_until') || msg.includes('is_banned_permanent') || msg.includes('ban_reason')) && (
+    msg.includes('does not exist') ||
+    msg.includes('schema cache') ||
+    msg.includes('could not find')
+  );
+};
+
 export const isValidUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
+
+function generateRandomUuid() {
+  if (typeof globalThis !== 'undefined' && typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  if (typeof globalThis !== 'undefined' && typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 16; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+export function sanitizeRemoteImageUrl(val) {
+  if (!val) return '';
+  const raw = typeof val === 'string' ? val : (typeof val === 'object' ? (val.url ?? val.src ?? '') : '');
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('data:') || lower.startsWith('blob:') || trimmed.length > 2048) {
+    return '';
+  }
+  return trimmed;
+}
+
+export async function allocateNextProjectCodeSync(localActivities = []) {
+  let localMax = 0;
+  if (Array.isArray(localActivities)) {
+    for (const item of localActivities) {
+      const rawId = typeof item === 'string' ? item : (item?.id ?? item?.code ?? '');
+      const m = String(rawId || '').trim().match(/^P-(\d+)$/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > localMax) localMax = n;
+      }
+    }
+  }
+
+  const client = getActiveClient();
+  if (client) {
+    try {
+      const { data: rpcData, error: rpcErr } = await client.rpc('allocate_next_project_code');
+      if (!rpcErr && rpcData !== null && rpcData !== undefined) {
+        if (typeof rpcData === 'number' && Number.isFinite(rpcData)) {
+          const nextRpcNum = Math.max(rpcData, localMax + 1);
+          return 'P-' + String(nextRpcNum).padStart(4, '0');
+        }
+        const rawCode = typeof rpcData === 'string' ? rpcData.trim() : String(rpcData?.code ?? rpcData?.project_code ?? rpcData?.id ?? '').trim();
+        const rpcMatch = rawCode.match(/^P-(\d+)$/);
+        if (rpcMatch) {
+          const rpcNum = parseInt(rpcMatch[1], 10);
+          const nextNum = Math.max(rpcNum, localMax + 1);
+          return 'P-' + String(nextNum).padStart(4, '0');
+        }
+      }
+    } catch (_) {}
+
+    let remoteMax = 0;
+    try {
+      let query = client.from('projects').select('id');
+      query = typeof query.like === 'function' ? query.like('id', 'P-%') : query.ilike('id', 'P-%');
+      const { data: rows, error: qErr } = await query.order('id', { ascending: false }).limit(25);
+      if (!qErr && Array.isArray(rows)) {
+        for (const r of rows) {
+          const m = String(r?.id || '').trim().match(/^P-(\d+)$/);
+          if (m) {
+            const n = parseInt(m[1], 10);
+            if (n > remoteMax) remoteMax = n;
+          }
+        }
+      }
+    } catch (_) {}
+
+    const next = Math.max(remoteMax, localMax) + 1;
+    return 'P-' + String(next).padStart(4, '0');
+  }
+
+  const next = localMax + 1;
+  return 'P-' + String(next).padStart(4, '0');
+}
+
+const isChildItemVoided = (item) => Boolean(item?.is_voided || item?.isVoided);
 
 // Helper แปลงแถวจาก Supabase เป็นโครงสร้าง Activity ที่หน้าบ้านใช้งาน
 export function transformSupabaseProjectToUi(row, childItems = {}, existing = {}) {
@@ -120,7 +275,8 @@ export function transformSupabaseProjectToUi(row, childItems = {}, existing = {}
     quantity: Number(q.quantity) || 1,
     unitPrice: Number(q.unit_price) || 0,
     price: Number(q.price) || 0,
-    date: q.item_date || ''
+    date: q.item_date || '',
+    is_voided: Boolean(q.is_voided)
   }));
 
   const customerSupport = (childItems.customerSupport || []).map(cs => ({
@@ -138,14 +294,28 @@ export function transformSupabaseProjectToUi(row, childItems = {}, existing = {}
     quantity: Number(ex.quantity) || 1,
     unitPrice: Number(ex.unit_price) || 0,
     price: Number(ex.price) || 0,
-    date: ex.item_date || ''
+    date: ex.item_date || '',
+    is_voided: Boolean(ex.is_voided)
   }));
 
-  const images = Array.isArray(row.images) && row.images.length > 0 
-    ? row.images 
+  const images = Array.isArray(row.images) && row.images.length > 0
+    ? row.images
     : (row.primary_image_url ? [row.primary_image_url] : []);
 
   const slips = Array.isArray(row.slips) ? row.slips : [];
+  const resolvedImages = row.images === undefined ? (existing.images || images) : images;
+  const resolvedImage = row.primary_image_url !== undefined
+    ? (row.primary_image_url || resolvedImages[0] || null)
+    : (row.images !== undefined ? (resolvedImages[0] || null) : (existing.image || resolvedImages[0] || null));
+
+  const existingUpdatedAt = existing?.updated_at ?? existing?.updatedAt ?? null;
+  const invalidateStaleChildren = Boolean(
+    childItems.quotationItems === undefined &&
+    existing &&
+    row.updated_at &&
+    existingUpdatedAt &&
+    existingUpdatedAt !== row.updated_at
+  );
 
   return {
     id: row.id,
@@ -164,8 +334,8 @@ export function transformSupabaseProjectToUi(row, childItems = {}, existing = {}
       address: row.customer_address === undefined ? (existing.customerInfo?.address || '') : (row.customer_address || '')
     },
     rawDateTime: (row.raw_delivery_start || row.project_datetime || '').substring(0, 16),
-    date: row.raw_delivery_start 
-      ? row.raw_delivery_start.substring(0, 10) 
+    date: row.raw_delivery_start
+      ? row.raw_delivery_start.substring(0, 10)
       : (row.delivery_date_display ? row.delivery_date_display.split(' ')[0] : ''),
     deliveryDate: row.delivery_date_display || '',
     rawDeliveryStart: row.raw_delivery_start || '',
@@ -187,12 +357,18 @@ export function transformSupabaseProjectToUi(row, childItems = {}, existing = {}
     location: row.location_name || '',
     locationId: row.location_id || null,
     mapLink: row.map_link || '',
-    image: row.primary_image_url || images[0] || null,
-    images: row.images === undefined ? (existing.images || images) : images,
+    image: resolvedImage,
+    images: resolvedImages,
     slips: row.slips === undefined ? (existing.slips || slips) : slips,
-    quotationItems: childItems.quotationItems === undefined ? (existing.quotationItems || quotationItems) : quotationItems,
-    customerSupport: childItems.customerSupport === undefined ? (existing.customerSupport || customerSupport) : customerSupport,
-    expenses: childItems.expenses === undefined ? (existing.expenses || expenses) : expenses,
+    quotationItems: childItems.quotationItems === undefined
+      ? (invalidateStaleChildren ? [] : (existing.quotationItems || quotationItems))
+      : quotationItems,
+    customerSupport: childItems.customerSupport === undefined
+      ? (invalidateStaleChildren ? [] : (existing.customerSupport || customerSupport))
+      : customerSupport,
+    expenses: childItems.expenses === undefined
+      ? (invalidateStaleChildren ? [] : (existing.expenses || expenses))
+      : expenses,
     version: row.version || 1,
     updated_at: row.updated_at
   };
@@ -200,16 +376,25 @@ export function transformSupabaseProjectToUi(row, childItems = {}, existing = {}
 
 // Helper แปลงข้อมูลจาก UI เข้า Supabase
 export function transformUiToSupabase(activityData) {
-  const wage = Number(activityData.wage) || 0;
+  const rawQuotationList = Array.isArray(activityData.quotationItems) ? activityData.quotationItems : [];
+  const hasMeaningfulQuotationItems = rawQuotationList.some(
+    (q) => isChildItemVoided(q) || (Number(q.price) || 0) > 0 || (Number(q.unitPrice ?? q.unit_price) || 0) > 0
+  );
+  const quotationTotal = rawQuotationList
+    .filter((q) => !isChildItemVoided(q))
+    .reduce((sum, q) => sum + (Number(q.price) || ((Number(q.unitPrice ?? q.unit_price) || 0) * (Number(q.quantity) || 1)) || 0), 0);
+
+  const wage = hasMeaningfulQuotationItems ? quotationTotal : (Number(activityData.wage) || 0);
   const deliveryFee = Number(activityData.deliveryFee) || 0;
   const depositAmount = Number(activityData.depositAmount) || 0;
   const totalRevenue = wage + deliveryFee;
 
   let totalExpenses = 0;
   if (Array.isArray(activityData.expenses) && activityData.expenses.length > 0) {
-    totalExpenses = activityData.expenses.reduce((sum, e) => sum + (Number(e.price) || ((Number(e.unitPrice) || 0) * (Number(e.quantity) || 1)) || 0), 0);
-  }
-  if (totalExpenses === 0 && (activityData.totalExpenses || activityData.total_expenses)) {
+    totalExpenses = activityData.expenses
+      .filter((e) => !isChildItemVoided(e))
+      .reduce((sum, e) => sum + (Number(e.price) || ((Number(e.unitPrice ?? e.unit_price) || 0) * (Number(e.quantity) || 1)) || 0), 0);
+  } else if (!Array.isArray(activityData.expenses) && (activityData.totalExpenses || activityData.total_expenses)) {
     totalExpenses = Number(activityData.totalExpenses || activityData.total_expenses) || 0;
   }
 
@@ -220,8 +405,7 @@ export function transformUiToSupabase(activityData) {
       const qty = Number(cs.quantity) || 0;
       return sum + (Number(cs.price) || (denom * qty));
     }, 0);
-  }
-  if (customerSupportTotal === 0 && (activityData.customerSupportTotal || activityData.customer_support_total)) {
+  } else if (!Array.isArray(activityData.customerSupport) && (activityData.customerSupportTotal || activityData.customer_support_total)) {
     customerSupportTotal = Number(activityData.customerSupportTotal || activityData.customer_support_total) || 0;
   }
 
@@ -236,8 +420,11 @@ export function transformUiToSupabase(activityData) {
     } catch (e) {}
   }
 
-  const images = Array.isArray(activityData.images) ? activityData.images : (activityData.image ? [activityData.image] : []);
-  const slips = Array.isArray(activityData.slips) ? activityData.slips : [];
+  const rawImages = Array.isArray(activityData.images) ? activityData.images : (activityData.image ? [activityData.image] : []);
+  const images = rawImages.map(sanitizeRemoteImageUrl).filter(Boolean);
+  const rawSlips = Array.isArray(activityData.slips) ? activityData.slips : [];
+  const slips = rawSlips.map(sanitizeRemoteImageUrl).filter(Boolean);
+  const primaryImageUrl = sanitizeRemoteImageUrl(activityData.primary_image_url ?? activityData.image ?? images[0]) || images[0] || null;
 
   const projectRow = {
     id: activityData.id,
@@ -272,39 +459,44 @@ export function transformUiToSupabase(activityData) {
     net_profit: netProfit,
     customer_support_total: customerSupportTotal,
     note: activityData.note || '',
-    primary_image_url: images[0] || null,
-    images: images,
-    slips: slips
+    primary_image_url: primaryImageUrl,
+    images,
+    slips
   };
 
-  const quotationItems = (activityData.quotationItems || []).map((q, idx) => ({
+  const quotationItems = rawQuotationList.map((q, idx) => ({
+    id: isValidUuid(q.id) ? q.id : generateRandomUuid(),
     project_id: activityData.id,
     category: q.category || 'รายการทั่วไป',
     detail: q.detail || '',
     quantity: Number(q.quantity) || 1,
-    unit_price: Number(q.unitPrice) || 0,
+    unit_price: Number(q.unitPrice ?? q.unit_price) || 0,
     price: Number(q.price) || 0,
-    item_date: q.date || null,
+    item_date: q.date || q.item_date || null,
+    is_voided: isChildItemVoided(q),
     sort_order: idx
   }));
 
   const customerSupport = (activityData.customerSupport || []).map((cs, idx) => ({
+    id: isValidUuid(cs.id) ? cs.id : generateRandomUuid(),
     project_id: activityData.id,
     denomination: Math.round(Number(cs.denomination)) || 0,
     quantity: Math.round(Number(cs.quantity)) || 0,
     price: Number(cs.price) || 0,
-    item_date: cs.date || null,
+    item_date: cs.date || cs.item_date || null,
     sort_order: idx
   }));
 
   const expenses = (activityData.expenses || []).map((ex, idx) => ({
+    id: isValidUuid(ex.id) ? ex.id : generateRandomUuid(),
     project_id: activityData.id,
     category: ex.category || 'ค่าใช้จ่ายทั่วไป',
     detail: ex.detail || '',
     quantity: Number(ex.quantity) || 1,
-    unit_price: Number(ex.unitPrice) || 0,
+    unit_price: Number(ex.unitPrice ?? ex.unit_price) || 0,
     price: Number(ex.price) || 0,
-    item_date: ex.date || null,
+    item_date: ex.date || ex.item_date || null,
+    is_voided: isChildItemVoided(ex),
     sort_order: idx
   }));
 
@@ -330,11 +522,23 @@ export function getMonthDateBounds(yearMonth) {
 
 async function fetchChildItemsForProjects(client, projects) {
   const projectIds = projects.map(p => p.id);
-  const [qRes, csRes, exRes] = await Promise.all([
+  let [qRes, csRes, exRes] = await Promise.all([
     client.from('project_quotation_items').select(QUOTATION_COLUMNS).in('project_id', projectIds),
     client.from('project_customer_support').select(SUPPORT_COLUMNS).in('project_id', projectIds),
     client.from('project_expenses').select(EXPENSE_COLUMNS).in('project_id', projectIds)
   ]);
+  if (isMissingIsVoidedColumnError(qRes.error) || isMissingIsVoidedColumnError(exRes.error)) {
+    const [qFallback, exFallback] = await Promise.all([
+      isMissingIsVoidedColumnError(qRes.error)
+        ? client.from('project_quotation_items').select(QUOTATION_LEGACY_COLUMNS).in('project_id', projectIds)
+        : Promise.resolve(qRes),
+      isMissingIsVoidedColumnError(exRes.error)
+        ? client.from('project_expenses').select(EXPENSE_LEGACY_COLUMNS).in('project_id', projectIds)
+        : Promise.resolve(exRes)
+    ]);
+    qRes = qFallback;
+    exRes = exFallback;
+  }
   for (const result of [qRes, csRes, exRes]) {
     if (result.error) throw result.error;
   }
@@ -364,14 +568,19 @@ async function cacheProjectRows(rows, childData, isCurrent = () => true) {
   });
 }
 
+export const PROJECT_LOAD_TTL_MS = 60000;
+const SUMMARY_STATS_TTL_MS = 5 * 60 * 1000;
 const inFlightProjectLoads = new Map();
 const recentProjectLoads = new Map();
+const recentlySavedProjectMap = new Map();
+let summaryStatsMemCache = { data: null, fetchedAt: 0 };
 let projectLoadEpoch = 0;
 
 export function resetProjectLoadCache() {
   projectLoadEpoch++;
   inFlightProjectLoads.clear();
   recentProjectLoads.clear();
+  summaryStatsMemCache = { data: null, fetchedAt: 0 };
 }
 
 export async function loadProjectsByMonth(yearMonth, onSyncUpdate, options = {}) {
@@ -433,7 +642,7 @@ export async function loadProjectsScoped({ mode = 'month', date = '', range = { 
       return await inFlight.promise;
     }
     const recent = recentProjectLoads.get(cacheKey);
-    if (recent && Date.now() - recent.fetchedAt < 3000) {
+    if (recent && Date.now() - recent.fetchedAt < PROJECT_LOAD_TTL_MS) {
       if (onSyncUpdate) onSyncUpdate(localScoped, recent.deletedIds);
       return localScoped;
     }
@@ -451,6 +660,9 @@ export async function loadProjectsScoped({ mode = 'month', date = '', range = { 
         let allProjects = [];
         let totalCount = null;
         let offset = 0;
+        let pageCount = 0;
+        let cappedByScopeLimit = false;
+        const maxPages = (mode === 'year' || mode === 'all') ? 2 : Infinity;
         let complete = false;
         while (!complete) {
           const batchSize = offset === 0 ? 50 : 500;
@@ -474,7 +686,15 @@ export async function loadProjectsScoped({ mode = 'month', date = '', range = { 
           allProjects = allProjects.concat(projects);
           publish(allProjects);
           offset += rows.length;
-          complete = totalCount !== null ? offset >= totalCount : rows.length < batchSize;
+          pageCount += 1;
+          const reachedEnd = totalCount !== null ? offset >= totalCount : rows.length < batchSize;
+          if (reachedEnd) {
+            complete = true;
+          } else if (pageCount >= maxPages) {
+            complete = false;
+            cappedByScopeLimit = true;
+            break;
+          }
         }
 
         const deletedIds = [];
@@ -490,8 +710,10 @@ export async function loadProjectsScoped({ mode = 'month', date = '', range = { 
           if (deletedIds.length) await db.projects.bulkDelete(deletedIds);
         }
         publish(allProjects, deletedIds);
-        // Failed or incomplete downloads must remain retryable, including empty scopes.
-        if (complete && session && isCurrent()) recentProjectLoads.set(cacheKey, { fetchedAt: Date.now(), deletedIds });
+        // Failed or incomplete downloads must remain retryable, including empty scopes (capped year/all scopes can still throttle without deleting un-fetched pages).
+        if ((complete || cappedByScopeLimit) && session && isCurrent()) {
+          recentProjectLoads.set(cacheKey, { fetchedAt: Date.now(), deletedIds });
+        }
         return allProjects;
       } catch (err) {
         console.error('Error loading project scope:', mode, date, err);
@@ -516,8 +738,9 @@ export async function loadProjectsLocalFirst(onSyncUpdate, options = {}) {
 export async function saveProjectSync(activityData) {
   const validated = validatePayload(projectPayloadSchema, activityData, 'Project');
   const client = getActiveClient();
+  const prevCached = await db.projects.get(validated.id).catch(() => null);
   const { projectRow, quotationItems, customerSupport, expenses } = transformUiToSupabase(validated);
-  const { error } = await client.rpc('save_project_with_items', {
+  const { data: rpcData, error } = await client.rpc('save_project_with_items', {
     p_project: projectRow,
     p_quotation_items: quotationItems,
     p_customer_support: customerSupport,
@@ -529,68 +752,157 @@ export async function saveProjectSync(activityData) {
     }
     throw error;
   }
+
+  const rpcUpdatedAt = typeof rpcData === 'string' ? rpcData : (rpcData?.updated_at || null);
+  const explicitUpdatedAt =
+    activityData?.updated_at && activityData.updated_at !== prevCached?.updated_at
+      ? activityData.updated_at
+      : null;
+  const expectedUpdatedAt = rpcUpdatedAt || explicitUpdatedAt || null;
+
+  const nowMs = Date.now();
+  for (const [k, v] of recentlySavedProjectMap.entries()) {
+    const ts = typeof v === 'number' ? v : v?.savedAt;
+    if (!ts || nowMs - ts > 10000) recentlySavedProjectMap.delete(k);
+  }
+  recentlySavedProjectMap.set(validated.id, { savedAt: nowMs, expectedUpdatedAt });
+
   resetProjectLoadCache();
-  await db.projects.put(validated);
+  const localRecord = {
+    ...validated,
+    wage: projectRow.wage,
+    totalRevenue: projectRow.total_revenue,
+    totalExpenses: projectRow.total_expenses,
+    netProfit: projectRow.net_profit,
+    customerSupportTotal: projectRow.customer_support_total,
+    quotationItems: (validated.quotationItems || []).map((q, idx) => ({
+      ...q,
+      id: quotationItems[idx]?.id || q.id,
+      is_voided: isChildItemVoided(q)
+    })),
+    customerSupport: (validated.customerSupport || []).map((cs, idx) => ({
+      ...cs,
+      id: customerSupport[idx]?.id || cs.id
+    })),
+    expenses: (validated.expenses || []).map((ex, idx) => ({
+      ...ex,
+      id: expenses[idx]?.id || ex.id,
+      is_voided: isChildItemVoided(ex)
+    }))
+  };
+  if (expectedUpdatedAt) {
+    localRecord.updated_at = expectedUpdatedAt;
+  } else {
+    delete localRecord.updated_at;
+  }
+  delete localRecord.updatedAt;
+
+  await db.projects.put(localRecord);
   return { success: true };
 }
 
-// 3. ลบโปรเจกต์
+// 3. ลบโปรเจกต์ (ลบจาก Supabase ก่อนเสมอ หากสำเร็จจึงบันทึกลง Tombstone และล้าง IndexedDB)
 export async function deleteProjectSync(id) {
+  if (!id) return { success: false };
   const client = getActiveClient();
-  resetProjectLoadCache();
-  // ก. ลบจาก IndexedDB ทันที
-  await db.projects.delete(id);
 
-  // ข. กระจายสัญญาณลบแบบ Real-Time ทั่วทุกแท็บและทุกอุปกรณ์ (Zero Stale IndexedDB)
-  broadcastRecordDeleted('projects', id);
-
-  // ค. บันทึกลง deleted_records บน Supabase เป็น Tombstone เพื่อให้อุปกรณ์อื่น (เช่น เครื่อง B) กวาดล้างตาม
-  try {
-    await client.from('deleted_records').insert({
-      record_id: id,
-      table_name: 'projects',
-      deleted_at: new Date().toISOString()
-    });
-  } catch (tombErr) {
-    console.warn('Tombstone insert notice:', tombErr?.message);
-  }
-
-  // ง. ลบจาก Supabase
-  try {
+  if (client) {
     const { error } = await client.from('projects').delete().eq('id', id);
-    if (error) throw error;
-    console.log(`✅ Deleted project ${id} from Supabase.`);
-    return { success: true };
-  } catch (err) {
-    console.error(`❌ Failed to delete project ${id} from Supabase:`, err);
-    throw err;
+    if (error) {
+      console.error(`❌ Failed to delete project ${id} from Supabase:`, error);
+      throw error;
+    }
+
+    try {
+      await client.from('deleted_records').insert({
+        record_id: id,
+        table_name: 'projects',
+        deleted_at: new Date().toISOString()
+      });
+    } catch (tombErr) {
+      console.warn('Tombstone insert notice:', tombErr?.message);
+    }
   }
+
+  resetProjectLoadCache();
+  await db.projects.delete(id);
+  broadcastRecordDeleted('projects', id);
+  return { success: true };
 }
 
 // 4. ระบบ Realtime Subscription (เมื่อหน้าจออื่นแก้ หน้าจอเราจะเด้งอัปเดตสดทันที!)
 export function subscribeToRealtimeProjects(onUpdate) {
   const client = getActiveClient();
+  if (!client) return () => {};
   const channel = client
     .channel('realtime-projects-channel')
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'projects' },
       async (payload) => {
-        console.log('⚡ Realtime Event from Supabase:', payload.eventType, payload.new?.id || payload.old?.id);
-
         try {
           if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
             resetProjectLoadCache();
             const row = payload.new;
-            const [qRes, csRes, exRes] = await Promise.all([
+            if (!row?.id) return;
+
+            const existing = await db.projects.get(row.id);
+            const recentEntry = recentlySavedProjectMap.get(row.id);
+            const savedAtMs = typeof recentEntry === 'number' ? recentEntry : recentEntry?.savedAt;
+            const expectedTs = typeof recentEntry === 'object' ? recentEntry?.expectedUpdatedAt : null;
+            const isOwnSelfEcho = Boolean(
+              savedAtMs &&
+              (Date.now() - savedAtMs < 3500) &&
+              (!expectedTs || !row.updated_at || expectedTs === row.updated_at)
+            );
+
+            if (isOwnSelfEcho) {
+              recentlySavedProjectMap.delete(row.id);
+              const selfItem = transformSupabaseProjectToUi(
+                row,
+                {},
+                existing ? { ...existing, updated_at: row.updated_at } : {}
+              );
+              await db.projects.put(selfItem);
+              const all = await db.projects.toArray();
+              if (onUpdate) onUpdate(all);
+              return;
+            }
+
+            const hadDetailedChildren = Boolean(
+              existing?.quotationItems?.length ||
+              existing?.expenses?.length ||
+              existing?.customerSupport?.length
+            );
+
+            if (!hadDetailedChildren) {
+              const summaryItem = transformSupabaseProjectToUi(row, {}, existing || {});
+              await db.projects.put(summaryItem);
+              const all = await db.projects.toArray();
+              if (onUpdate) onUpdate(all);
+              return;
+            }
+
+            let [qRes, csRes, exRes] = await Promise.all([
               client.from('project_quotation_items').select(QUOTATION_COLUMNS).eq('project_id', row.id),
               client.from('project_customer_support').select(SUPPORT_COLUMNS).eq('project_id', row.id),
               client.from('project_expenses').select(EXPENSE_COLUMNS).eq('project_id', row.id)
             ]);
+            if (isMissingIsVoidedColumnError(qRes.error) || isMissingIsVoidedColumnError(exRes.error)) {
+              const [qFallback, exFallback] = await Promise.all([
+                isMissingIsVoidedColumnError(qRes.error)
+                  ? client.from('project_quotation_items').select(QUOTATION_LEGACY_COLUMNS).eq('project_id', row.id)
+                  : Promise.resolve(qRes),
+                isMissingIsVoidedColumnError(exRes.error)
+                  ? client.from('project_expenses').select(EXPENSE_LEGACY_COLUMNS).eq('project_id', row.id)
+                  : Promise.resolve(exRes)
+              ]);
+              qRes = qFallback;
+              exRes = exFallback;
+            }
             for (const result of [qRes, csRes, exRes]) {
               if (result.error) throw result.error;
             }
-            const existing = await db.projects.get(row.id);
             const uiItem = transformSupabaseProjectToUi(row, {
               quotationItems: qRes.data || [],
               customerSupport: csRes.data || [],
@@ -665,29 +977,104 @@ export function subscribeToRealtimeSettings(onUpdate) {
   };
 }
 
+// Persistent singleton BroadcastChannel('flower2u_sync_channel') — NEVER close immediately after postMessage!
+let localSyncBroadcastChannel = null;
+const localSyncSubscribers = new Set();
+let localSyncEchoMarker = null;
+
+function getLocalSyncBroadcastChannel() {
+  if (localSyncBroadcastChannel) return localSyncBroadcastChannel;
+  if (typeof BroadcastChannel === 'undefined') return null;
+  try {
+    const ch = new BroadcastChannel('flower2u_sync_channel');
+    ch.onmessage = (event) => {
+      const msg = event?.data;
+      if (!msg) return;
+      if (localSyncEchoMarker) localSyncEchoMarker();
+      for (const listener of localSyncSubscribers) {
+        try { listener(msg); } catch (_) {}
+      }
+    };
+    localSyncBroadcastChannel = ch;
+    return ch;
+  } catch (_) {
+    return null;
+  }
+}
+
+function emitLocalSyncMessage(msg) {
+  if (!msg) return;
+  let echoedOnSameChannel = false;
+  localSyncEchoMarker = () => { echoedOnSameChannel = true; };
+  try {
+    const bc = getLocalSyncBroadcastChannel();
+    if (bc) {
+      bc.postMessage(msg);
+    }
+  } catch (_) {
+  } finally {
+    localSyncEchoMarker = null;
+  }
+
+  let dispatchedWindowEvent = false;
+  try {
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('f2u:local-sync', { detail: { __fromEmit: echoedOnSameChannel, payload: msg, ...msg } }));
+      dispatchedWindowEvent = true;
+    }
+  } catch (_) {}
+
+  if (!echoedOnSameChannel && !dispatchedWindowEvent) {
+    for (const listener of localSyncSubscribers) {
+      try { listener(msg); } catch (_) {}
+    }
+  }
+}
+
+export function subscribeToLocalSyncChannel(onMessage) {
+  if (typeof onMessage !== 'function') return () => {};
+  getLocalSyncBroadcastChannel();
+  localSyncSubscribers.add(onMessage);
+
+  const handleWindowSync = (event) => {
+    const detail = event?.detail;
+    if (!detail || detail.__fromEmit) return;
+    const cleanMsg = detail.payload || detail;
+    try { onMessage(cleanMsg); } catch (_) {}
+  };
+
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('f2u:local-sync', handleWindowSync);
+  }
+
+  return () => {
+    localSyncSubscribers.delete(onMessage);
+    if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('f2u:local-sync', handleWindowSync);
+    }
+  };
+}
+
 // 4.2 ระบบกระจายสัญญาณการลบข้อมูลข้ามแท็บและข้ามอุปกรณ์แบบ Real-Time (Zero-Egress & Zero-Stale IndexedDB)
 export function broadcastRecordDeleted(table, id) {
   if (!id || !table) return;
+  const msg = { type: 'RECORD_DELETED', table, id };
 
-  // 1. กระจายสัญญาณข้ามแท็บในเบราว์เซอร์เดียวกันผ่าน BroadcastChannel
-  try {
-    if (typeof BroadcastChannel !== 'undefined') {
-      const bc = new BroadcastChannel('flower2u_sync_channel');
-      bc.postMessage({ type: 'RECORD_DELETED', table, id });
-      bc.close();
-    }
-  } catch (e) {}
+  // 1. กระจายสัญญาณข้ามแท็บและหน้าต่างปัจจุบันผ่าน Persistent Singleton BroadcastChannel + CustomEvent
+  emitLocalSyncMessage(msg);
 
   // 2. กระจายสัญญาณข้ามอุปกรณ์ผ่าน Supabase Realtime Broadcast (ใช้ Egress ไม่กี่ไบต์)
   try {
     const client = getActiveClient();
     if (client) {
       const ch = client.channel('flower2u_global_sync');
-      ch.send({
-        type: 'broadcast',
-        event: 'RECORD_DELETED',
-        payload: { table, id }
-      }).catch(() => {});
+      if (typeof ch?.send === 'function') {
+        ch.send({
+          type: 'broadcast',
+          event: 'RECORD_DELETED',
+          payload: { table, id }
+        }).catch(() => {});
+      }
     }
   } catch (e) {}
 }
@@ -697,29 +1084,27 @@ export function broadcastPermissionsUpdated(permissions) {
   if (!permissions) return;
 
   // 1. แจ้งเตือนภายในหน้าต่างปัจจุบัน
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: permissions }));
-  }
-
-  // 2. กระจายสัญญาณข้ามแท็บในเบราว์เซอร์เดียวกัน
   try {
-    if (typeof BroadcastChannel !== 'undefined') {
-      const bc = new BroadcastChannel('flower2u_sync_channel');
-      bc.postMessage({ type: 'PERMISSIONS_UPDATED', permissions });
-      bc.close();
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: permissions }));
     }
-  } catch (e) {}
+  } catch (_) {}
+
+  // 2. กระจายสัญญาณข้ามแท็บผ่าน Persistent Singleton BroadcastChannel + CustomEvent
+  emitLocalSyncMessage({ type: 'PERMISSIONS_UPDATED', permissions });
 
   // 3. กระจายสัญญาณข้ามอุปกรณ์ผ่าน Supabase Realtime Broadcast
   try {
     const client = getActiveClient();
     if (client) {
       const ch = client.channel('flower2u_global_sync');
-      ch.send({
-        type: 'broadcast',
-        event: 'PERMISSIONS_UPDATED',
-        payload: { permissions }
-      }).catch(() => {});
+      if (typeof ch?.send === 'function') {
+        ch.send({
+          type: 'broadcast',
+          event: 'PERMISSIONS_UPDATED',
+          payload: { permissions }
+        }).catch(() => {});
+      }
     }
   } catch (e) {}
 }
@@ -736,7 +1121,7 @@ export function subscribeToRolesRealtime(onRolesUpdate) {
       { event: '*', schema: 'public', table: 'roles' },
       async () => {
         try {
-          const { data, error } = await client.from('roles').select('*');
+          const { data, error } = await client.from('roles').select(ROLE_COLUMNS);
           if (!error && Array.isArray(data) && data.length > 0) {
             const matrix = {};
             data.forEach(r => {
@@ -752,15 +1137,16 @@ export function subscribeToRolesRealtime(onRolesUpdate) {
                 is_system_role: !!r.is_system_role
               };
             });
+            const merged = { ...DEFAULT_PERMISSION_MATRIX, ...matrix };
             if (typeof window !== 'undefined') {
               try {
-                const prev = JSON.parse(localStorage.getItem('f2u_role_permissions') || '{}');
-                const merged = { ...prev, ...matrix };
                 localStorage.setItem('f2u_role_permissions', JSON.stringify(merged));
-                window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: merged }));
-                if (onRolesUpdate) onRolesUpdate(merged);
+                if (typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: merged }));
+                }
               } catch (e) {}
             }
+            if (onRolesUpdate) onRolesUpdate(merged);
           }
         } catch (err) {
           console.warn('Realtime roles fetch notice:', err);
@@ -775,7 +1161,9 @@ export function subscribeToRolesRealtime(onRolesUpdate) {
           if (typeof window !== 'undefined') {
             try {
               localStorage.setItem('f2u_role_permissions', JSON.stringify(payload.permissions));
-              window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: payload.permissions }));
+              if (typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('f2u_permissions_updated', { detail: payload.permissions }));
+              }
             } catch (e) {}
           }
           if (onRolesUpdate) onRolesUpdate(payload.permissions);
@@ -791,38 +1179,132 @@ export function subscribeToRolesRealtime(onRolesUpdate) {
   };
 }
 
+// 4.4b Multiplexed Realtime Channel สำหรับ Master Data ทั้ง 5 ตารางในช่องสัญญาณเดียว ('f2u-master-sync')
+export function subscribeToMasterDataRealtime({
+  onLocationsChange,
+  onArtistsChange,
+  onCustomersChange,
+  onQuotationsChange,
+  onMaterialRatesChange
+} = {}) {
+  const client = getActiveClient();
+  if (!client) return () => {};
+
+  const dispatchQuotationsSync = () => {
+    try {
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('f2u:quotations-sync'));
+      }
+    } catch (_) {}
+  };
+
+  const configs = [
+    { table: 'delivery_locations', store: 'delivery_locations', cb: onLocationsChange, notifyQuote: false },
+    { table: 'artists', store: 'artists', cb: onArtistsChange, notifyQuote: false },
+    { table: 'customers', store: 'customers', cb: onCustomersChange, notifyQuote: false },
+    { table: 'quotations', store: 'quotations', cb: onQuotationsChange, notifyQuote: true },
+    { table: 'material_rates', store: 'material_rates', cb: onMaterialRatesChange, notifyQuote: true }
+  ];
+
+  let channel = client.channel('f2u-master-sync');
+  for (const cfg of configs) {
+    channel = channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: cfg.table },
+      async (payload) => {
+        try {
+          const store = db[cfg.store];
+          if (!store) return;
+          if ((payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') && payload.new?.id) {
+            const cleanRow = cfg.table === 'artists' && payload.new.avatar_url !== undefined
+              ? { ...payload.new, avatar_url: sanitizeRemoteImageUrl(payload.new.avatar_url) }
+              : { ...payload.new };
+            await store.put(cleanRow);
+            const updatedRows = await store.toArray();
+            if (cfg.cb) cfg.cb(updatedRows);
+            if (cfg.notifyQuote) dispatchQuotationsSync();
+          } else if (payload.eventType === 'DELETE') {
+            const deletedId = payload.old?.id;
+            if (deletedId) {
+              await store.delete(deletedId);
+            }
+            const updatedRows = await store.toArray();
+            if (cfg.cb) cfg.cb(updatedRows);
+            if (cfg.notifyQuote) dispatchQuotationsSync();
+          }
+        } catch (err) {
+          console.warn(`Master realtime (${cfg.table}) notice:`, err);
+        }
+      }
+    );
+  }
+  channel.subscribe();
+
+  return () => {
+    client.removeChannel(channel);
+  };
+}
+
+const DEXIE_STORE_BY_TOMBSTONE_TABLE = {
+  projects: 'projects',
+  quotations: 'quotations',
+  material_rates: 'material_rates',
+  delivery_locations: 'delivery_locations',
+  artists: 'artists',
+  customers: 'customers',
+  staff_users: 'staff',
+  staff: 'staff',
+  inventory_items: 'inventory_items'
+};
+
 // 4.5 กวาดล้างข้อมูลที่ถูกลบออกจาก Supabase (Zero-Egress Tombstone Reconcile)
 export async function syncDeletedRecords(onProjectsDeleted) {
   const client = getActiveClient();
   if (!client) return [];
   try {
-    const syncMeta = await db.sync_meta.get('last_deleted_synced_at');
-    const lastDeletedSyncedAt = syncMeta ? syncMeta.value : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-
-    const { data: deleted, error } = await client
-      .from('deleted_records')
-      .select('record_id, table_name, deleted_at')
-      .gt('deleted_at', lastDeletedSyncedAt)
-      .order('deleted_at', { ascending: true })
-      .limit(1000);
+    const syncMeta = await db.sync_meta?.get?.('last_deleted_synced_at').catch(() => null);
+    let cursor = syncMeta ? syncMeta.value : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
     const deletedProjectIds = [];
-    if (!error && Array.isArray(deleted) && deleted.length > 0) {
+    let page = 0;
+
+    while (page < 10) {
+      page += 1;
+      const { data: deleted, error } = await client
+        .from('deleted_records')
+        .select('record_id, table_name, deleted_at')
+        .gt('deleted_at', cursor)
+        .order('deleted_at', { ascending: true })
+        .limit(1000);
+
+      if (error || !Array.isArray(deleted) || deleted.length === 0) break;
+
       for (const rec of deleted) {
         const tbl = rec.table_name;
         const id = rec.record_id;
+        if (!id) continue;
         if (tbl === 'projects') {
           deletedProjectIds.push(id);
-          await db.projects.delete(id).catch(() => {});
-        } else if (db[tbl]) {
-          await db[tbl].delete(id).catch(() => {});
+          await db.projects?.delete?.(id).catch(() => {});
+        } else {
+          const storeName = DEXIE_STORE_BY_TOMBSTONE_TABLE[tbl] || tbl;
+          if (db[storeName]?.delete) {
+            await db[storeName].delete(id).catch(() => {});
+          }
         }
       }
-      const newest = deleted[deleted.length - 1].deleted_at;
-      await db.sync_meta.put({ key: 'last_deleted_synced_at', value: newest });
-      console.log(`🧹 Purged ${deleted.length} remotely deleted records across tables.`);
 
-      if (deletedProjectIds.length > 0 && onProjectsDeleted) {
+      const newest = deleted[deleted.length - 1]?.deleted_at;
+      if (!newest || newest === cursor) break;
+      cursor = newest;
+      await db.sync_meta?.put?.({ key: 'last_deleted_synced_at', value: newest }).catch(() => {});
+
+      if (deleted.length < 1000) break;
+    }
+
+    if (deletedProjectIds.length > 0) {
+      resetProjectLoadCache();
+      if (onProjectsDeleted) {
         onProjectsDeleted(deletedProjectIds);
       }
     }
@@ -855,6 +1337,10 @@ export async function loadSettingsFromSupabase() {
 
     if (shopRes.error && isMissingPaymentStatusesColumnError(shopRes.error)) {
       shopRes = await client.from('shop_settings').select(SHOP_SETTINGS_LEGACY_COLUMNS).limit(1).maybeSingle();
+    }
+
+    if (staffRes.error && isMissingStaffBanColumnError(staffRes.error)) {
+      staffRes = await client.from('staff_users').select(STAFF_LEGACY_COLUMNS);
     }
 
     if (shopRes.error) {
@@ -1033,8 +1519,9 @@ export async function verifyStaffLogin(identifier, password) {
 export async function fetchPublicProjectByToken(token) {
   if (!token) return null;
   const client = getActiveClient();
+  if (!client) return null;
   try {
-    // 1. เรียกใช้งาน Server-Side RPC ดึงเฉพาะโปรเจกต์ที่ได้รับอนุญาตเท่านั้น (Zero-Egress & Zero-Leakage)
+    // เรียกใช้งาน Server-Side RPC ดึงเฉพาะโปรเจกต์ที่ได้รับอนุญาตเท่านั้น (Zero-Egress & Zero-Leakage)
     const { data, error } = await client.rpc('get_public_project_by_token', {
       p_token: token
     });
@@ -1043,73 +1530,8 @@ export async function fetchPublicProjectByToken(token) {
       return data;
     }
 
-    // 🛡️ หาก RPC แจ้งเตือนว่าบัญชีถูกระงับการใช้งาน
     if (data?.error === 'ACCOUNT_SUSPENDED') {
       return data;
-    }
-
-    // 2. Fallback ชั่วคราวกรณีที่แอดมินยังไม่ได้รัน SQL สร้าง RPC บน Supabase
-    if (error && (error.code === 'PGRST202' || error.message?.includes('not found') || error.status === 404)) {
-      console.warn('RPC get_public_project_by_token not found, fallback to direct query...');
-      const { data: projects } = await client
-        .from('projects')
-        .select(`
-          *,
-          project_quotation_items (*),
-          project_customer_support (*)
-        `)
-        .limit(350);
-
-      if (projects && projects.length > 0) {
-        const match = projects.find(p => {
-          const rawDt = (p.raw_delivery_start || p.project_datetime || '').substring(0, 16);
-          return generateTrackingToken(p.id, rawDt) === token || p.id === token;
-        });
-
-        if (match) {
-          return {
-            id: match.id,
-            name: match.name,
-            category: match.category,
-            artist: match.artist_name || '',
-            customer: match.customer_name || '',
-            customerPhone: match.customer_phone || '',
-            customerLine: match.customer_line || '',
-            recipient: match.recipient_name || '',
-            recipientPhone: match.recipient_phone || '',
-            location: match.location_name || '',
-            mapLink: match.map_link || '',
-            rawDateTime: (match.raw_delivery_start || match.project_datetime || '').substring(0, 16),
-            date: match.raw_delivery_start ? match.raw_delivery_start.substring(0, 10) : '',
-            deliveryDate: match.delivery_date_display || '',
-            dealStatus: match.deal_status || 'custom-1771415025673',
-            transportStatus: match.transport_status || 'custom-1771415278809',
-            paymentStatus: match.payment_status || 'unpaid',
-            wage: match.wage || 0,
-            deliveryFee: match.delivery_fee || 0,
-            depositAmount: match.deposit_amount || 0,
-            image: match.primary_image_url || '',
-            images: match.images || [],
-            note: match.note || '',
-            quotationItems: (match.project_quotation_items || []).map(q => ({
-              id: q.id,
-              category: q.category,
-              detail: q.detail,
-              price: q.price,
-              quantity: q.quantity,
-              unit: q.unit,
-              total: q.total
-            })),
-            customerSupport: (match.project_customer_support || []).map(s => ({
-              id: s.id,
-              itemType: s.item_type,
-              detail: s.detail,
-              price: s.price,
-              quantity: s.quantity
-            }))
-          };
-        }
-      }
     }
 
     return null;
@@ -1139,7 +1561,7 @@ export async function saveSettingsToSupabase(partialData) {
       if (s.twitter !== undefined) updatePayload.twitter = s.twitter;
       if (s.wechat !== undefined) updatePayload.wechat = s.wechat;
       if (s.telegram !== undefined) updatePayload.telegram = s.telegram;
-      if (s.logo !== undefined) updatePayload.logo_url = s.logo;
+      if (s.logo !== undefined) updatePayload.logo_url = sanitizeRemoteImageUrl(s.logo);
       if (s.themeColor !== undefined) updatePayload.theme_color = s.themeColor;
       if (s.themeMode !== undefined) updatePayload.theme_mode = s.themeMode;
       if (s.customColorValue !== undefined) updatePayload.custom_color_value = s.customColorValue;
@@ -1201,7 +1623,7 @@ export async function saveSettingsToSupabase(partialData) {
         const staffPayload = {
           full_name: cred.name || cred.username,
           phone: cred.phone || '',
-          profile_image_url: cred.image || ''
+          profile_image_url: sanitizeRemoteImageUrl(cred.image)
         };
         try {
           await client.from('staff_users').update(staffPayload).ilike('username', cred.username);
@@ -1258,14 +1680,15 @@ export async function saveLocationSync(locationData) {
   const client = getActiveClient();
   try {
     const payload = { ...validated };
-    if (payload.id && !isValidUuid(payload.id)) {
+    const hasUuid = Boolean(payload.id && isValidUuid(payload.id));
+    if (!hasUuid) {
       delete payload.id;
     }
 
     const { data, error } = await client
       .from('delivery_locations')
-      .upsert(payload, { onConflict: 'name' })
-      .select()
+      .upsert(payload, { onConflict: hasUuid ? 'id' : 'name' })
+      .select(LOCATION_COLUMNS)
       .single();
 
     if (error) throw error;
@@ -1281,9 +1704,17 @@ export async function saveLocationSync(locationData) {
 
 export async function deleteLocationSync(locationId) {
   const client = getActiveClient();
-  try {
-    await client.from('delivery_locations').delete().eq('id', locationId);
-  } catch (cErr) {}
+  if (client && isValidUuid(locationId)) {
+    const { error } = await client.from('delivery_locations').delete().eq('id', locationId);
+    if (error) throw error;
+    try {
+      await client.from('deleted_records').insert({
+        record_id: locationId,
+        table_name: 'delivery_locations',
+        deleted_at: new Date().toISOString()
+      });
+    } catch (_) {}
+  }
   await db.delivery_locations.delete(locationId);
   broadcastRecordDeleted('delivery_locations', locationId);
   return true;
@@ -1291,44 +1722,179 @@ export async function deleteLocationSync(locationId) {
 
 // 9. คำนวณผลสรุปการเงินบน Supabase Server (Zero-Egress Server Pushdown Aggregation)
 // ส่งเฉพาะผลสรุปสุดท้ายขนาด ~1.5 KB กลับมา ไม่โหลดโปรเจกต์รายบรรทัด
+function normalizeServerAnalyticsResponse(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  if (!raw.totals && !raw.status_counts && !raw.low_margin) return raw;
+
+  const t = raw.totals || {};
+  const totalProjects = Number(t.total_projects ?? t.total_orders ?? t.project_count ?? 0);
+  const revenue = Number(t.revenue ?? t.total_revenue ?? 0);
+  const support = Number(t.support ?? t.total_customer_support ?? t.total_support ?? 0);
+  const cost = Number(t.cost ?? t.total_expenses ?? 0);
+  const profit = Number(t.profit ?? t.total_net_profit ?? t.net_profit ?? (revenue - cost));
+  const avgOrderValue = Number(t.avg_order_value ?? (totalProjects > 0 ? Math.round(revenue / totalProjects) : 0));
+  const avgSupportValue = Number(t.avg_support_value ?? (totalProjects > 0 ? Math.round(support / totalProjects) : 0));
+  const netMarginNum = Number(
+    t.net_margin_pct ?? t.net_margin_percent ?? (revenue > 0 ? ((profit / revenue) * 100).toFixed(1) : 0)
+  );
+
+  const sc = raw.status_counts || {};
+  const cancelledCount = Number(sc.cancelled ?? sc.issue ?? 0);
+
+  return {
+    ...raw,
+    totals: {
+      ...t,
+      total_projects: totalProjects,
+      total_orders: totalProjects,
+      revenue,
+      total_revenue: revenue,
+      support,
+      total_customer_support: support,
+      cost,
+      total_expenses: cost,
+      profit,
+      total_net_profit: profit,
+      avg_order_value: avgOrderValue,
+      avg_support_value: avgSupportValue,
+      net_margin_pct: netMarginNum,
+      net_margin_percent: t.net_margin_percent ?? netMarginNum.toFixed(1)
+    },
+    status_counts: {
+      total: Number(sc.total ?? totalProjects),
+      completed: Number(sc.completed ?? 0),
+      active: Number(sc.active ?? 0),
+      pending: Number(sc.pending ?? 0),
+      cancelled: cancelledCount,
+      issue: Number(sc.issue ?? cancelledCount),
+      declined: Number(sc.declined ?? 0)
+    },
+    top_customers_by_projects: Array.isArray(raw.top_customers_by_projects) ? raw.top_customers_by_projects : [],
+    low_margin: Array.isArray(raw.low_margin)
+      ? raw.low_margin.map((item) => {
+          const rev = Number(item.revenue ?? 0);
+          const itemCost = Number(item.cost ?? 0);
+          const marginVal = Number(
+            item.marginPct ?? item.margin_pct ?? (rev > 0 ? (((rev - itemCost) / rev) * 100).toFixed(1) : 0)
+          );
+          return {
+            ...item,
+            revenue: rev,
+            cost: itemCost,
+            profit: Number(item.profit ?? (rev - itemCost)),
+            marginPct: marginVal,
+            margin_pct: marginVal
+          };
+        })
+      : []
+  };
+}
+
 export async function fetchServerAnalytics(filters = {}) {
   const client = getActiveClient();
-  let startDate = filters.startDate || null;
-  let endDate = filters.endDate || null;
+  if (!client) return null;
 
-  if (!startDate && !endDate) {
-    if (filters.mode === 'month' && filters.date) {
-      const bounds = getMonthDateBounds(filters.date);
-      startDate = bounds.start ? bounds.start.split('T')[0] : null;
-      endDate = bounds.end ? bounds.end.split('T')[0] : null;
-    } else if (filters.mode === 'date' && filters.date) {
-      startDate = filters.date;
-      endDate = filters.date;
-    } else if (filters.mode === 'range' && filters.range?.start && filters.range?.end) {
-      startDate = filters.range.start;
-      endDate = filters.range.end;
+  let p_start_date = null;
+  let p_end_date = null;
+
+  if (filters.startDate || filters.endDate) {
+    if (filters.startDate) {
+      const s = String(filters.startDate);
+      p_start_date = s.includes('T') ? s : `${s}T00:00:00+07:00`;
     }
+    if (filters.endDate) {
+      const e = String(filters.endDate);
+      p_end_date = e.includes('T') ? e : `${e}T23:59:59+07:00`;
+    }
+  } else if (filters.mode === 'all') {
+    p_start_date = null;
+    p_end_date = null;
+  } else if (filters.mode === 'year' && filters.date) {
+    const year = String(filters.date).slice(0, 4);
+    p_start_date = `${year}-01-01T00:00:00+07:00`;
+    p_end_date = `${year}-12-31T23:59:59+07:00`;
+  } else if (filters.mode === 'month' && filters.date) {
+    const bounds = getMonthDateBounds(filters.date);
+    p_start_date = bounds.start ? `${bounds.start}+07:00` : null;
+    p_end_date = bounds.end ? `${bounds.end}+07:00` : null;
+  } else if (filters.mode === 'week' && filters.date) {
+    const monday = new Date(filters.date + 'T00:00:00');
+    const day = monday.getDay();
+    monday.setDate(monday.getDate() - (day === 0 ? 6 : day - 1));
+    const sunday = new Date(monday);
+    sunday.setDate(sunday.getDate() + 6);
+    const dayString = (d) =>
+      d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    p_start_date = `${dayString(monday)}T00:00:00+07:00`;
+    p_end_date = `${dayString(sunday)}T23:59:59+07:00`;
+  } else if (filters.mode === 'date' && filters.date) {
+    p_start_date = `${filters.date}T00:00:00+07:00`;
+    p_end_date = `${filters.date}T23:59:59+07:00`;
+  } else if (filters.mode === 'range') {
+    p_start_date = filters.range?.start ? `${filters.range.start}T00:00:00+07:00` : null;
+    p_end_date = filters.range?.end ? `${filters.range.end}T23:59:59+07:00` : null;
   }
 
-  const rpcParams = {
-    p_start_date: startDate ? `${startDate}T00:00:00Z` : null,
-    p_end_date: endDate ? `${endDate}T23:59:59Z` : null,
-    p_category: filters.category && filters.category !== 'all' ? filters.category : null,
-    p_deal_status: filters.dealStatus && filters.dealStatus !== 'all' ? filters.dealStatus : null
+  const p_category = filters.category && filters.category !== 'all' ? filters.category : null;
+  const dealVal = filters.dealStatus ?? filters.status ?? null;
+  const p_deal_status = dealVal && dealVal !== 'all' ? dealVal : null;
+  const transportVal = filters.transportStatus ?? filters.transport ?? null;
+  const p_transport_status = transportVal && transportVal !== 'all' ? transportVal : null;
+  const searchStr = typeof filters.search === 'string' ? filters.search.trim() : '';
+  const p_search = searchStr !== '' ? searchStr : null;
+
+  const rpcParams6 = {
+    p_start_date,
+    p_end_date,
+    p_category,
+    p_deal_status,
+    p_transport_status,
+    p_search
   };
 
+  const rpcParams4 = {
+    p_start_date,
+    p_end_date,
+    p_category,
+    p_deal_status
+  };
+
+  const isSignatureMissing = (err) =>
+    Boolean(
+      err &&
+        (err.code === 'PGRST202' ||
+          err.code === '42883' ||
+          /could not find the function|schema cache/i.test(`${err.message || ''} ${err.details || ''} ${err.hint || ''}`))
+    );
+
   try {
-    const { data, error } = await client.rpc('get_complete_analytics', rpcParams);
-    if (!error && data) return data;
+    const { data, error } = await client.rpc('get_complete_analytics', rpcParams6);
+    if (!error && data) return normalizeServerAnalyticsResponse(data);
+    if (error && !isSignatureMissing(error)) {
+      console.warn('get_complete_analytics 6-arg notice:', error);
+      return null;
+    }
   } catch (err) {
-    console.warn('get_complete_analytics notice, trying fallback RPC:', err);
+    console.warn('get_complete_analytics 6-arg notice, trying 4-arg fallback:', err);
   }
 
-  // Fallback to get_financial_analytics with date range pushdown
+  // Fallback 1: Legacy 4-arg get_complete_analytics when 6-arg SQL has not been deployed yet
   try {
-    const { data, error } = await client.rpc('get_financial_analytics', rpcParams);
+    const { data, error } = await client.rpc('get_complete_analytics', rpcParams4);
+    if (!error && data) return normalizeServerAnalyticsResponse(data);
+    if (error && !isSignatureMissing(error)) {
+      console.warn('get_complete_analytics 4-arg notice:', error);
+      return null;
+    }
+  } catch (err4) {
+    console.warn('get_complete_analytics 4-arg notice, trying get_financial_analytics:', err4);
+  }
+
+  // Fallback 2: get_financial_analytics with date range pushdown
+  try {
+    const { data, error } = await client.rpc('get_financial_analytics', rpcParams4);
     if (!error && data) {
-      return {
+      return normalizeServerAnalyticsResponse({
         totals: {
           total_revenue: data.total_revenue || 0,
           total_customer_support: data.total_customer_support || 0,
@@ -1344,6 +1910,7 @@ export async function fetchServerAnalytics(filters = {}) {
           completed: data.paid_orders_count || 0,
           active: data.unpaid_orders_count || 0,
           pending: 0,
+          cancelled: 0,
           issue: 0,
           declined: 0
         },
@@ -1352,9 +1919,10 @@ export async function fetchServerAnalytics(filters = {}) {
         categories: [],
         top_artists: [],
         top_customers: [],
+        top_customers_by_projects: [],
         top_venues: [],
         low_margin: []
-      };
+      });
     }
   } catch (fallbackErr) {
     console.error('All analytics RPC failed:', fallbackErr);
@@ -1375,30 +1943,7 @@ export async function loadProjectsPaginated({ start = 0, limit = 20, append = tr
     if (error) throw error;
     if (!projects || projects.length === 0) return { items: [], hasMore: false };
 
-    const projectIds = projects.map(p => p.id);
-    const [qRes, csRes, exRes] = await Promise.all([
-      client.from('project_quotation_items').select(QUOTATION_COLUMNS).in('project_id', projectIds),
-      client.from('project_customer_support').select(SUPPORT_COLUMNS).in('project_id', projectIds),
-      client.from('project_expenses').select(EXPENSE_COLUMNS).in('project_id', projectIds)
-    ]);
-
-    const qMap = new Map();
-    (qRes.data || []).forEach(item => {
-      if (!qMap.has(item.project_id)) qMap.set(item.project_id, []);
-      qMap.get(item.project_id).push(item);
-    });
-
-    const csMap = new Map();
-    (csRes.data || []).forEach(item => {
-      if (!csMap.has(item.project_id)) csMap.set(item.project_id, []);
-      csMap.get(item.project_id).push(item);
-    });
-
-    const exMap = new Map();
-    (exRes.data || []).forEach(item => {
-      if (!exMap.has(item.project_id)) exMap.set(item.project_id, []);
-      exMap.get(item.project_id).push(item);
-    });
+    const { qMap, csMap, exMap } = await fetchChildItemsForProjects(client, projects);
 
     const transformed = projects.map(p => transformSupabaseProjectToUi(p, {
       quotationItems: qMap.get(p.id) || [],
@@ -1426,15 +1971,53 @@ export async function fetchProjectDetailOnDemand(projectId) {
   if (!projectId) return null;
   const client = getActiveClient();
   try {
-    const [detailRes, qRes, csRes, exRes] = await Promise.all([
+    const existing = (await db.projects.get(projectId)) || null;
+
+    // กรณีโปรเจกต์ยังไม่อยู่ใน IndexedDB (เช่น กดจาก Low Margin Radar ในหน้า Analytics โหมด Server-Side)
+    // ให้ดึงคอลัมน์หลัก + คอลัมน์รายละเอียด + ตารางลูกของโปรเจกต์เดียวนี้ แล้วแปลงและแคชลง IndexedDB ทันที
+    if (!existing?.id) {
+      const fullColumns = [...new Set([...PROJECT_LIST_COLUMNS.split(','), ...PROJECT_DETAIL_COLUMNS.split(',')])].join(',');
+      const { data: projData, error: projErr } = await client
+        .from('projects')
+        .select(fullColumns)
+        .eq('id', projectId)
+        .maybeSingle();
+
+      if (projErr) throw projErr;
+      if (!projData) return null;
+
+      const childData = await fetchChildItemsForProjects(client, [projData]);
+      const fullProject = transformSupabaseProjectToUi(projData, {
+        quotationItems: childData.qMap.get(projData.id) || [],
+        customerSupport: childData.csMap.get(projData.id) || [],
+        expenses: childData.exMap.get(projData.id) || []
+      });
+      await db.projects.put(fullProject);
+      return fullProject;
+    }
+
+    let [detailRes, qRes, csRes, exRes] = await Promise.all([
       client.from('projects').select(PROJECT_DETAIL_COLUMNS).eq('id', projectId).maybeSingle(),
       client.from('project_quotation_items').select(QUOTATION_COLUMNS).eq('project_id', projectId),
       client.from('project_customer_support').select(SUPPORT_COLUMNS).eq('project_id', projectId),
       client.from('project_expenses').select(EXPENSE_COLUMNS).eq('project_id', projectId)
     ]);
 
+    if (isMissingIsVoidedColumnError(qRes.error) || isMissingIsVoidedColumnError(exRes.error)) {
+      const [qFallback, exFallback] = await Promise.all([
+        isMissingIsVoidedColumnError(qRes.error)
+          ? client.from('project_quotation_items').select(QUOTATION_LEGACY_COLUMNS).eq('project_id', projectId)
+          : Promise.resolve(qRes),
+        isMissingIsVoidedColumnError(exRes.error)
+          ? client.from('project_expenses').select(EXPENSE_LEGACY_COLUMNS).eq('project_id', projectId)
+          : Promise.resolve(exRes)
+      ]);
+      qRes = qFallback;
+      exRes = exFallback;
+    }
+
     const data = detailRes.data || {};
-    const existing = (await db.projects.get(projectId)) || {};
+    const hasDetailRow = !detailRes.error && Boolean(detailRes.data);
 
     const qItems = (qRes.data || []).map(q => ({
       id: q.id,
@@ -1443,7 +2026,8 @@ export async function fetchProjectDetailOnDemand(projectId) {
       quantity: Number(q.quantity) || 1,
       unitPrice: Number(q.unit_price) || 0,
       price: Number(q.price) || 0,
-      date: q.item_date || ''
+      date: q.item_date || '',
+      is_voided: Boolean(q.is_voided)
     }));
 
     const csItems = (csRes.data || []).map(cs => ({
@@ -1461,24 +2045,43 @@ export async function fetchProjectDetailOnDemand(projectId) {
       quantity: Number(ex.quantity) || 1,
       unitPrice: Number(ex.unit_price) || 0,
       price: Number(ex.price) || 0,
-      date: ex.item_date || ''
+      date: ex.item_date || '',
+      is_voided: Boolean(ex.is_voided)
     }));
+
+    const nextImages = !detailRes.error && Array.isArray(data.images)
+      ? data.images
+      : (existing?.images || []);
+    const nextSlips = !detailRes.error && Array.isArray(data.slips)
+      ? data.slips
+      : (existing?.slips || []);
+    const nextImage = hasDetailRow && (data.primary_image_url !== undefined || Array.isArray(data.images))
+      ? (data.primary_image_url || nextImages[0] || null)
+      : (existing?.image || nextImages[0] || null);
+
+    const resolveCustomerField = (remoteVal, existingVal) => {
+      if (!hasDetailRow || remoteVal === undefined) return existingVal ?? '';
+      return remoteVal ?? '';
+    };
 
     const merged = {
       ...existing,
-      images: Array.isArray(data.images) && data.images.length > 0 ? data.images : (existing.images || []),
-      slips: Array.isArray(data.slips) && data.slips.length > 0 ? data.slips : (existing.slips || []),
+      image: nextImage,
+      images: nextImages,
+      slips: nextSlips,
       customerInfo: {
-        ...(existing.customerInfo || {}),
-        address: data.customer_address || existing.customerInfo?.address || '',
-        email: data.customer_email || existing.customerInfo?.email || '',
-        line: data.customer_line || existing.customerInfo?.line || '',
-        social: data.customer_social || existing.customerInfo?.social || '',
-        taxId: data.customer_tax_id || existing.customerInfo?.taxId || ''
+        ...(existing?.customerInfo || {}),
+        phone: resolveCustomerField(data.customer_phone, existing?.customerInfo?.phone),
+        address: resolveCustomerField(data.customer_address, existing?.customerInfo?.address),
+        email: resolveCustomerField(data.customer_email, existing?.customerInfo?.email),
+        line: resolveCustomerField(data.customer_line, existing?.customerInfo?.line),
+        social: resolveCustomerField(data.customer_social, existing?.customerInfo?.social),
+        taxId: resolveCustomerField(data.customer_tax_id, existing?.customerInfo?.taxId)
       },
-      quotationItems: qItems.length > 0 ? qItems : (existing.quotationItems || []),
-      customerSupport: csItems.length > 0 ? csItems : (existing.customerSupport || []),
-      expenses: exItems.length > 0 ? exItems : (existing.expenses || [])
+      quotationItems: !qRes.error ? qItems : (existing?.quotationItems || []),
+      customerSupport: !csRes.error ? csItems : (existing?.customerSupport || []),
+      expenses: !exRes.error ? exItems : (existing?.expenses || []),
+      ...(hasDetailRow && data.updated_at ? { updated_at: data.updated_at } : {})
     };
 
     await db.projects.put(merged);
@@ -1527,17 +2130,17 @@ export async function fetchLatest30ProjectsFromSupabase() {
   try {
     const { data, error } = await client
       .from('projects')
-      .select('id, name, customer, artist, delivery_date')
+      .select('id, name, customer_name, artist_name, delivery_date_display')
       .order('id', { ascending: false })
       .limit(30);
 
     if (error) throw error;
     return (data || []).map(p => ({
       id: p.id,
-      name: p.name,
-      customer: p.customer,
-      artist: p.artist,
-      deliveryDate: p.delivery_date
+      name: p.name || '',
+      customer: p.customer_name || '',
+      artist: p.artist_name || '',
+      deliveryDate: p.delivery_date_display || ''
     }));
   } catch (err) {
     console.warn('Direct fetch 30 projects notice (using local cache):', err);
@@ -1577,9 +2180,17 @@ export async function loadCustomersLocalFirst(onUpdate) {
 
 export async function deleteCustomerSync(customerId) {
   const client = getActiveClient();
-  try {
-    await client.from('customers').delete().eq('id', customerId);
-  } catch (cErr) {}
+  if (client && isValidUuid(customerId)) {
+    const { error } = await client.from('customers').delete().eq('id', customerId);
+    if (error) throw error;
+    try {
+      await client.from('deleted_records').insert({
+        record_id: customerId,
+        table_name: 'customers',
+        deleted_at: new Date().toISOString()
+      });
+    } catch (_) {}
+  }
   await db.customers.delete(customerId);
   broadcastRecordDeleted('customers', customerId);
   return true;
@@ -1690,7 +2301,7 @@ export async function saveInventoryItemSync(itemData) {
       payload.id = validated.id;
       delete payload.current_stock;
     } else {
-      payload.id = crypto?.randomUUID ? crypto.randomUUID() : `itm-${Date.now()}`;
+      payload.id = generateRandomUuid();
     }
 
     if (validated.code) {
@@ -1997,26 +2608,65 @@ export async function returnAssetLoanSync() {
 // 15. ราคากลางวัสดุ ตร.ม. (Material Rates) - Local-First + Zero-Egress Sync
 export async function loadMaterialRatesLocalFirst(onUpdate) {
   try {
-    let cached = await db.material_rates.toArray();
-    // Seed default rates if empty
-    if (!cached || cached.length === 0) {
-      await db.material_rates.bulkPut(DEFAULT_MATERIAL_RATES);
-      cached = DEFAULT_MATERIAL_RATES;
+    const rawCached = await db.material_rates.toArray();
+    const legacyMatRows = rawCached.filter((r) => !r?.id || String(r.id).startsWith('mat-'));
+    if (legacyMatRows.length > 0) {
+      for (const leg of legacyMatRows) {
+        if (leg?.id) await db.material_rates.delete(leg.id).catch(() => {});
+      }
     }
-    if (cached.length > 0 && onUpdate) {
+
+    let cached = rawCached.filter((r) => r?.id && !String(r.id).startsWith('mat-'));
+    const hadValidCached = cached.length > 0;
+    const initMeta = await db.sync_meta?.get?.('material_rates_initialized').catch(() => null);
+    const wasInitialized = Boolean(initMeta?.value || rawCached.length > 0);
+
+    if (hadValidCached && onUpdate) {
       onUpdate(cached);
     }
 
     const client = getActiveClient();
+    if (!client) {
+      if (!hadValidCached && !wasInitialized) {
+        await db.material_rates.bulkPut(DEFAULT_MATERIAL_RATES);
+        await db.sync_meta?.put?.({ key: 'material_rates_initialized', value: true }).catch(() => {});
+        if (onUpdate) onUpdate(DEFAULT_MATERIAL_RATES);
+        return DEFAULT_MATERIAL_RATES;
+      }
+      if (!hadValidCached && onUpdate) onUpdate([]);
+      return cached;
+    }
+
     const { data: cloudRates, error } = await client
       .from('material_rates')
       .select(MATERIAL_RATE_COLUMNS)
       .order('name');
 
-    if (!error && Array.isArray(cloudRates) && cloudRates.length > 0) {
-      await db.material_rates.bulkPut(cloudRates);
-      if (onUpdate) onUpdate(cloudRates);
-      return cloudRates;
+    if (!error && Array.isArray(cloudRates)) {
+      await db.material_rates.clear();
+      if (cloudRates.length > 0) {
+        await db.material_rates.bulkPut(cloudRates);
+        await db.sync_meta?.put?.({ key: 'material_rates_initialized', value: true }).catch(() => {});
+        if (onUpdate) onUpdate(cloudRates);
+        return cloudRates;
+      }
+
+      if (!wasInitialized) {
+        await db.material_rates.bulkPut(DEFAULT_MATERIAL_RATES);
+        await db.sync_meta?.put?.({ key: 'material_rates_initialized', value: true }).catch(() => {});
+        if (onUpdate) onUpdate(DEFAULT_MATERIAL_RATES);
+        return DEFAULT_MATERIAL_RATES;
+      }
+
+      if (onUpdate) onUpdate([]);
+      return [];
+    }
+
+    if (!hadValidCached && !wasInitialized) {
+      await db.material_rates.bulkPut(DEFAULT_MATERIAL_RATES);
+      await db.sync_meta?.put?.({ key: 'material_rates_initialized', value: true }).catch(() => {});
+      if (onUpdate) onUpdate(DEFAULT_MATERIAL_RATES);
+      return DEFAULT_MATERIAL_RATES;
     }
 
     return cached;
@@ -2029,39 +2679,60 @@ export async function loadMaterialRatesLocalFirst(onUpdate) {
 export async function saveMaterialRateSync(rateData) {
   const client = getActiveClient();
   try {
+    const rawId = rateData?.id ? String(rateData.id) : '';
+    const oldTempId = rawId && !isValidUuid(rawId) ? rawId : null;
+    const resolvedId = rawId && isValidUuid(rawId) ? rawId : generateRandomUuid();
+
     const payload = {
-      name: rateData.name,
-      default_price_sqm: Number(rateData.default_price_sqm) || 0,
-      is_active: rateData.is_active !== undefined ? rateData.is_active : true,
+      id: resolvedId,
+      name: String(rateData?.name || '').trim(),
+      default_price_sqm: Number(rateData?.default_price_sqm) || 0,
+      is_active: rateData?.is_active !== undefined ? Boolean(rateData.is_active) : true,
       updated_at: new Date().toISOString()
     };
-    if (rateData.id) {
-      payload.id = rateData.id;
-    } else {
-      payload.id = `mat-${Date.now()}`;
-    }
 
-    // Try cloud sync first if available
-    try {
+    if (client) {
       const { data, error } = await client
         .from('material_rates')
-        .upsert(payload)
+        .upsert(payload, { onConflict: 'id' })
         .select(MATERIAL_RATE_COLUMNS)
         .single();
-      if (!error && data) {
-        await db.material_rates.put(data);
-        return data;
+      if (error) throw error;
+      const saved = data || payload;
+      if (oldTempId && oldTempId !== saved.id) {
+        await db.material_rates.delete(oldTempId).catch(() => {});
       }
-    } catch (cErr) {
-      // Gracefully fall back to local IndexedDB
+      await db.material_rates.put(saved);
+      return saved;
     }
 
+    if (oldTempId && oldTempId !== payload.id) {
+      await db.material_rates.delete(oldTempId).catch(() => {});
+    }
     await db.material_rates.put(payload);
     return payload;
   } catch (err) {
     console.error('Error saving material rate:', err);
     throw err;
   }
+}
+
+export async function deleteMaterialRateSync(rateId) {
+  const client = getActiveClient();
+  if (client && isValidUuid(rateId)) {
+    const { error } = await client.from('material_rates').delete().eq('id', rateId);
+    if (error) throw error;
+    try {
+      await client.from('deleted_records').insert({
+        record_id: rateId,
+        table_name: 'material_rates',
+        deleted_at: new Date().toISOString()
+      });
+    } catch (_) {}
+  }
+  await db.material_rates.delete(rateId);
+  broadcastRecordDeleted('material_rates', rateId);
+  return true;
 }
 
 // 16. เอกสารใบเสนอราคา (Quotations) - Local-First + Zero-Egress Sync
@@ -2073,13 +2744,20 @@ export async function loadQuotationsLocalFirst(onUpdate) {
     }
 
     const client = getActiveClient();
+    if (!client) {
+      return cached;
+    }
+
     const { data: cloudQuotes, error } = await client
       .from('quotations')
       .select(QUOTATION_DOC_COLUMNS)
       .order('created_at', { ascending: false });
 
-    if (!error && Array.isArray(cloudQuotes) && cloudQuotes.length > 0) {
-      await db.quotations.bulkPut(cloudQuotes);
+    if (!error && Array.isArray(cloudQuotes)) {
+      await db.quotations.clear();
+      if (cloudQuotes.length > 0) {
+        await db.quotations.bulkPut(cloudQuotes);
+      }
       if (onUpdate) onUpdate(cloudQuotes);
       return cloudQuotes;
     }
@@ -2095,7 +2773,11 @@ export async function saveQuotationSync(quoteData) {
   const validated = validatePayload(quotationPayloadSchema, quoteData, 'Quotation');
   const client = getActiveClient();
   try {
+    const oldTempId = validated.id && !isValidUuid(validated.id) ? validated.id : null;
+    const resolvedId = validated.id && isValidUuid(validated.id) ? validated.id : generateRandomUuid();
+
     const payload = {
+      id: resolvedId,
       quote_no: validated.quote_no,
       title: validated.title,
       client_name: validated.client_name || '',
@@ -2110,27 +2792,28 @@ export async function saveQuotationSync(quoteData) {
       note: validated.note || '',
       updated_at: new Date().toISOString()
     };
-    if (validated.id) {
-      payload.id = validated.id;
-    } else {
-      payload.id = `qt-${Date.now()}`;
-      payload.created_at = new Date().toISOString();
+    if (!validated.id || oldTempId) {
+      payload.created_at = validated.created_at || new Date().toISOString();
     }
 
-    try {
+    if (client) {
       const { data, error } = await client
         .from('quotations')
-        .upsert(payload)
+        .upsert(payload, { onConflict: 'id' })
         .select(QUOTATION_DOC_COLUMNS)
         .single();
-      if (!error && data) {
-        await db.quotations.put(data);
-        return data;
+      if (error) throw error;
+      const saved = data || payload;
+      if (oldTempId && oldTempId !== saved.id) {
+        await db.quotations.delete(oldTempId).catch(() => {});
       }
-    } catch (cErr) {
-      // Local fallback
+      await db.quotations.put(saved);
+      return saved;
     }
 
+    if (oldTempId && oldTempId !== payload.id) {
+      await db.quotations.delete(oldTempId).catch(() => {});
+    }
     await db.quotations.put(payload);
     return payload;
   } catch (err) {
@@ -2142,9 +2825,17 @@ export async function saveQuotationSync(quoteData) {
 export async function deleteQuotationSync(quoteId) {
   const client = getActiveClient();
   try {
-    try {
-      await client.from('quotations').delete().eq('id', quoteId);
-    } catch (cErr) {}
+    if (client && isValidUuid(quoteId)) {
+      const { error } = await client.from('quotations').delete().eq('id', quoteId);
+      if (error) throw error;
+      try {
+        await client.from('deleted_records').insert({
+          record_id: quoteId,
+          table_name: 'quotations',
+          deleted_at: new Date().toISOString()
+        });
+      } catch (_) {}
+    }
     await db.quotations.delete(quoteId);
     broadcastRecordDeleted('quotations', quoteId);
     return true;
@@ -2184,17 +2875,27 @@ export async function loadArtistsLocalFirst(onUpdate) {
   }
 }
 
-// 17.1 สถิติรวมศิลปินและลูกค้าแบบ All-Time (Server Aggregated Summary Stats)
-export async function loadArtistsAndCustomersSummaryStats(onUpdate) {
+// 17.1 สถิติรวมศิลปินและลูกค้าแบบ All-Time (Server Aggregated Summary Stats + 5-min In-Memory TTL Cache)
+export async function loadArtistsAndCustomersSummaryStats(onUpdate, options = {}) {
   try {
+    const now = Date.now();
+    if (!options?.force && summaryStatsMemCache.data && now - summaryStatsMemCache.fetchedAt < SUMMARY_STATS_TTL_MS) {
+      if (onUpdate) onUpdate(summaryStatsMemCache.data);
+      return summaryStatsMemCache.data;
+    }
+
     // 1. ส่งข้อมูลแคชจาก IndexedDB ทันที (Local-First 0ms)
-    const cachedMeta = await db.sync_meta.get('artists_customers_summary_stats');
+    const cachedMeta = await db.sync_meta?.get?.('artists_customers_summary_stats').catch(() => null);
     if (cachedMeta && cachedMeta.value && onUpdate) {
       onUpdate(cachedMeta.value);
     }
 
     // 2. ดึงข้อมูลสรุปแบบ Zero-Egress Server RPC (150ms / ~2 KB)
     const client = getActiveClient();
+    if (!client) {
+      return cachedMeta?.value || { artistStats: {}, customerStats: {} };
+    }
+
     try {
       const [artRes, custRes] = await Promise.all([
         client.rpc('get_artists_summary_stats'),
@@ -2222,7 +2923,8 @@ export async function loadArtistsAndCustomersSummaryStats(onUpdate) {
           };
         });
         const result = { artistStats, customerStats };
-        await db.sync_meta.put({ key: 'artists_customers_summary_stats', value: result, updated_at: Date.now() });
+        summaryStatsMemCache = { data: result, fetchedAt: Date.now() };
+        await db.sync_meta?.put?.({ key: 'artists_customers_summary_stats', value: result, updated_at: Date.now() }).catch(() => {});
         if (onUpdate) onUpdate(result);
         return result;
       }
@@ -2230,10 +2932,12 @@ export async function loadArtistsAndCustomersSummaryStats(onUpdate) {
       console.warn('RPC summary stats fallback to projection:', rpcErr);
     }
 
-    // Fallback: ดึงข้อมูลสรุปแบบ Zero-Egress Projection จาก Supabase
+    // Fallback: ดึงข้อมูลสรุปแบบ Zero-Egress Projection จาก Supabase (จำกัดสูงสุด 500 รายการล่าสุด)
     const { data, error } = await client
       .from('projects')
-      .select('artist_name, customer_name, wage, customer_support_total, delivery_fee, raw_delivery_start, project_datetime');
+      .select('artist_name, customer_name, wage, customer_support_total, delivery_fee, raw_delivery_start, project_datetime')
+      .order('raw_delivery_start', { ascending: false })
+      .limit(500);
 
     if (!error && Array.isArray(data)) {
       const artistStats = {};
@@ -2286,7 +2990,8 @@ export async function loadArtistsAndCustomersSummaryStats(onUpdate) {
       });
 
       const result = { artistStats, customerStats };
-      await db.sync_meta.put({ key: 'artists_customers_summary_stats', value: result, updated_at: Date.now() });
+      summaryStatsMemCache = { data: result, fetchedAt: Date.now() };
+      await db.sync_meta?.put?.({ key: 'artists_customers_summary_stats', value: result, updated_at: Date.now() }).catch(() => {});
       if (onUpdate) onUpdate(result);
       return result;
     }
@@ -2302,7 +3007,11 @@ export async function saveArtistSync(artistData) {
   const validated = validatePayload(artistPayloadSchema, artistData, 'Artist');
   const client = getActiveClient();
   try {
+    const oldTempId = validated.id && !isValidUuid(validated.id) ? validated.id : null;
+    const resolvedId = validated.id && isValidUuid(validated.id) ? validated.id : generateRandomUuid();
+
     const payload = {
+      id: resolvedId,
       name: validated.name,
       agency: validated.agency || '',
       fandom_name: validated.fandom_name || '',
@@ -2312,30 +3021,31 @@ export async function saveArtistSync(artistData) {
       bio: validated.bio || '',
       social_links: validated.social_links || {},
       favorite_flowers: validated.favorite_flowers || '',
-      avatar_url: validated.avatar_url || '',
+      avatar_url: sanitizeRemoteImageUrl(validated.avatar_url),
       notes: validated.notes || ''
     };
-    if (validated.id) {
-      payload.id = validated.id;
-    } else {
-      payload.id = `art-${Date.now()}`;
+    if (!validated.id || oldTempId) {
       payload.created_at = new Date().toISOString();
     }
 
-    try {
+    if (client) {
       const { data, error } = await client
         .from('artists')
-        .upsert(payload)
+        .upsert(payload, { onConflict: 'id' })
         .select(ARTIST_COLUMNS)
         .single();
-      if (!error && data) {
-        await db.artists.put(data);
-        return data;
+      if (error) throw error;
+      const saved = data || payload;
+      if (oldTempId && oldTempId !== saved.id) {
+        await db.artists.delete(oldTempId).catch(() => {});
       }
-    } catch (cErr) {
-      // Local fallback
+      await db.artists.put(saved);
+      return saved;
     }
 
+    if (oldTempId && oldTempId !== payload.id) {
+      await db.artists.delete(oldTempId).catch(() => {});
+    }
     await db.artists.put(payload);
     return payload;
   } catch (err) {
@@ -2347,9 +3057,17 @@ export async function saveArtistSync(artistData) {
 export async function deleteArtistSync(artistId) {
   const client = getActiveClient();
   try {
-    try {
-      await client.from('artists').delete().eq('id', artistId);
-    } catch (cErr) {}
+    if (client && isValidUuid(artistId)) {
+      const { error } = await client.from('artists').delete().eq('id', artistId);
+      if (error) throw error;
+      try {
+        await client.from('deleted_records').insert({
+          record_id: artistId,
+          table_name: 'artists',
+          deleted_at: new Date().toISOString()
+        });
+      } catch (_) {}
+    }
     await db.artists.delete(artistId);
     broadcastRecordDeleted('artists', artistId);
     return true;
@@ -2364,7 +3082,6 @@ export const DEFAULT_STAFF_MEMBERS = [
   {
     id: '2611001',
     username: '1',
-    password: '1',
     staff_code: '2611001',
     name: 'Lukyeekubbbbb',
     nickname: 'Lukyeekubbbbb',
@@ -2380,7 +3097,6 @@ export const DEFAULT_STAFF_MEMBERS = [
   {
     id: '2611002',
     username: 'AOM',
-    password: '1234',
     staff_code: '2611002',
     name: 'AOM',
     nickname: 'AOM',
@@ -2396,7 +3112,6 @@ export const DEFAULT_STAFF_MEMBERS = [
   {
     id: '2611003',
     username: 'DREAM',
-    password: '1',
     staff_code: '2611003',
     name: 'หมูดรีม',
     nickname: 'หมูดรีม',
@@ -2412,7 +3127,6 @@ export const DEFAULT_STAFF_MEMBERS = [
   {
     id: '2611004',
     username: 'Chuti',
-    password: 'aom@2026',
     staff_code: '2611004',
     name: 'อ้อม',
     nickname: 'อ้อม',
@@ -2427,6 +3141,48 @@ export const DEFAULT_STAFF_MEMBERS = [
   }
 ];
 
+function generateSecureHex(byteLength = 24) {
+  const bytes = new Uint8Array(byteLength);
+  if (typeof globalThis !== 'undefined' && globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < byteLength; i += 1) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hashResetTokenSha256(value) {
+  const text = String(value || '');
+  if (
+    typeof globalThis !== 'undefined' &&
+    globalThis.crypto?.subtle &&
+    typeof globalThis.TextEncoder !== 'undefined'
+  ) {
+    const encoded = new globalThis.TextEncoder().encode(text);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', encoded);
+    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  // Deterministic non-reversible fallback only when WebCrypto is unavailable in a bare VM sandbox
+  let h1 = 0xdeadbeef ^ text.length;
+  let h2 = 0x41c6ce57 ^ text.length;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
+}
+
+function stripStaffPassword(staffRow) {
+  if (!staffRow || typeof staffRow !== 'object') return staffRow;
+  const { password: _omitPassword, ...cleanRow } = staffRow;
+  return cleanRow;
+}
+
 export async function loadStaffLocalFirst(onUpdate) {
   try {
     const cached = await db.staff.toArray();
@@ -2439,7 +3195,9 @@ export async function loadStaffLocalFirst(onUpdate) {
       }
     }
 
-    const validCached = cached.filter(s => s && s.id && !String(s.id).startsWith('staff-'));
+    const validCached = cached
+      .filter(s => s && s.id && !String(s.id).startsWith('staff-'))
+      .map(stripStaffPassword);
     if (validCached.length === 0) {
       await db.staff.bulkPut(DEFAULT_STAFF_MEMBERS);
       if (onUpdate) onUpdate(DEFAULT_STAFF_MEMBERS);
@@ -2448,17 +3206,19 @@ export async function loadStaffLocalFirst(onUpdate) {
     }
 
     const client = getActiveClient();
-    const { data: cloudStaff, error } = await client
+    let { data: cloudStaff, error } = await client
       .from('staff_users')
       .select(STAFF_COLUMNS);
 
+    if (error && isMissingStaffBanColumnError(error)) {
+      const fallbackRes = await client
+        .from('staff_users')
+        .select(STAFF_LEGACY_COLUMNS);
+      cloudStaff = fallbackRes.data;
+      error = fallbackRes.error;
+    }
+
     if (!error && Array.isArray(cloudStaff) && cloudStaff.length > 0) {
-      const passwordMap = {
-        '1': '1',
-        'AOM': '1234',
-        'DREAM': '1',
-        'Chuti': 'aom@2026'
-      };
       const staffCodeMap = {
         '1': '2611001',
         'AOM': '2611002',
@@ -2477,7 +3237,6 @@ export async function loadStaffLocalFirst(onUpdate) {
             id: code,
             username: u.username,
             staff_code: code,
-            password: u.password || passwordMap[u.username] || '1',
             name: u.full_name || u.nickname || u.username,
             nickname: u.nickname || '',
             role: roleName,
@@ -2489,13 +3248,16 @@ export async function loadStaffLocalFirst(onUpdate) {
             birth_date: u.birth_date || '',
             address: u.address || '',
             emergency_contact: u.emergency_contact || '',
-            avatar_url: u.profile_image_url || '',
+            avatar_url: sanitizeRemoteImageUrl(u.profile_image_url),
             is_active: u.is_active !== undefined ? u.is_active : true,
+            banned_until: u.banned_until || null,
+            is_banned_permanent: Boolean(u.is_banned_permanent),
+            ban_reason: u.ban_reason || '',
             created_at: u.created_at || ''
           };
         });
 
-      // Clear local staff table so any stale mock entries are permanently removed
+      // Clear local staff table so any stale mock entries or leaked passwords are permanently removed
       await db.staff.clear();
       await db.staff.bulkPut(mapped);
       if (onUpdate) onUpdate(mapped);
@@ -2510,6 +3272,7 @@ export async function loadStaffLocalFirst(onUpdate) {
 }
 
 export async function saveStaffSync(staffData) {
+  const rawInputPassword = typeof staffData?.password === 'string' ? staffData.password.trim() : '';
   const validated = validatePayload(staffPayloadSchema, staffData, 'Staff');
   const client = getActiveClient();
   try {
@@ -2533,6 +3296,30 @@ export async function saveStaffSync(staffData) {
     // ID is the staff_code itself (e.g. '2611001')
     const staffId = validated.id || validated.staff_code || `2611${String(Date.now()).slice(-3)}`;
 
+    // Determine whether this staff record already exists (UPDATE vs INSERT)
+    let existingLocal = null;
+    try {
+      existingLocal = (await db.staff?.get?.(staffId)) || null;
+    } catch (_) {}
+
+    let isUpdate = Boolean(existingLocal);
+    if (staffData?.isNew === true) {
+      isUpdate = false;
+    } else if (staffData?.isUpdate === true) {
+      isUpdate = true;
+    } else if (!isUpdate && client && (staffData?.id || staffData?.staff_code)) {
+      try {
+        const { data: existingRemote } = await client
+          .from('staff_users')
+          .select('id')
+          .eq('id', staffId)
+          .maybeSingle();
+        if (existingRemote?.id) {
+          isUpdate = true;
+        }
+      } catch (_) {}
+    }
+
     // Lookup matching role_id from roles table (if connected)
     let roleId = null;
     try {
@@ -2548,11 +3335,13 @@ export async function saveStaffSync(staffData) {
       }
     } catch (rErr) {}
 
+    // Never persist plaintext password into local db.staff or returned UI payload
+    const cleanStaffAvatar = sanitizeRemoteImageUrl(validated.avatar_url || validated.image || '');
     const payload = {
+      ...(existingLocal ? stripStaffPassword(existingLocal) : {}),
       id: staffId,
       username: validated.username,
       staff_code: staffId,
-      password: validated.password || '1',
       name: validated.name || validated.username,
       nickname: validated.nickname || '',
       role: roleName,
@@ -2564,35 +3353,84 @@ export async function saveStaffSync(staffData) {
       birth_date: validated.birth_date || '',
       address: validated.address || '',
       emergency_contact: validated.emergency_contact || '',
-      avatar_url: validated.avatar_url || validated.image || '',
+      avatar_url: cleanStaffAvatar,
       is_active: validated.is_active !== undefined ? validated.is_active : true,
       updated_at: new Date().toISOString()
     };
+    delete payload.password;
 
     // Try cloud upsert to Supabase
     try {
-      const supaPayload = {
-        id: payload.id,
-        username: payload.username,
-        full_name: payload.name,
-        nickname: payload.nickname,
-        role_id: roleId,
-        email: payload.email || null,
-        phone: payload.phone || null,
-        citizen_id: payload.citizen_id || null,
-        birth_date: payload.birth_date || null,
-        address: payload.address || null,
-        emergency_contact: payload.emergency_contact || null,
-        profile_image_url: payload.avatar_url || null,
-        is_active: payload.is_active
-      };
-      await client.from('staff_users').upsert(supaPayload);
+      if (client) {
+        const supaPayload = {
+          id: payload.id,
+          username: payload.username,
+          full_name: payload.name,
+          nickname: payload.nickname,
+          role_id: roleId,
+          email: payload.email || null,
+          phone: payload.phone || null,
+          citizen_id: payload.citizen_id || null,
+          birth_date: payload.birth_date || null,
+          address: payload.address || null,
+          emergency_contact: payload.emergency_contact || null,
+          profile_image_url: cleanStaffAvatar || null,
+          is_active: payload.is_active
+        };
 
-      // 🛡️ Auto-register / sync to Supabase Auth immediately
-      try {
-        await syncStaffToSupabaseAuth(payload);
-      } catch (authErr) {
-        console.warn('Background Supabase Auth auto-sync notice:', authErr);
+        if (rawInputPassword.length > 0) {
+          supaPayload.password = rawInputPassword;
+        } else if (!isUpdate) {
+          // Strong locked placeholder secret on INSERT so nobody can log in with default '1' before using reset link
+          supaPayload.password = `unset_${generateSecureHex(24)}`;
+        }
+
+        const { error: upsertErr } = await client.from('staff_users').upsert(supaPayload);
+        if (upsertErr && 'password' in supaPayload) {
+          const errMsg = `${upsertErr.message || ''} ${upsertErr.details || ''} ${upsertErr.hint || ''}`.toLowerCase();
+          if (
+            (upsertErr.code === '42703' || upsertErr.code === 'PGRST204') &&
+            errMsg.includes('password')
+          ) {
+            const { password: _dropPassword, ...fallbackSupaPayload } = supaPayload;
+            await client.from('staff_users').upsert(fallbackSupaPayload);
+          }
+        }
+
+        // If password was explicitly changed and signed-in Supabase Auth user matches, update Auth password too
+        if (rawInputPassword.length > 0 && client.auth) {
+          try {
+            const sessionRes = await client.auth.getSession?.();
+            const authUser = sessionRes?.data?.session?.user;
+            if (authUser && typeof client.auth.updateUser === 'function') {
+              const authEmail = String(authUser.email || '').trim().toLowerCase();
+              const cleanUsername = String(payload.username || '').replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase() || 'staff';
+              const internalEmail = `${cleanUsername}@flower2u.internal`;
+              const targetEmail = String(payload.email || '').trim().toLowerCase();
+              const metaUser = String(authUser.user_metadata?.username || '').trim().toLowerCase();
+              if (
+                (targetEmail && authEmail === targetEmail) ||
+                authEmail === internalEmail ||
+                (metaUser && metaUser === String(payload.username || '').trim().toLowerCase())
+              ) {
+                const paddedPass = rawInputPassword.length < 6 ? rawInputPassword.padEnd(6, '0') : rawInputPassword;
+                await client.auth.updateUser({ password: paddedPass });
+              }
+            }
+          } catch (_) {}
+        }
+
+        // 🛡️ Auto-register to Supabase Auth when creating new staff or setting password
+        if (!isUpdate || rawInputPassword.length > 0) {
+          try {
+            await syncStaffToSupabaseAuth({
+              ...payload,
+              password: supaPayload.password
+            });
+          } catch (authErr) {
+            console.warn('Background Supabase Auth auto-sync notice:', authErr);
+          }
+        }
       }
     } catch (cErr) {
       // Local fallback
@@ -2609,6 +3447,7 @@ export async function saveStaffSync(staffData) {
 /**
  * ซิงก์ผู้ใช้พนักงานเข้าสู่ Supabase Auth (auth.users)
  * รองรับทั้งกรณีมี email จริง หรือกรณีไม่มี email จะสร้างเป็น username@flower2u.internal
+ * ใช้ Ephemeral Supabase Client แยกอิสระเพื่อป้องกัน signUp() เขียนทับ Session ของ Admin ที่ล็อกอินอยู่
  */
 export async function syncStaffToSupabaseAuth(staffData) {
   const client = getActiveClient();
@@ -2623,8 +3462,8 @@ export async function syncStaffToSupabaseAuth(staffData) {
       ? staffData.email.trim()
       : `${cleanUsername}@flower2u.internal`;
 
-    // Supabase Auth requires minimum 6 characters for password
-    const rawPass = String(staffData.password || '123456');
+    // Supabase Auth requires minimum 6 characters for password (never default to predictable '123456')
+    const rawPass = String(staffData.password || '').trim() || `unset_${generateSecureHex(24)}`;
     const authPassword = rawPass.length >= 6 ? rawPass : rawPass.padEnd(6, '0');
 
     const metadata = {
@@ -2640,7 +3479,26 @@ export async function syncStaffToSupabaseAuth(staffData) {
       birth_date: staffData.birth_date || ''
     };
 
-    const { data, error } = await client.auth.signUp({
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabaseUrl =
+      client.supabaseUrl ||
+      import.meta?.env?.VITE_SUPABASE_URL ||
+      'https://hvjjgkyitgdldrqnqzpy.supabase.co';
+    const supabaseKey =
+      client.supabaseKey ||
+      import.meta?.env?.VITE_SUPABASE_ANON_KEY ||
+      'sb_publishable_l_RKf9B8gaWZK4QldnJcsA__pJclbBG';
+
+    const ephemeralClient = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        storageKey: 'nexus_ephemeral_signup'
+      }
+    });
+
+    const { data, error } = await ephemeralClient.auth.signUp({
       email,
       password: authPassword,
       options: {
@@ -2797,16 +3655,17 @@ export async function suspendStaffUserSync({ staffId, username, bannedUntil, isP
 
     // 4. บรอดแคสต์สัญญาณเตะผู้ใช้ออกจากจอทันทีแบบ Real-Time (Cross-Tab / Cross-Window)
     try {
-      const bc = new BroadcastChannel('flower2u_staff_kick');
-      bc.postMessage({
-        type: 'FORCE_KICK_BANNED',
-        staffId,
-        username,
-        bannedUntil,
-        isPermanent: !!isPermanent,
-        reason: reason || 'คำสั่งจากผู้ดูแลระบบ'
-      });
-      bc.close();
+      const bc = getStaffKickBroadcastChannel();
+      if (bc) {
+        bc.postMessage({
+          type: 'FORCE_KICK_BANNED',
+          staffId,
+          username,
+          bannedUntil,
+          isPermanent: !!isPermanent,
+          reason: reason || 'คำสั่งจากผู้ดูแลระบบ'
+        });
+      }
     } catch (bcErr) {}
 
     return { success: true };
@@ -2871,19 +3730,32 @@ export async function unbanStaffUserSync({ staffId, username }) {
 
     // 4. บรอดแคสต์สัญญาณปลดแบน
     try {
-      const bc = new BroadcastChannel('flower2u_staff_kick');
-      bc.postMessage({
-        type: 'STAFF_UNBANNED',
-        staffId,
-        username
-      });
-      bc.close();
+      const bc = getStaffKickBroadcastChannel();
+      if (bc) {
+        bc.postMessage({
+          type: 'STAFF_UNBANNED',
+          staffId,
+          username
+        });
+      }
     } catch (e) {}
 
     return { success: true };
   } catch (err) {
     console.error('Error unbanning staff:', err);
     throw err;
+  }
+}
+
+let staffKickBroadcastChannel = null;
+function getStaffKickBroadcastChannel() {
+  if (staffKickBroadcastChannel) return staffKickBroadcastChannel;
+  if (typeof BroadcastChannel === 'undefined') return null;
+  try {
+    staffKickBroadcastChannel = new BroadcastChannel('flower2u_staff_kick');
+    return staffKickBroadcastChannel;
+  } catch (_) {
+    return null;
   }
 }
 
@@ -2898,10 +3770,50 @@ export function subscribeToStaffRealtime(onStaffUpdate) {
     .channel('realtime-staff-monitor')
     .on(
       'postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'staff_users' },
-      (payload) => {
-        if (payload.new && onStaffUpdate) {
-          onStaffUpdate(payload.new);
+      { event: '*', schema: 'public', table: 'staff_users' },
+      async (payload) => {
+        try {
+          const eventType = payload.eventType;
+          const cleanNew = payload.new ? stripStaffPassword(payload.new) : null;
+          const cleanOld = payload.old ? stripStaffPassword(payload.old) : null;
+
+          if (eventType === 'DELETE') {
+            const deletedId = cleanOld?.id || cleanOld?.staff_code;
+            if (deletedId) {
+              await db.staff?.delete?.(deletedId).catch(() => {});
+            }
+          } else if ((eventType === 'INSERT' || eventType === 'UPDATE') && cleanNew) {
+            const staffId = cleanNew.id || cleanNew.staff_code;
+            if (staffId && db.staff?.put) {
+              const prev = (await db.staff?.get?.(staffId).catch(() => null)) || {};
+              const mergedStaff = {
+                ...stripStaffPassword(prev),
+                id: staffId,
+                username: cleanNew.username ?? prev.username ?? '',
+                staff_code: staffId,
+                name: cleanNew.full_name || cleanNew.name || prev.name || cleanNew.nickname || cleanNew.username || '',
+                nickname: cleanNew.nickname ?? prev.nickname ?? '',
+                email: cleanNew.email ?? prev.email ?? '',
+                phone: cleanNew.phone ?? prev.phone ?? '',
+                citizen_id: cleanNew.citizen_id ?? prev.citizen_id ?? '',
+                birth_date: cleanNew.birth_date ?? prev.birth_date ?? '',
+                address: cleanNew.address ?? prev.address ?? '',
+                emergency_contact: cleanNew.emergency_contact ?? prev.emergency_contact ?? '',
+                avatar_url: sanitizeRemoteImageUrl(cleanNew.profile_image_url ?? cleanNew.avatar_url ?? prev.avatar_url ?? ''),
+                is_active: cleanNew.is_active !== undefined ? cleanNew.is_active : (prev.is_active ?? true),
+                banned_until: cleanNew.banned_until !== undefined ? cleanNew.banned_until : (prev.banned_until ?? null),
+                is_banned_permanent: cleanNew.is_banned_permanent !== undefined ? Boolean(cleanNew.is_banned_permanent) : Boolean(prev.is_banned_permanent),
+                ban_reason: cleanNew.ban_reason !== undefined ? (cleanNew.ban_reason || '') : (prev.ban_reason || '')
+              };
+              await db.staff.put(mergedStaff).catch(() => {});
+            }
+          }
+
+          if (onStaffUpdate && (cleanNew || cleanOld)) {
+            onStaffUpdate(cleanNew || cleanOld, eventType, cleanOld);
+          }
+        } catch (err) {
+          console.warn('Staff realtime update notice:', err);
         }
       }
     )
@@ -2909,6 +3821,443 @@ export function subscribeToStaffRealtime(onStaffUpdate) {
 
   return () => {
     client.removeChannel(channel);
+  };
+}
+
+/**
+ * 18.4 Zero-Knowledge One-Time Password Reset System (Server RPC + Local Fallback)
+ */
+const STAFF_RESET_STORAGE_KEY = 'nexus_staff_reset_tokens_v1';
+const ADMIN_ONLY_RESET_MESSAGE = 'เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่สามารถสร้างลิงก์เปลี่ยนรหัสผ่านได้';
+let memoryResetTokensFallback = [];
+
+function isResetRpcUnavailableError(error) {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = `${error.message || ''} ${error.details || ''} ${error.hint || ''}`.toLowerCase();
+  return (
+    code === 'PGRST202' ||
+    code === '42883' ||
+    msg.includes('could not find the function') ||
+    msg.includes('schema cache') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
+    msg.includes('network request failed') ||
+    msg.includes('offline')
+  );
+}
+
+function isResetForbiddenError(error, data) {
+  const dataCode = String(data?.error || data?.reason || '').toUpperCase();
+  if (dataCode === 'FORBIDDEN') return true;
+  if (!error) return false;
+  const code = String(error.code || '').toUpperCase();
+  const msg = `${error.message || ''} ${error.details || ''} ${error.hint || ''}`;
+  const upper = msg.toUpperCase();
+  return (
+    code === 'FORBIDDEN' ||
+    upper.includes('FORBIDDEN') ||
+    msg.includes('ไม่มีสิทธิ์')
+  );
+}
+
+function isResetUnauthorizedError(error, data) {
+  const dataCode = String(data?.error || data?.reason || '').toUpperCase();
+  if (dataCode === 'UNAUTHORIZED') return true;
+  if (!error) return false;
+  const code = String(error.code || '').toUpperCase();
+  const upper = `${error.message || ''} ${error.details || ''} ${error.hint || ''}`.toUpperCase();
+  return (
+    code === '42501' ||
+    code === 'UNAUTHORIZED' ||
+    upper.includes('UNAUTHORIZED') ||
+    upper.includes('PERMISSION DENIED')
+  );
+}
+
+function readLocalCallerProfile() {
+  try {
+    const raw =
+      (typeof globalThis !== 'undefined' && globalThis.localStorage?.getItem?.('nexus_profile')) ||
+      (typeof globalThis !== 'undefined' && globalThis.sessionStorage?.getItem?.('nexus_profile')) ||
+      null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function isLocalProfileAdmin(profile) {
+  if (!profile || typeof profile !== 'object') return false;
+  const role = String(profile.role || '').trim().toLowerCase();
+  if (role === 'admin' || role === 'owner') return true;
+  if (Array.isArray(profile.allowedPages) && profile.allowedPages.includes('Staff')) {
+    return true;
+  }
+  return false;
+}
+
+function isStaffRecordSuspended(staff) {
+  if (!staff || typeof staff !== 'object') return false;
+  if (staff.is_active === false) return true;
+  if (staff.is_banned_permanent === true) return true;
+  if (staff.banned_until) {
+    const untilMs = new Date(staff.banned_until).getTime();
+    if (Number.isFinite(untilMs) && untilMs > Date.now()) return true;
+  }
+  return false;
+}
+
+function readLocalResetTokens() {
+  try {
+    if (typeof globalThis !== 'undefined' && globalThis.localStorage) {
+      const raw = globalThis.localStorage.getItem(STAFF_RESET_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+  } catch (_) {
+    return [];
+  }
+  return [...memoryResetTokensFallback];
+}
+
+function writeLocalResetTokens(entries) {
+  const safeEntries = Array.isArray(entries) ? entries : [];
+  memoryResetTokensFallback = safeEntries;
+  try {
+    if (typeof globalThis !== 'undefined' && globalThis.localStorage) {
+      globalThis.localStorage.setItem(STAFF_RESET_STORAGE_KEY, JSON.stringify(safeEntries));
+    }
+  } catch (_) {}
+}
+
+function createResetError(reason, customMessage) {
+  let message = customMessage;
+  if (!message) {
+    if (reason === 'WEAK_PASSWORD') {
+      message = 'รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร';
+    } else if (reason === 'EXPIRED') {
+      message = 'ลิงก์เปลี่ยนรหัสผ่านหมดอายุแล้ว กรุณาขอลิงก์ใหม่';
+    } else if (reason === 'USED') {
+      message = 'ลิงก์นี้ถูกใช้งานไปแล้ว ไม่สามารถใช้ซ้ำได้';
+    } else if (reason === 'SUSPENDED') {
+      message = 'บัญชีผู้ใช้นี้ถูกระงับการใช้งาน ไม่สามารถตั้งรหัสผ่านใหม่ได้';
+    } else if (reason === 'FORBIDDEN') {
+      message = ADMIN_ONLY_RESET_MESSAGE;
+    } else {
+      message = 'ลิงก์เปลี่ยนรหัสผ่านไม่ถูกต้อง';
+    }
+  }
+  const err = new Error(message);
+  err.reason = reason || 'INVALID';
+  err.code = reason || 'INVALID';
+  return err;
+}
+
+export async function createStaffResetTokenSync(
+  staffId,
+  { ttlMinutes = 15, username = '', fullName = '', nickname = '' } = {}
+) {
+  const cleanStaffId = String(staffId ?? '').trim();
+  if (!cleanStaffId) {
+    throw new Error('กรุณาระบุรหัสพนักงานสำหรับสร้างลิงก์เปลี่ยนรหัสผ่าน');
+  }
+
+  const clampedTtl = Math.min(1440, Math.max(5, Number(ttlMinutes) || 15));
+  const client = getActiveClient();
+
+  if (client && typeof client.rpc === 'function') {
+    let rpcResult;
+    let networkErr = null;
+    try {
+      rpcResult = await client.rpc('create_staff_reset_token', {
+        p_staff_id: cleanStaffId,
+        p_ttl_minutes: clampedTtl
+      });
+    } catch (err) {
+      networkErr = err;
+    }
+
+    const rpcError = networkErr || rpcResult?.error;
+
+    if (isResetForbiddenError(rpcError, rpcResult?.data)) {
+      throw createResetError('FORBIDDEN', ADMIN_ONLY_RESET_MESSAGE);
+    }
+
+    if (!networkErr && rpcResult && !rpcResult.error && rpcResult.data?.token) {
+      const data = rpcResult.data;
+      return {
+        token: data.token,
+        expiresAt: data.expires_at || data.expiresAt,
+        ttlMinutes: Number(data.ttl_minutes ?? data.ttlMinutes ?? clampedTtl),
+        staffId: String(data.staff_id ?? data.staffId ?? cleanStaffId),
+        username: data.username ?? username ?? '',
+        fullName: data.full_name ?? data.fullName ?? fullName ?? '',
+        nickname: data.nickname ?? nickname ?? '',
+        localOnly: false
+      };
+    }
+
+    if (isResetUnauthorizedError(rpcError, rpcResult?.data)) {
+      let hasAuthSession = false;
+      try {
+        const sessionRes = await client.auth?.getSession?.();
+        hasAuthSession = Boolean(sessionRes?.data?.session?.user);
+      } catch (_) {}
+
+      const localProfile = readLocalCallerProfile();
+      if (hasAuthSession || !isLocalProfileAdmin(localProfile)) {
+        throw createResetError('FORBIDDEN', ADMIN_ONLY_RESET_MESSAGE);
+      }
+      // Allow local fallback ONLY when auth.uid() is null in dev/local custom login AND local nexus_profile is admin
+    } else if (rpcError && !isResetRpcUnavailableError(rpcError)) {
+      throw new Error(rpcError.message || 'ไม่สามารถสร้างลิงก์ตั้งรหัสผ่านได้');
+    }
+  }
+
+  // Never allow non-admin local profile to mint local fallback tokens
+  const callerProfile = readLocalCallerProfile();
+  if (callerProfile && !isLocalProfileAdmin(callerProfile)) {
+    throw createResetError('FORBIDDEN', ADMIN_ONLY_RESET_MESSAGE);
+  }
+
+  // Local fallback (when Supabase is unconfigured/offline, RPC PGRST202 not yet deployed, or dev local admin without JWT)
+  let resolvedUsername = username || '';
+  let resolvedFullName = fullName || '';
+  let resolvedNickname = nickname || '';
+  try {
+    const cachedStaff = await db.staff?.get?.(cleanStaffId);
+    if (cachedStaff) {
+      resolvedUsername = resolvedUsername || cachedStaff.username || '';
+      resolvedFullName = resolvedFullName || cachedStaff.name || cachedStaff.full_name || '';
+      resolvedNickname = resolvedNickname || cachedStaff.nickname || '';
+    }
+  } catch (_) {}
+
+  const token = `rst_${generateSecureHex(24)}`;
+  const tokenHash = await hashResetTokenSha256(token);
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + clampedTtl * 60 * 1000).toISOString();
+
+  const existing = readLocalResetTokens().map((entry) => {
+    if (entry && String(entry.staffId) === cleanStaffId && !entry.usedAt) {
+      return { ...entry, usedAt: nowIso };
+    }
+    return entry;
+  });
+
+  existing.push({
+    tokenHash,
+    staffId: cleanStaffId,
+    username: resolvedUsername,
+    fullName: resolvedFullName,
+    nickname: resolvedNickname,
+    expiresAt,
+    usedAt: null
+  });
+  writeLocalResetTokens(existing);
+
+  return {
+    token,
+    expiresAt,
+    ttlMinutes: clampedTtl,
+    staffId: cleanStaffId,
+    username: resolvedUsername,
+    fullName: resolvedFullName,
+    nickname: resolvedNickname,
+    localOnly: true
+  };
+}
+
+export async function validateStaffResetTokenSync(token) {
+  const cleanToken = String(token || '').trim();
+  if (!cleanToken || !cleanToken.startsWith('rst_')) {
+    return { valid: false, reason: 'INVALID' };
+  }
+
+  const client = getActiveClient();
+  if (client && typeof client.rpc === 'function') {
+    let rpcResult;
+    let networkErr = null;
+    try {
+      rpcResult = await client.rpc('validate_staff_reset_token', {
+        p_token: cleanToken
+      });
+    } catch (err) {
+      networkErr = err;
+    }
+
+    if (!networkErr && rpcResult && !rpcResult.error && rpcResult.data) {
+      const data = rpcResult.data;
+      if (data.valid) {
+        return {
+          valid: true,
+          staffId: data.staff_id || data.staffId || '',
+          username: data.username || '',
+          fullName: data.full_name || data.fullName || '',
+          nickname: data.nickname || '',
+          expiresAt: data.expires_at || data.expiresAt || null
+        };
+      }
+      return {
+        valid: false,
+        reason: data.reason || 'INVALID'
+      };
+    }
+
+    const rpcError = networkErr || rpcResult?.error;
+    if (rpcError && !isResetRpcUnavailableError(rpcError)) {
+      return { valid: false, reason: 'INVALID' };
+    }
+  }
+
+  // Local fallback ONLY when Supabase is offline/unconfigured or RPC returns PGRST202
+  const tokenHash = await hashResetTokenSha256(cleanToken);
+  const entries = readLocalResetTokens();
+  const entry = entries.find((item) => item && item.tokenHash === tokenHash);
+  if (!entry) {
+    return { valid: false, reason: 'INVALID' };
+  }
+  if (entry.usedAt) {
+    return { valid: false, reason: 'USED' };
+  }
+  const expiresMs = entry.expiresAt ? new Date(entry.expiresAt).getTime() : NaN;
+  if (!Number.isFinite(expiresMs) || expiresMs <= Date.now()) {
+    return { valid: false, reason: 'EXPIRED' };
+  }
+
+  try {
+    const cachedStaff = await db.staff?.get?.(String(entry.staffId));
+    if (isStaffRecordSuspended(cachedStaff)) {
+      return { valid: false, reason: 'SUSPENDED' };
+    }
+  } catch (_) {}
+
+  return {
+    valid: true,
+    staffId: entry.staffId,
+    username: entry.username || '',
+    fullName: entry.fullName || '',
+    nickname: entry.nickname || '',
+    expiresAt: entry.expiresAt
+  };
+}
+
+export async function consumeStaffResetTokenSync(token, newPassword) {
+  const cleanPassword = String(newPassword || '').trim();
+  if (cleanPassword.length < 6) {
+    throw createResetError('WEAK_PASSWORD', 'รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร');
+  }
+
+  const cleanToken = String(token || '').trim();
+  if (!cleanToken || !cleanToken.startsWith('rst_')) {
+    throw createResetError('INVALID');
+  }
+
+  const client = getActiveClient();
+  if (client && typeof client.rpc === 'function') {
+    let rpcResult;
+    let networkErr = null;
+    try {
+      rpcResult = await client.rpc('consume_staff_reset_token', {
+        p_token: cleanToken,
+        p_new_password: cleanPassword
+      });
+    } catch (err) {
+      networkErr = err;
+    }
+
+    if (!networkErr && rpcResult && !rpcResult.error && rpcResult.data) {
+      const data = rpcResult.data;
+      if (!data.success) {
+        throw createResetError(data.reason || 'INVALID', data.message);
+      }
+
+      // Ensure local Dexie db.staff never retains any stale plaintext password
+      const targetStaffId = data.staff_id || data.staffId;
+      if (targetStaffId) {
+        try {
+          const existingStaff = await db.staff?.get?.(String(targetStaffId));
+          if (existingStaff && 'password' in existingStaff) {
+            await db.staff.put(stripStaffPassword(existingStaff));
+          }
+        } catch (_) {}
+      }
+
+      return {
+        success: true,
+        staffId: String(targetStaffId || ''),
+        username: data.username || ''
+      };
+    }
+
+    const rpcError = networkErr || rpcResult?.error;
+    if (rpcError && !isResetRpcUnavailableError(rpcError)) {
+      throw new Error(rpcError.message || 'ไม่สามารถเปลี่ยนรหัสผ่านได้');
+    }
+  }
+
+  // Local PGRST202 / offline fallback
+  const tokenHash = await hashResetTokenSha256(cleanToken);
+  const entries = readLocalResetTokens();
+  const idx = entries.findIndex((item) => item && item.tokenHash === tokenHash);
+  if (idx === -1) {
+    throw createResetError('INVALID');
+  }
+
+  const entry = entries[idx];
+  if (entry.usedAt) {
+    throw createResetError('USED');
+  }
+
+  const expiresMs = entry.expiresAt ? new Date(entry.expiresAt).getTime() : NaN;
+  if (!Number.isFinite(expiresMs) || expiresMs <= Date.now()) {
+    throw createResetError('EXPIRED');
+  }
+
+  let existingStaff = null;
+  try {
+    existingStaff = await db.staff?.get?.(String(entry.staffId));
+  } catch (_) {}
+
+  if (isStaffRecordSuspended(existingStaff)) {
+    throw createResetError('SUSPENDED');
+  }
+
+  const nowIso = new Date().toISOString();
+  entries[idx] = { ...entry, usedAt: nowIso };
+  writeLocalResetTokens(entries);
+
+  try {
+    if (existingStaff) {
+      await db.staff.put({
+        ...stripStaffPassword(existingStaff),
+        password_hash: await hashResetTokenSha256(cleanPassword),
+        updated_at: nowIso
+      });
+    }
+  } catch (_) {}
+
+  if (client?.auth && typeof client.from === 'function') {
+    try {
+      const sessionRes = await client.auth.getSession?.();
+      if (sessionRes?.data?.session) {
+        await client
+          .from('staff_users')
+          .update({ password: cleanPassword })
+          .eq('id', entry.staffId);
+      }
+    } catch (_) {}
+  }
+
+  return {
+    success: true,
+    staffId: entry.staffId,
+    username: entry.username || ''
   };
 }
 

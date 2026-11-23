@@ -155,6 +155,7 @@ export async function dispatchWarehouseCommand(action, payload, idempotencyKey =
 
   catalogRevision++;
   currentSummaryFlight = null;
+  currentCashFlight = null;
   memoryCache.clear();
   return data;
 }
@@ -529,14 +530,24 @@ export async function loadWarehouseChecklists(filters = {}, onUpdate = null) {
 /**
  * Load Cash Vault & Reservation Summary (Strictly server-verified RBAC)
  * KEPT COMPLETELY OFF IndexedDB in memory only.
- * In-flight deduplication enabled via { epoch, promise } tracking.
+ * In-flight deduplication enabled via { epoch, revision, promise } tracking + 30s memoryCache.
  * Per-call await and onUpdate callback notification.
  */
-export async function loadCashSummary(onUpdate = null) {
+export async function loadCashSummary(onUpdate = null, { force = false } = {}) {
   const epoch = currentAuthEpoch;
+  if (force) {
+    currentCashFlight = null;
+  }
+  const revision = catalogRevision;
+  const cashKey = `${epoch}:${revision}:cash_summary`;
+  const cached = memoryCache.get(cashKey);
+  if (!force && cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    if (typeof onUpdate === 'function') onUpdate(cached.data);
+    return cached.data;
+  }
 
-  if (!currentCashFlight || currentCashFlight.epoch !== epoch) {
-    const flight = { epoch, promise: null };
+  if (!currentCashFlight || currentCashFlight.epoch !== epoch || currentCashFlight.revision !== revision) {
+    const flight = { epoch, revision, promise: null };
     flight.promise = (async () => {
       try {
         const client = getActiveClient();
@@ -549,17 +560,24 @@ export async function loadCashSummary(onUpdate = null) {
           throw new Error(error.message || 'Failed to fetch cash vault summary');
         }
 
-        if (flight.epoch !== currentAuthEpoch) {
+        if (flight.epoch !== currentAuthEpoch || flight.revision !== catalogRevision) {
           return null;
         }
 
-        return data || {
+        const result = data || {
           denominations: [],
           reservations: [],
           helper_batches: [],
           prepared_sets: [],
           legacy_banknotes: []
         };
+
+        if (memoryCache.size >= MAX_CACHE_SIZE) {
+          const firstKey = memoryCache.keys().next().value;
+          memoryCache.delete(firstKey);
+        }
+        memoryCache.set(cashKey, { data: result, timestamp: Date.now() });
+        return result;
       } finally {
         if (currentCashFlight === flight) {
           currentCashFlight = null;
@@ -572,7 +590,7 @@ export async function loadCashSummary(onUpdate = null) {
   const ownFlight = currentCashFlight;
   const result = await ownFlight.promise;
 
-  if (result && ownFlight.epoch === currentAuthEpoch && typeof onUpdate === 'function') {
+  if (result && ownFlight.epoch === currentAuthEpoch && ownFlight.revision === catalogRevision && typeof onUpdate === 'function') {
     try {
       onUpdate(result);
     } catch (err) {
@@ -580,67 +598,175 @@ export async function loadCashSummary(onUpdate = null) {
     }
   }
 
-  return ownFlight.epoch === currentAuthEpoch ? result : null;
+  return ownFlight.epoch === currentAuthEpoch && ownFlight.revision === catalogRevision ? result : null;
 }
 
 /**
- * Load Paginated History (default 20, max 50)
+ * Load Paginated History (default 20, max 50) with 30s memoryCache keyed by sessionEpoch & catalogRevision
  */
-export async function loadWarehouseHistory({ projectId = null, limit = 20, offset = 0, includeCash = true, docType = null } = {}) {
+export async function loadWarehouseHistory(
+  { projectId = null, limit = 20, offset = 0, includeCash = true, docType = null } = {},
+  { force = false } = {}
+) {
   const epoch = currentAuthEpoch;
+  const revision = catalogRevision;
   const client = getActiveClient();
   if (!client) throw new Error('Supabase client unavailable.');
 
   const boundedLimit = Math.min(50, Math.max(1, Number(limit) || 20));
-  const { data, error } = await client.rpc('warehouse_get_history', {
-    p_filters: {
-      project_id: projectId,
-      limit: boundedLimit,
-      offset: Math.max(0, Number(offset) || 0),
-      include_cash: includeCash,
-      ...(docType ? { doc_type: docType } : {})
-    }
-  });
+  const cleanFilters = {
+    project_id: projectId,
+    limit: boundedLimit,
+    offset: Math.max(0, Number(offset) || 0),
+    include_cash: includeCash,
+    ...(docType ? { doc_type: docType } : {})
+  };
+  const key = `${epoch}:${revision}:${canonicalFilterKey('history', cleanFilters)}`;
 
-  if (error) throw new Error(error.message || 'Failed to fetch warehouse history');
-  if (epoch !== currentAuthEpoch) throw new Error('Auth session changed during history request');
-  return data || { documents: [], movements: [], cash_movements: [] };
+  const cached = memoryCache.get(key);
+  if (!force && cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  if (!keyedFlights.has(key)) {
+    const p = (async () => {
+      try {
+        const { data, error } = await client.rpc('warehouse_get_history', {
+          p_filters: cleanFilters
+        });
+        if (error) throw new Error(error.message || 'Failed to fetch warehouse history');
+        if (epoch !== currentAuthEpoch) throw new Error('Auth session changed during history request');
+
+        const result = data || { documents: [], movements: [], cash_movements: [] };
+        if (epoch === currentAuthEpoch && revision === catalogRevision) {
+          if (memoryCache.size >= MAX_CACHE_SIZE) {
+            const firstKey = memoryCache.keys().next().value;
+            memoryCache.delete(firstKey);
+          }
+          memoryCache.set(key, { data: result, timestamp: Date.now() });
+        }
+        return result;
+      } finally {
+        keyedFlights.delete(key);
+      }
+    })();
+    keyedFlights.set(key, p);
+  }
+
+  return await keyedFlights.get(key);
 }
 
 /**
  * Load Operational Read Projection (Outstanding Issue Lines, Pending Recoveries, Active Custodies, Incidents)
  * Used by UI for selecting return source movement, inspecting recovery lots, and monitoring custody.
+ * Cached for 30s keyed by sessionEpoch & catalogRevision.
  */
-export async function loadWarehouseOperations({
-  projectId = null,
-  roundId = null,
-  limit = 20,
-  offset = 0,
-  section = null
-} = {}) {
+export async function loadWarehouseOperations(
+  {
+    projectId = null,
+    roundId = null,
+    limit = 20,
+    offset = 0,
+    section = null
+  } = {},
+  { force = false } = {}
+) {
   const epoch = currentAuthEpoch;
+  const revision = catalogRevision;
   const client = getActiveClient();
   if (!client) throw new Error('Supabase client unavailable.');
 
-  const { data, error } = await client.rpc('warehouse_get_operations', {
-    p_filters: {
-      project_id: projectId,
-      round_id: roundId,
-      section,
-      limit: Math.min(50, Math.max(1, Number(limit) || 20)),
-      offset
+  const cleanFilters = {
+    project_id: projectId,
+    round_id: roundId,
+    section,
+    limit: Math.min(50, Math.max(1, Number(limit) || 20)),
+    offset
+  };
+  const key = `${epoch}:${revision}:${canonicalFilterKey('operations', cleanFilters)}`;
+
+  const cached = memoryCache.get(key);
+  if (!force && cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  if (!keyedFlights.has(key)) {
+    const p = (async () => {
+      try {
+        const { data, error } = await client.rpc('warehouse_get_operations', {
+          p_filters: cleanFilters
+        });
+        if (epoch !== currentAuthEpoch || revision !== catalogRevision) return null;
+        if (error) throw new Error(error.message || 'Failed to fetch warehouse operations');
+
+        const result = data || {
+          issue_lines: [],
+          recoveries: [],
+          custodies: [],
+          incidents: [],
+          has_more: false
+        };
+
+        if (memoryCache.size >= MAX_CACHE_SIZE) {
+          const firstKey = memoryCache.keys().next().value;
+          memoryCache.delete(firstKey);
+        }
+        memoryCache.set(key, { data: result, timestamp: Date.now() });
+        return result;
+      } finally {
+        keyedFlights.delete(key);
+      }
+    })();
+    keyedFlights.set(key, p);
+  }
+
+  const result = await keyedFlights.get(key);
+  return epoch === currentAuthEpoch && revision === catalogRevision ? result : null;
+}
+
+/**
+ * Subscribe to Supabase Realtime on public.inventory_documents (debounced 500ms)
+ * Invalidates warehouse read caches so stock/tool borrows/returns on Device A reflect live on Device B.
+ */
+export function subscribeWarehouseInventoryDocuments(onChange, { debounceMs = 500 } = {}) {
+  const client = getActiveClient();
+  if (!client || typeof client.channel !== 'function') {
+    return () => {};
+  }
+
+  let debounceTimer = null;
+  const channelName = `warehouse-inventory-documents-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const channel = client
+    .channel(channelName)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'inventory_documents' },
+      () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          catalogRevision++;
+          currentSummaryFlight = null;
+          currentCashFlight = null;
+          memoryCache.clear();
+          if (typeof onChange === 'function') {
+            onChange();
+          }
+        }, debounceMs);
+      }
+    )
+    .subscribe();
+
+  return () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    try {
+      if (typeof client.removeChannel === 'function') {
+        client.removeChannel(channel);
+      } else if (typeof channel.unsubscribe === 'function') {
+        channel.unsubscribe();
+      }
+    } catch {
+      // Ignore cleanup errors
     }
-  });
-
-  if (epoch !== currentAuthEpoch) return null;
-  if (error) throw new Error(error.message || 'Failed to fetch warehouse operations');
-
-  return data || {
-    issue_lines: [],
-    recoveries: [],
-    custodies: [],
-    incidents: [],
-    has_more: false
   };
 }
 

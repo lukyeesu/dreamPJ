@@ -228,7 +228,22 @@ export default function Inventory({
   }, [isActive, activeMainTab, stockPage, loadStockPage]);
   const refreshSummary = useCallback(async () => {
     await refreshSummaryMetadata();
-    await loadStockPage();
+    const q = stockQueryRef.current || {};
+    const isDefaultPageZero =
+      Number(q.offset || 0) === 0 &&
+      Number(q.limit || 50) === 50 &&
+      !String(q.search || '').trim() &&
+      (!q.item_type || q.item_type === 'all') &&
+      (!q.category_id || q.category_id === 'all') &&
+      (!q.color || q.color === 'all') &&
+      (!q.size || q.size === 'all') &&
+      (!q.location || q.location === 'all') &&
+      (!q.status || q.status === 'all' || q.status === 'active') &&
+      !String(q.availability || '').trim() &&
+      !Array.isArray(q.item_ids);
+    if (!isDefaultPageZero) {
+      await loadStockPage({}, true);
+    }
   }, [refreshSummaryMetadata, loadStockPage]);
   const loadItemUnits = useCallback(async (itemId, offset = 0) => {
     try {
@@ -238,7 +253,7 @@ export default function Inventory({
       setUnitsPages(prev => ({...prev, [itemId]: page}));
     } catch (error) { showToast(error.message, 'error'); }
   }, [setAssetUnits, showToast]);
-  const openPrint = async (item = null) => {
+  const openPrint = useCallback(async (item = null) => {
     try {
       const rows = [];
       let offset = 0;
@@ -253,7 +268,7 @@ export default function Inventory({
       setPrintUnitCodes(item ? rows.map(unit => unit.unit_code) : []);
       setIsPrintWorkspaceOpen(true);
     } catch (error) { showToast(error.message, 'error'); }
-  };
+  }, [showToast]);
 
   // Connect AppBar buttons from App.jsx header (Scan, Print, History, Refresh)
   useEffect(() => {
@@ -287,7 +302,7 @@ export default function Inventory({
       window.removeEventListener('trigger-inventory-history', handleTriggerHistory);
       window.removeEventListener('trigger-inventory-refresh', handleTriggerRefresh);
     };
-  });
+  }, [isActive, openPrint, refreshSummary, refreshOperations, isPrivilegedCashUser, refreshCash, onRefresh]);
 
   const loadUnitCatalog = async (search = '') => {
     const request = ++unitCatalogRequestRef.current;
@@ -1072,7 +1087,7 @@ export default function Inventory({
         unit: line.unit || catalogItem.unit || 'ชิ้น',
         item_type: line.item_type || catalogItem.item_type || 'consumable',
         quantity: Number(line.quantity) || 1,
-        unitCodes: Array.isArray(line.unit_codes) ? line.unit_codes : []
+        unitCodes: Array.isArray(line.unitCodes || line.unit_codes) ? (line.unitCodes || line.unit_codes) : []
       };
     });
     setGameBagItems(hydrated);

@@ -48,7 +48,7 @@ import {
 import DateFilterControl from './components/common/DateFilterControl';
 import { processImageUrl } from './utils/formatters';
 import ImageViewer from './components/common/ImageViewer';
-import { saveProjectSync } from './services/syncService';
+import { saveProjectSync, fetchProjectDetailOnDemand } from './services/syncService';
 import {
   matchInventoryItemByText,
   syncExpenseLinesToWarehouse,
@@ -202,6 +202,7 @@ const getProjectStatementRows = (item) => {
   const quotationItems = [];
   if (Array.isArray(item.quotationItems) && item.quotationItems.length > 0) {
     item.quotationItems.forEach((q) => {
+      if (q.is_voided === true) return;
       const val = parseFloat(q.price) || ((parseFloat(q.unitPrice) || 0) * (parseFloat(q.quantity) || 1)) || 0;
       quotationItems.push({
         name: `${q.detail || q.category || 'รายการค่าจ้าง'}${q.quantity > 1 ? ` (${q.quantity} รายการ)` : ''}`,
@@ -210,7 +211,7 @@ const getProjectStatementRows = (item) => {
     });
   }
 
-  const qTotal = item._qTotal || (quotationItems.reduce((sum, it) => sum + it.amount, 0)) || (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0);
+  const qTotal = item._qTotal ?? ((quotationItems.reduce((sum, it) => sum + it.amount, 0)) || (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0));
 
   if (qTotal > 0 || quotationItems.length > 0) {
     rows.push({
@@ -232,6 +233,7 @@ const getProjectStatementRows = (item) => {
   const expenseItems = [];
   if (Array.isArray(item.expenses) && item.expenses.length > 0) {
     item.expenses.forEach((ex) => {
+      if (ex.is_voided === true) return;
       const val = parseFloat(ex.price) || ((parseFloat(ex.unitPrice) || 0) * (parseFloat(ex.quantity) || 1)) || 0;
       if (val > 0 || ex.detail || ex.category) {
         expenseItems.push({
@@ -242,7 +244,7 @@ const getProjectStatementRows = (item) => {
     });
   }
 
-  const eTotal = item._eTotal || (expenseItems.reduce((sum, it) => sum + it.amount, 0)) || (parseFloat(item.totalExpenses || item.total_expenses) || 0);
+  const eTotal = item._eTotal ?? ((expenseItems.reduce((sum, it) => sum + it.amount, 0)) || (parseFloat(item.totalExpenses || item.total_expenses) || 0));
 
   if (eTotal > 0 || expenseItems.length > 0) {
     rows.push({
@@ -856,20 +858,43 @@ function Finance({
 
     // Precalculate all item metrics once to maximize render performance
     return filtered.map(item => {
-      const calcQ = item.quotationItems && item.quotationItems.length > 0
-        ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || ((parseFloat(q.unitPrice) || 0) * (parseFloat(q.quantity) || 1)) || 0), 0)
+      const hasQuotationList = Array.isArray(item.quotationItems) && item.quotationItems.length > 0;
+      const calcQ = hasQuotationList
+        ? item.quotationItems.reduce(
+            (sum, q) =>
+              q.is_voided === true
+                ? sum
+                : sum + (parseFloat(q.price) || ((parseFloat(q.unitPrice) || 0) * (parseFloat(q.quantity) || 1)) || 0),
+            0
+          )
         : 0;
-      const qTotal = calcQ > 0 ? calcQ : (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0);
+      const allQuotationsVoided = hasQuotationList && item.quotationItems.every(q => q.is_voided === true);
+      const qTotal = allQuotationsVoided ? 0 : (calcQ > 0 ? calcQ : (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0));
 
-      const calcS = item.customerSupport && item.customerSupport.length > 0
-        ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || ((parseFloat(s.denomination || s.unitPrice) || 0) * (parseFloat(s.quantity) || 1)) || 0), 0)
+      const hasSupportList = Array.isArray(item.customerSupport) && item.customerSupport.length > 0;
+      const calcS = hasSupportList
+        ? item.customerSupport.reduce(
+            (sum, s) =>
+              s.is_voided === true
+                ? sum
+                : sum + (parseFloat(s.price) || ((parseFloat(s.denomination || s.unitPrice) || 0) * (parseFloat(s.quantity) || 1)) || 0),
+            0
+          )
         : 0;
       const sTotal = calcS > 0 ? calcS : (parseFloat(item.customerSupportTotal || item.customer_support_total) || 0);
 
-      const calcE = item.expenses && item.expenses.length > 0
-        ? item.expenses.reduce((sum, e) => sum + (parseFloat(e.price) || ((parseFloat(e.unitPrice) || 0) * (parseFloat(e.quantity) || 1)) || 0), 0)
+      const hasExpensesList = Array.isArray(item.expenses) && item.expenses.length > 0;
+      const calcE = hasExpensesList
+        ? item.expenses.reduce(
+            (sum, e) =>
+              e.is_voided === true
+                ? sum
+                : sum + (parseFloat(e.price) || ((parseFloat(e.unitPrice) || 0) * (parseFloat(e.quantity) || 1)) || 0),
+            0
+          )
         : 0;
-      const eTotal = calcE > 0 ? calcE : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
+      const allExpensesVoided = hasExpensesList && item.expenses.every(e => e.is_voided === true);
+      const eTotal = allExpensesVoided ? 0 : (calcE > 0 ? calcE : (parseFloat(item.totalExpenses || item.total_expenses) || 0));
 
       const explicitTransfer = parseFloat(item.transferredAmount ?? item.transferAmount);
       const itemTransfer = !isNaN(explicitTransfer) && explicitTransfer > 0
@@ -980,6 +1005,8 @@ function Finance({
         p.quotationItems.forEach((q, idx) => {
           list.push({
             id: q.id || `${p.id}-q-${idx}`,
+            rawId: q.id || null,
+            itemIndex: idx,
             projectId: p.id,
             projectName: p.name,
             customer: p.customer,
@@ -1001,6 +1028,8 @@ function Finance({
         const totalW = (Number(p.wage) || 0) + (Number(p.deliveryFee) || 0);
         list.push({
           id: `${p.id}-wage`,
+          rawId: null,
+          itemIndex: -1,
           projectId: p.id,
           projectName: p.name,
           customer: p.customer,
@@ -1023,6 +1052,8 @@ function Finance({
       (p.expenses || []).forEach((e, idx) => {
         list.push({
           id: e.id || `${p.id}-e-${idx}`,
+          rawId: e.id || null,
+          itemIndex: idx,
           projectId: p.id,
           projectName: p.name,
           customer: p.customer,
@@ -1048,6 +1079,8 @@ function Finance({
         const price = Number(cs.price) || (denom * qty);
         list.push({
           id: cs.id || `${p.id}-cs-${idx}`,
+          rawId: cs.id || null,
+          itemIndex: idx,
           projectId: p.id,
           projectName: p.name,
           customer: p.customer,
@@ -1060,7 +1093,7 @@ function Finance({
           quantity: qty,
           unitPrice: denom,
           status: 'paid',
-          isVoided: false,
+          isVoided: Boolean(cs.is_voided),
           rawItem: cs,
           parentProject: p
         });
@@ -1099,55 +1132,107 @@ function Finance({
     setIsEditTxModalOpen(true);
   };
 
+  const generateTxUuid = () =>
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+          const r = (Math.random() * 16) | 0;
+          return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+        });
+
+  const hydrateProjectForMutation = async (targetProject) => {
+    if (!targetProject) return null;
+    if (!targetProject._detailsHydrated) {
+      const hydrated = await fetchProjectDetailOnDemand(targetProject.id);
+      if (hydrated) return hydrated;
+    }
+    return targetProject;
+  };
+
+  const findTxLineIndex = (list, tx) => {
+    if (!Array.isArray(list) || list.length === 0) return -1;
+    const explicitId = tx.rawId || tx.rawItem?.id || null;
+    if (explicitId) {
+      return list.findIndex((item) => item && item.id === explicitId);
+    }
+    const directIdIdx = list.findIndex((item) => item && item.id && item.id === tx.id);
+    if (directIdIdx !== -1) return directIdIdx;
+    if (typeof tx.itemIndex === 'number' && tx.itemIndex >= 0 && list[tx.itemIndex]) {
+      const candidate = list[tx.itemIndex];
+      if (!candidate.id && candidate.detail === tx.detail && Number(candidate.price) === Number(tx.amount)) {
+        return tx.itemIndex;
+      }
+    }
+    return list.findIndex(
+      (item) => !item?.id && item?.detail === tx.detail && Number(item?.price) === Number(tx.amount)
+    );
+  };
+
+  const recomputeCloneTotals = (clone) => {
+    const qList = Array.isArray(clone.quotationItems) ? clone.quotationItems : [];
+    const eList = Array.isArray(clone.expenses) ? clone.expenses : [];
+    const hasQuotationRows = qList.length > 0;
+    const allQuotationsVoided = hasQuotationRows && qList.every((q) => q.is_voided === true);
+    const activeQSum = qList.reduce((s, q) => s + (q.is_voided === true ? 0 : Number(q.price) || 0), 0);
+    const totalRev = allQuotationsVoided
+      ? 0
+      : hasQuotationRows
+        ? activeQSum
+        : (Number(clone.wage) || 0) + (Number(clone.deliveryFee) || 0);
+    const totalExp = eList.reduce((s, e) => s + (e.is_voided === true ? 0 : Number(e.price) || 0), 0);
+    clone.totalRevenue = totalRev;
+    clone.totalExpenses = totalExp;
+    clone.netProfit = totalRev - totalExp;
+  };
+
   const handleSaveEditTx = async (e) => {
     e.preventDefault();
     if (isEditTxViewOnly || !editingTx) return;
     setIsTxSaving(true);
     try {
-      const project = activities.find(a => a.id === editingTx.projectId);
-      if (!project) throw new Error('ไม่พบข้อมูลโปรเจกต์งาน');
-      const clone = JSON.parse(JSON.stringify(project));
+      const targetProject = activities.find(a => a.id === editingTx.projectId);
+      if (!targetProject) throw new Error('ไม่พบข้อมูลโปรเจกต์งาน');
+      const baseProject = await hydrateProjectForMutation(targetProject);
+      const clone = JSON.parse(JSON.stringify(baseProject));
 
       if (editingTx.type === 'expense') {
-        clone.expenses = (clone.expenses || []).map(e => {
-          if (e.id === editingTx.id || (e.detail === editingTx.detail && Number(e.price) === Number(editingTx.amount))) {
-            return {
-              ...e,
+        clone.expenses = Array.isArray(clone.expenses) ? clone.expenses : [];
+        const idx = findTxLineIndex(clone.expenses, editingTx);
+        if (idx !== -1) {
+          const prev = clone.expenses[idx];
+          clone.expenses[idx] = {
+            ...prev,
+            id: prev.id || generateTxUuid(),
+            detail: editFormData.detail,
+            category: editFormData.category,
+            price: Number(editFormData.amount),
+            unit_price: Number(editFormData.amount),
+            unitPrice: Number(editFormData.amount),
+            is_voided: Boolean(editFormData.is_voided)
+          };
+        }
+      } else if (editingTx.type === 'income') {
+        if (clone.quotationItems && clone.quotationItems.length > 0) {
+          const idx = findTxLineIndex(clone.quotationItems, editingTx);
+          if (idx !== -1) {
+            const prev = clone.quotationItems[idx];
+            clone.quotationItems[idx] = {
+              ...prev,
+              id: prev.id || generateTxUuid(),
               detail: editFormData.detail,
               category: editFormData.category,
               price: Number(editFormData.amount),
               unit_price: Number(editFormData.amount),
-              is_voided: editFormData.is_voided
+              unitPrice: Number(editFormData.amount),
+              is_voided: Boolean(editFormData.is_voided)
             };
           }
-          return e;
-        });
-      } else if (editingTx.type === 'income') {
-        if (clone.quotationItems && clone.quotationItems.length > 0) {
-          clone.quotationItems = clone.quotationItems.map(q => {
-            if (q.id === editingTx.id || (q.detail === editingTx.detail && Number(q.price) === Number(editingTx.amount))) {
-              return {
-                ...q,
-                detail: editFormData.detail,
-                category: editFormData.category,
-                price: Number(editFormData.amount),
-                unit_price: Number(editFormData.amount),
-                is_voided: editFormData.is_voided
-              };
-            }
-            return q;
-          });
         } else {
           clone.wage = Number(editFormData.amount);
         }
       }
 
-      // Recalculate totals
-      const totalRev = (clone.quotationItems || []).reduce((s, q) => s + (q.is_voided ? 0 : Number(q.price) || 0), 0) || (Number(clone.wage) || 0) + (Number(clone.deliveryFee) || 0);
-      const totalExp = (clone.expenses || []).reduce((s, e) => s + (e.is_voided ? 0 : Number(e.price) || 0), 0);
-      clone.totalRevenue = totalRev;
-      clone.totalExpenses = totalExp;
-      clone.netProfit = totalRev - totalExp;
+      recomputeCloneTotals(clone);
 
       await saveProjectSync(clone);
       if (onSaveActivity) onSaveActivity(clone);
@@ -1174,33 +1259,37 @@ function Finance({
       confirmText: willVoid ? 'ยกเลิกรายการ' : 'เปิดใช้งานรายการ',
       onConfirm: async () => {
         try {
-          const project = activities.find(a => a.id === tx.projectId);
-          if (!project) return;
-          const clone = JSON.parse(JSON.stringify(project));
+          const targetProject = activities.find(a => a.id === tx.projectId);
+          if (!targetProject) return;
+          const baseProject = await hydrateProjectForMutation(targetProject);
+          const clone = JSON.parse(JSON.stringify(baseProject));
 
           if (tx.type === 'expense') {
-            clone.expenses = (clone.expenses || []).map(e => {
-              if (e.id === tx.id || (e.detail === tx.detail && Number(e.price) === Number(tx.amount))) {
-                return { ...e, is_voided: willVoid };
-              }
-              return e;
-            });
+            clone.expenses = Array.isArray(clone.expenses) ? clone.expenses : [];
+            const idx = findTxLineIndex(clone.expenses, tx);
+            if (idx !== -1) {
+              const prev = clone.expenses[idx];
+              clone.expenses[idx] = {
+                ...prev,
+                id: prev.id || generateTxUuid(),
+                is_voided: Boolean(willVoid)
+              };
+            }
           } else if (tx.type === 'income') {
             if (clone.quotationItems && clone.quotationItems.length > 0) {
-              clone.quotationItems = clone.quotationItems.map(q => {
-                if (q.id === tx.id || (q.detail === tx.detail && Number(q.price) === Number(tx.amount))) {
-                  return { ...q, is_voided: willVoid };
-                }
-                return q;
-              });
+              const idx = findTxLineIndex(clone.quotationItems, tx);
+              if (idx !== -1) {
+                const prev = clone.quotationItems[idx];
+                clone.quotationItems[idx] = {
+                  ...prev,
+                  id: prev.id || generateTxUuid(),
+                  is_voided: Boolean(willVoid)
+                };
+              }
             }
           }
 
-          const totalRev = (clone.quotationItems || []).reduce((s, q) => s + (q.is_voided ? 0 : Number(q.price) || 0), 0) || (Number(clone.wage) || 0) + (Number(clone.deliveryFee) || 0);
-          const totalExp = (clone.expenses || []).reduce((s, e) => s + (e.is_voided ? 0 : Number(e.price) || 0), 0);
-          clone.totalRevenue = totalRev;
-          clone.totalExpenses = totalExp;
-          clone.netProfit = totalRev - totalExp;
+          recomputeCloneTotals(clone);
 
           await saveProjectSync(clone);
           if (onSaveActivity) onSaveActivity(clone);
@@ -1223,25 +1312,34 @@ function Finance({
       confirmText: 'ยืนยันลบ',
       onConfirm: async () => {
         try {
-          const project = activities.find(a => a.id === tx.projectId);
-          if (!project) return;
-          const clone = JSON.parse(JSON.stringify(project));
+          const targetProject = activities.find(a => a.id === tx.projectId);
+          if (!targetProject) return;
+          const baseProject = await hydrateProjectForMutation(targetProject);
+          const clone = JSON.parse(JSON.stringify(baseProject));
 
           if (tx.type === 'expense') {
-            clone.expenses = (clone.expenses || []).filter(e => e.id !== tx.id && !(e.detail === tx.detail && Number(e.price) === Number(tx.amount)));
+            clone.expenses = Array.isArray(clone.expenses) ? [...clone.expenses] : [];
+            const idx = findTxLineIndex(clone.expenses, tx);
+            if (idx !== -1) clone.expenses.splice(idx, 1);
           } else if (tx.type === 'income') {
             if (clone.quotationItems && clone.quotationItems.length > 0) {
-              clone.quotationItems = clone.quotationItems.filter(q => q.id !== tx.id && !(q.detail === tx.detail && Number(q.price) === Number(tx.amount)));
+              clone.quotationItems = [...clone.quotationItems];
+              const idx = findTxLineIndex(clone.quotationItems, tx);
+              if (idx !== -1) clone.quotationItems.splice(idx, 1);
             }
           } else if (tx.type === 'support') {
-            clone.customerSupport = (clone.customerSupport || []).filter(cs => cs.id !== tx.id);
+            clone.customerSupport = Array.isArray(clone.customerSupport) ? [...clone.customerSupport] : [];
+            const explicitId = tx.rawId || tx.rawItem?.id || null;
+            let idx = explicitId
+              ? clone.customerSupport.findIndex((cs) => cs && cs.id === explicitId)
+              : clone.customerSupport.findIndex((cs) => cs && cs.id && cs.id === tx.id);
+            if (idx === -1 && !explicitId && typeof tx.itemIndex === 'number' && clone.customerSupport[tx.itemIndex]) {
+              idx = tx.itemIndex;
+            }
+            if (idx !== -1) clone.customerSupport.splice(idx, 1);
           }
 
-          const totalRev = (clone.quotationItems || []).reduce((s, q) => s + (q.is_voided ? 0 : Number(q.price) || 0), 0) || (Number(clone.wage) || 0) + (Number(clone.deliveryFee) || 0);
-          const totalExp = (clone.expenses || []).reduce((s, e) => s + (e.is_voided ? 0 : Number(e.price) || 0), 0);
-          clone.totalRevenue = totalRev;
-          clone.totalExpenses = totalExp;
-          clone.netProfit = totalRev - totalExp;
+          recomputeCloneTotals(clone);
 
           await saveProjectSync(clone);
           if (onSaveActivity) onSaveActivity(clone);
@@ -1268,7 +1366,9 @@ function Finance({
       const pId = (newTxFormData.projectId || '').trim() || `P-${Date.now().toString().slice(-4)}`;
       let project = activities.find(a => a.id.toLowerCase() === pId.toLowerCase());
 
-      if (!project) {
+      if (project) {
+        project = await hydrateProjectForMutation(project);
+      } else {
         // Create auto fallback project container so transaction is never lost
         project = {
           id: pId,
@@ -1285,7 +1385,8 @@ function Finance({
           customerSupport: [],
           totalRevenue: 0,
           totalExpenses: 0,
-          netProfit: 0
+          netProfit: 0,
+          _detailsHydrated: true
         };
       }
 
@@ -1297,8 +1398,8 @@ function Finance({
       const txDate = newTxFormData.dateTime || new Date().toISOString();
       const addedExpenseLinesForSync = [];
 
-      validItems.forEach((it, idx) => {
-        const lineId = `tx_${Date.now()}_${idx}`;
+      validItems.forEach((it) => {
+        const lineId = generateTxUuid();
         const qty = Number(it.quantity) || 1;
         const unitP = Number(it.price) || 0;
         const linePrice = qty * unitP;
@@ -1320,7 +1421,7 @@ function Finance({
             price: linePrice,
             date: txDate,
             paymentChannel: newTxFormData.channel || 'โอนเงิน',
-            is_voided: false,
+            is_voided: Boolean(it.is_voided),
             syncToWarehouse: shouldSyncStock,
             warehouseItemId: matchedItem?.id || null
           };
@@ -1340,17 +1441,12 @@ function Finance({
             price: linePrice,
             date: txDate,
             paymentChannel: newTxFormData.channel || 'โอนเงิน',
-            is_voided: false
+            is_voided: Boolean(it.is_voided)
           });
         }
       });
 
-      // Recalculate totals
-      const totalRev = (clone.quotationItems || []).reduce((s, q) => s + (q.is_voided ? 0 : Number(q.price) || 0), 0) || (Number(clone.wage) || 0) + (Number(clone.deliveryFee) || 0);
-      const totalExp = (clone.expenses || []).reduce((s, e) => s + (e.is_voided ? 0 : Number(e.price) || 0), 0);
-      clone.totalRevenue = totalRev;
-      clone.totalExpenses = totalExp;
-      clone.netProfit = totalRev - totalExp;
+      recomputeCloneTotals(clone);
 
       await saveProjectSync(clone);
 
@@ -2342,22 +2438,10 @@ function Finance({
     ];
 
     const rows = processedData.map(item => {
-      const calcQ = item.quotationItems && item.quotationItems.length > 0
-        ? item.quotationItems.reduce((sum, q) => sum + (parseFloat(q.price) || ((parseFloat(q.unitPrice) || 0) * (parseFloat(q.quantity) || 1)) || 0), 0)
-        : 0;
-      const qTotal = calcQ > 0 ? calcQ : (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0);
-
-      const calcS = item.customerSupport && item.customerSupport.length > 0
-        ? item.customerSupport.reduce((sum, s) => sum + (parseFloat(s.price) || ((parseFloat(s.denomination || s.unitPrice) || 0) * (parseFloat(s.quantity) || 1)) || 0), 0)
-        : 0;
-      const sTotal = calcS > 0 ? calcS : (parseFloat(item.customerSupportTotal || item.customer_support_total) || 0);
-
-      const calcE = item.expenses && item.expenses.length > 0
-        ? item.expenses.reduce((sum, e) => sum + (parseFloat(e.price) || ((parseFloat(e.unitPrice) || 0) * (parseFloat(e.quantity) || 1)) || 0), 0)
-        : 0;
-      const eTotal = calcE > 0 ? calcE : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
-
-      const profit = qTotal - eTotal;
+      const qTotal = item._qTotal ?? 0;
+      const sTotal = item._sTotal ?? 0;
+      const eTotal = item._eTotal ?? 0;
+      const profit = item._profit ?? (qTotal - eTotal);
       const status = getPaymentStatusMeta(item._paymentStatus || item.paymentStatus).label;
 
       return [

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import HeaderFilterPortal from './components/common/HeaderFilterPortal';
 import {
   Users,
@@ -11,7 +11,7 @@ import {
   Search,
   Phone,
   Mail,
-  Key,
+  KeyRound,
   Edit,
   Trash2,
   X,
@@ -20,7 +20,6 @@ import {
   Calendar,
   AlertCircle,
   Copy,
-  EyeOff,
   Briefcase,
   Lock,
   Camera,
@@ -32,20 +31,65 @@ import {
   ChevronDown,
   ShieldAlert,
   UserX,
-  User
+  User,
+  Loader2
 } from 'lucide-react';
-import { loadStaffLocalFirst, saveStaffSync, deleteStaffSync, suspendStaffUserSync, unbanStaffUserSync } from './services/syncService';
+import { db } from './services/db';
+import {
+  loadStaffLocalFirst,
+  saveStaffSync,
+  deleteStaffSync,
+  suspendStaffUserSync,
+  unbanStaffUserSync,
+  createStaffResetTokenSync
+} from './services/syncService';
 import Toast from './components/common/Toast';
 import ConfirmDialog from './components/common/ConfirmDialog';
 import ModernDateTimePicker from './components/common/ModernDateTimePicker';
 import StatusDropdown from './components/common/StatusDropdown';
 import SuspendStaffModal from './components/modals/SuspendStaffModal';
+import PasswordResetLinkModal from './components/modals/PasswordResetLinkModal';
 import { formatDate, processImageUrl } from './utils/formatters';
 import { useStickyFilter } from './hooks/useStickyFilter';
 import { useModalCloseGuard } from './hooks/useModalCloseGuard';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { staffFormSchema } from './schemas/staffSchema';
+
+const GOOGLE_DRIVE_UPLOAD_URL = import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL ||
+  'https://script.google.com/macros/s/AKfycbw2WJ4tt7l__0U6XYtgHbyl0W1iGjm6oHXa9-2twBKfa1xP2-SBj2hMwaHUYp7ew_Ih/exec';
+
+const fileToBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.readAsDataURL(file);
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = (err) => reject(err);
+});
+
+const compressImage = (file, maxWidth = 800, quality = 0.82) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.readAsDataURL(file);
+  reader.onload = (event) => {
+    const img = new Image();
+    img.src = event.target.result;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const scaleSize = maxWidth / img.width;
+      if (scaleSize < 1) {
+        canvas.width = maxWidth;
+        canvas.height = img.height * scaleSize;
+      } else {
+        canvas.width = img.width;
+        canvas.height = img.height;
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = (err) => reject(err);
+  };
+  reader.onerror = (err) => reject(err);
+});
 
 const ROLE_DEFINITIONS = [
   {
@@ -118,10 +162,11 @@ function StaffAvatar({
 
 function Staff({
   activities = [],
+  currentUser = null,
   isCreateOpen = false,
   onCloseCreate,
   onRefresh,
-  currentUser = null
+  profilesDriveFolderId = ''
 }) {
   const { isFilterStuck, filterSentinelRef } = useStickyFilter();
   const [staffList, setStaffList] = useState([]);
@@ -193,6 +238,7 @@ function Staff({
     handleSubmit,
     reset,
     setValue,
+    getValues,
     watch,
     control,
     formState: { errors, isDirty }
@@ -219,14 +265,16 @@ function Staff({
 
   const watchedRole = watch('role') || 'technician';
   const watchedStaffCode = watch('staff_code') || '';
-  const watchedPassword = watch('password') || '';
-  const watchedConfirmPassword = watch('confirmPassword') || '';
+  const watchedUsername = watch('username') || '';
+  const watchedName = watch('name') || '';
+  const watchedNickname = watch('nickname') || '';
   const watchedAvatarUrl = watch('avatar_url') || '';
 
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [showAvatarUrlInput, setShowAvatarUrlInput] = useState(false);
+  const avatarFileInputRef = useRef(null);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [avatarError, setAvatarError] = useState(false);
+  const [resetLinkData, setResetLinkData] = useState(null);
+  const [isGeneratingResetLink, setIsGeneratingResetLink] = useState(false);
 
   useEffect(() => {
     setAvatarError(false);
@@ -239,17 +287,123 @@ function Staff({
     setToast({ show: true, message, type });
   };
 
+  // Upload Avatar File directly via OS picker + Google Drive 'profiles' folder
+  const handleUploadAvatarFile = async (file) => {
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      showToast('กรุณาเลือกไฟล์รูปภาพเท่านั้น (JPG, PNG, WebP)', 'error');
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      showToast('ขนาดไฟล์รูปภาพต้องไม่เกิน 10MB', 'error');
+      return;
+    }
+
+    const previousAvatarUrl = getValues('avatar_url') || '';
+    const targetFolderId = (profilesDriveFolderId || '').trim();
+    if (!targetFolderId) {
+      setValue('avatar_url', previousAvatarUrl, { shouldDirty: false });
+      showToast('ยังไม่ได้ตั้งค่าโฟลเดอร์ Google Drive สำหรับรูปโปรไฟล์ในหน้าตั้งค่าระบบ', 'error');
+      if (avatarFileInputRef.current) avatarFileInputRef.current.value = '';
+      return;
+    }
+
+    setIsUploadingAvatar(true);
+    try {
+      const base64Data = await compressImage(file, 800, 0.82);
+
+      // Immediately preview via form state
+      setValue('avatar_url', base64Data, { shouldDirty: true });
+
+      const cleanUser = (watchedUsername || watchedStaffCode || 'staff').replace(/[^a-zA-Z0-9_\u0E00-\u0E7F]/g, '_');
+      const fileName = `staff_${cleanUser}_${Date.now()}.jpg`;
+
+      const response = await fetch(GOOGLE_DRIVE_UPLOAD_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'uploadAsset',
+          data: {
+            folderId: targetFolderId,
+            fileData: base64Data,
+            fileName,
+            mimeType: 'image/jpeg'
+          }
+        })
+      });
+
+      const result = await response.json();
+      if (result.status === 'success' && (result.url || result.fileId)) {
+        const directUrl = result.fileId
+          ? `https://lh3.googleusercontent.com/d/${result.fileId}`
+          : result.url;
+        setValue('avatar_url', directUrl, { shouldDirty: true });
+        showToast('อัปโหลดรูปโปรไฟล์ไปยัง Google Drive สำเร็จ', 'success');
+      } else {
+        throw new Error(result.message || 'ไม่สามารถอัปโหลดไปยัง Google Drive ได้');
+      }
+    } catch (err) {
+      setValue('avatar_url', previousAvatarUrl, { shouldDirty: false });
+      console.error('Error uploading staff avatar:', err);
+      showToast('เกิดข้อผิดพลาดในการอัปโหลดรูปภาพ: ' + err.message, 'error');
+    } finally {
+      setIsUploadingAvatar(false);
+      if (avatarFileInputRef.current) avatarFileInputRef.current.value = '';
+    }
+  };
+
+  // Generate 15-minute One-Time Password Reset Link + QR Modal
+  const handleGenerateResetLink = async (staffTarget = null) => {
+    if (isGeneratingResetLink) return;
+    const targetId = staffTarget?.id || staffTarget?.staff_code || editingStaffId;
+    if (!targetId) return;
+
+    setIsGeneratingResetLink(true);
+    try {
+      const tokenResult = await createStaffResetTokenSync(targetId, {
+        ttlMinutes: 15,
+        username: staffTarget?.username || watchedUsername || '',
+        fullName: staffTarget?.name || staffTarget?.full_name || watchedName || '',
+        nickname: staffTarget?.nickname || watchedNickname || ''
+      });
+      setResetLinkData(tokenResult);
+    } catch (err) {
+      showToast('สร้างลิงก์ตั้งรหัสผ่านไม่สำเร็จ: ' + (err?.message || 'เกิดข้อผิดพลาด'), 'error');
+    } finally {
+      setIsGeneratingResetLink(false);
+    }
+  };
+
   // Detail Modal State
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
-  // Initial Load
+  // Initial Load & Live Cross-Device Staff Sync
   useEffect(() => {
+    let cancelled = false;
     loadStaffLocalFirst((staff) => {
-      if (Array.isArray(staff) && staff.length > 0) {
+      if (!cancelled && Array.isArray(staff) && staff.length > 0) {
         setStaffList(staff);
       }
     });
+
+    const handleStaffRealtime = async () => {
+      try {
+        const rows = await db.staff.toArray();
+        if (!cancelled && Array.isArray(rows)) {
+          setStaffList(rows);
+        }
+      } catch (err) {
+        console.warn('Staff realtime sync reload notice:', err);
+      }
+    };
+    window.addEventListener('f2u:staff-realtime', handleStaffRealtime);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('f2u:staff-realtime', handleStaffRealtime);
+    };
   }, []);
 
   // Listen to single header button trigger from App.jsx
@@ -276,15 +430,30 @@ function Staff({
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        if (e.defaultPrevented) return;
-        if (isModalCloseConfirmOpen) return;
+        if (
+          e.defaultPrevented ||
+          resetLinkData ||
+          isModalCloseConfirmOpen ||
+          suspendModal.isOpen ||
+          deleteConfirm.isOpen
+        ) {
+          return;
+        }
         if (isDetailModalOpen) setIsDetailModalOpen(false);
         else if (isModalOpen) requestCloseModal();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isModalOpen, isDetailModalOpen, isModalCloseConfirmOpen, requestCloseModal]);
+  }, [
+    isModalOpen,
+    isDetailModalOpen,
+    isModalCloseConfirmOpen,
+    resetLinkData,
+    suspendModal.isOpen,
+    deleteConfirm.isOpen,
+    requestCloseModal
+  ]);
 
   // Helper to generate staff code automatically
   const generateSuggestedStaffCode = (roleName) => {
@@ -337,9 +506,6 @@ function Staff({
       avatar_url: '',
       is_active: true
     });
-    setShowPassword(false);
-    setShowConfirmPassword(false);
-    setShowAvatarUrlInput(false);
     setAvatarError(false);
     setIsModalOpen(true);
   };
@@ -356,8 +522,8 @@ function Staff({
     });
     reset({
       username: staff.username || '',
-      password: staff.password || '',
-      confirmPassword: staff.password || '',
+      password: '',
+      confirmPassword: '',
       staff_code: staff.id || staff.staff_code || '',
       name: staff.name || '',
       nickname: staff.nickname || '',
@@ -371,9 +537,6 @@ function Staff({
       avatar_url: staff.avatar_url || staff.profile_image_url || staff.image || '',
       is_active: staff.is_active !== undefined ? staff.is_active : true
     });
-    setShowPassword(false);
-    setShowConfirmPassword(false);
-    setShowAvatarUrlInput(false);
     setAvatarError(false);
     setIsModalOpen(true);
   };
@@ -389,7 +552,7 @@ function Staff({
 
   // Save Staff (React Hook Form onSubmit)
   const onSubmitStaff = async (formData) => {
-    if (isViewOnly) return;
+    if (isViewOnly || isUploadingAvatar) return;
     // Check duplicate username on create
     if (!editingStaffId) {
       const exists = staffList.some(
@@ -403,12 +566,12 @@ function Staff({
 
     setIsSaving(true);
     try {
+      const isCreatingNew = !editingStaffId;
       const roleDef = activeRoleDefinitions.find(r => r.name === formData.role) || activeRoleDefinitions[1] || { code: '21', label: 'พนักงาน' };
       const finalStaffCode = (formData.staff_code || '').trim() || generateSuggestedStaffCode(formData.role);
       const payload = {
         id: editingStaffId || finalStaffCode, // ID IS THE STAFF CODE DIRECTLY
         username: formData.username.trim(),
-        password: formData.password.trim(),
         staff_code: finalStaffCode,
         name: (formData.name || '').trim() || formData.username.trim(),
         nickname: (formData.nickname || '').trim(),
@@ -438,8 +601,24 @@ function Staff({
       });
 
       setIsModalOpen(false);
-      showToast('บันทึกข้อมูลพนักงานเรียบร้อย', 'success');
       if (onRefresh) onRefresh();
+
+      if (isCreatingNew) {
+        try {
+          const tokenData = await createStaffResetTokenSync(saved.id || finalStaffCode, {
+            ttlMinutes: 15,
+            username: payload.username,
+            fullName: payload.name,
+            nickname: payload.nickname
+          });
+          setResetLinkData(tokenData);
+          showToast('สร้างบัญชีพนักงานและลิงก์ตั้งรหัสผ่านเรียบร้อย', 'success');
+        } catch (tokenErr) {
+          showToast('บันทึกข้อมูลพนักงานแล้ว แต่ไม่สามารถสร้างลิงก์ตั้งรหัสผ่านได้: ' + tokenErr.message, 'error');
+        }
+      } else {
+        showToast('บันทึกข้อมูลพนักงานเรียบร้อย', 'success');
+      }
     } catch (err) {
       showToast('บันทึกข้อมูลพนักงานไม่สำเร็จ: ' + err.message, 'error');
     } finally {
@@ -519,6 +698,14 @@ function Staff({
         }
         return s;
       }));
+      if (editingStaffId && (String(editingStaffId) === String(staffId) || String(editingStaffId) === String(username))) {
+        setEditingStaffExtra({
+          banned_until: isPermanent ? null : bannedUntil,
+          is_banned_permanent: isPermanent,
+          ban_reason: reason
+        });
+        setValue('is_active', false);
+      }
       showToast(isPermanent ? `ระงับการใช้งานคุณ ${username} ถาวรแล้ว (เตะออกจากระบบทันที)` : `ระงับการใช้งานคุณ ${username} เรียบร้อย (เตะออกจากระบบทันที)`, 'success');
       setSuspendModal({ isOpen: false, staff: null, isProcessing: false });
       if (onRefresh) onRefresh();
@@ -545,6 +732,14 @@ function Staff({
         }
         return s;
       }));
+      if (editingStaffId && (String(editingStaffId) === String(staffId) || String(editingStaffId) === String(username))) {
+        setEditingStaffExtra({
+          banned_until: null,
+          is_banned_permanent: false,
+          ban_reason: ''
+        });
+        setValue('is_active', true);
+      }
       showToast(`ปลดระงับการใช้งานคุณ ${username} เรียบร้อยแล้ว (สามารถเข้าใช้งานได้)`, 'success');
       setSuspendModal({ isOpen: false, staff: null, isProcessing: false });
       if (onRefresh) onRefresh();
@@ -971,49 +1166,36 @@ function Staff({
 
                       {/* จัดการ */}
                       <td className="py-3.5 px-5 text-right">
-                        {(() => {
-                          const isSuspended = staff.is_banned_permanent || staff.is_active === false || (staff.banned_until && new Date(staff.banned_until) > new Date());
-                          return (
-                            <div className="flex items-center justify-end gap-1">
-                              <button
-                                onClick={() => handleOpenSuspendModal(staff)}
-                                className={`p-1.5 rounded-lg transition cursor-pointer ${
-                                  isSuspended
-                                    ? 'text-rose-600 bg-rose-50 hover:bg-rose-100 ring-1 ring-rose-200'
-                                    : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
-                                }`}
-                                title={isSuspended ? "จัดการการระงับ / ปลดระงับ" : "ระงับการใช้งาน (เตะออกจากระบบ)"}
-                              >
-                                <ShieldAlert className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setSelectedStaff(staff);
-                                  setIsDetailModalOpen(true);
-                                }}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
-                                title="ดูประวัติและผลงาน"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => handleOpenEditModal(staff)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition cursor-pointer"
-                                title="แก้ไขข้อมูลพนักงาน"
-                              >
-                                <Edit className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => promptDeleteStaff(staff)}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                                title="ลบพนักงาน"
-                                disabled={staffList.length <= 1}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          );
-                        })()}
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedStaff(staff);
+                              setIsDetailModalOpen(true);
+                            }}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
+                            title="ดูประวัติและผลงาน"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditModal(staff)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition cursor-pointer"
+                            title="แก้ไขข้อมูลพนักงาน"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => promptDeleteStaff(staff)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer disabled:opacity-50"
+                            title="ลบพนักงาน"
+                            disabled={staffList.length <= 1}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1117,28 +1299,32 @@ function Staff({
                 {/* Actions */}
                 <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-50">
                   <button
-                    onClick={() => handleOpenSuspendModal(staff)}
-                    className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-bold transition flex items-center gap-1"
-                    title="ระงับการใช้งาน / เตะออกจากระบบ"
-                  >
-                    <ShieldAlert className="w-4 h-4" />
-                  </button>
-                  <button
+                    type="button"
                     onClick={() => {
                       setSelectedStaff(staff);
                       setIsDetailModalOpen(true);
                     }}
-                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1"
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer"
                   >
                     <Eye className="w-3.5 h-3.5" />
-                    <span>ดูโปรไฟล์</span>
+                    <span>ดูรายละเอียด</span>
                   </button>
                   <button
+                    type="button"
                     onClick={() => handleOpenEditModal(staff)}
-                    className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition flex items-center gap-1"
+                    className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer"
                   >
                     <Edit className="w-3.5 h-3.5" />
                     <span>แก้ไข</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => promptDeleteStaff(staff)}
+                    disabled={staffList.length <= 1}
+                    className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>ลบ</span>
                   </button>
                 </div>
               </div>
@@ -1179,7 +1365,7 @@ function Staff({
                   </div>
                   <p className="text-xs sm:text-sm text-slate-500 font-medium">
                     {editingStaffId
-                      ? (isViewOnly ? 'ล็อกป้องกันการแก้ไขโดยไม่ตั้งใจ กดปุ่มแก้ไขด้านล่างเพื่อปรับข้อมูล' : 'ปรับปรุงข้อมูลส่วนตัว สิทธิ์การใช้งาน และรหัสผ่าน')
+                      ? (isViewOnly ? 'ล็อกป้องกันการแก้ไขโดยไม่ตั้งใจ กดปุ่มแก้ไขด้านล่างเพื่อปรับข้อมูล' : 'จัดการข้อมูลพนักงานและบัญชีผู้ใช้งาน')
                       : 'สร้างบัญชีพนักงานใหม่และกำหนดสิทธิ์เข้าใช้งานระบบ'}
                   </p>
                 </div>
@@ -1196,56 +1382,86 @@ function Staff({
             {/* Modal Form */}
             <form onSubmit={handleSubmit(onSubmitStaff)} className="flex flex-col flex-1 overflow-hidden">
               <div className="flex-1 overflow-y-auto p-5 sm:p-8 space-y-6 custom-scrollbar overscroll-contain">
-                <fieldset
-                  disabled={isViewOnly}
-                  className="block min-w-0 border-0 p-0 m-0 space-y-6 [&_input:disabled]:bg-slate-100 [&_input:disabled]:text-slate-500 [&_input:disabled]:cursor-not-allowed [&_select:disabled]:bg-slate-100 [&_select:disabled]:text-slate-500 [&_select:disabled]:cursor-not-allowed"
-                >
-                  {/* Section 1: ข้อมูลพื้นฐาน & บัญชีเข้าสู่ระบบ */}
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-2 pb-1 border-b border-slate-100">
-                      <div className="w-2 h-2 rounded-full bg-indigo-600" />
-                      <h4 className="text-sm font-bold text-slate-800 tracking-tight">
-                        1. ข้อมูลพื้นฐาน &amp; บัญชีเข้าสู่ระบบ
-                      </h4>
-                    </div>
+                {/* Section 1: ข้อมูลพื้นฐาน & บัญชีเข้าสู่ระบบ */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 pb-1 border-b border-slate-100">
+                    <div className="w-2 h-2 rounded-full bg-indigo-600" />
+                    <h4 className="text-sm font-bold text-slate-800 tracking-tight">
+                      1. ข้อมูลพื้นฐาน &amp; บัญชีเข้าสู่ระบบ
+                    </h4>
+                  </div>
 
-                    <div className="flex flex-col sm:flex-row gap-5 sm:gap-6 items-center sm:items-start">
-                      {/* Left Avatar Column */}
-                      <div className="flex flex-col items-center gap-2 shrink-0">
-                        <div className="relative">
-                          <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full border-2 border-dashed border-slate-200 bg-slate-50 relative flex items-center justify-center overflow-hidden shadow-inner">
-                            {(() => {
-                              const resolvedSrc = processImageUrl(watchedAvatarUrl);
-                              if (resolvedSrc && !avatarError) {
-                                return (
-                                  <img
-                                    src={resolvedSrc}
-                                    alt="Avatar Preview"
-                                    referrerPolicy="no-referrer"
-                                    className="w-full h-full object-cover"
-                                    onError={() => setAvatarError(true)}
-                                  />
-                                );
-                              }
-                              return <User className="w-10 h-10 text-slate-300" />;
-                            })()}
-                          </div>
-                          {!isViewOnly && (
-                            <button
-                              type="button"
-                              onClick={() => setShowAvatarUrlInput(!showAvatarUrlInput)}
-                              className="absolute bottom-0 right-0 p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-md transition-all active:scale-95 cursor-pointer z-10"
-                              title="เปลี่ยน / ใส่ลิงก์รูปภาพ"
-                            >
-                              <Camera className="w-3.5 h-3.5" />
-                            </button>
+                  <div className="flex flex-col sm:flex-row gap-5 sm:gap-6 items-center sm:items-start">
+                    {/* Left Avatar Column */}
+                    <div className="flex flex-col items-center gap-2 shrink-0">
+                      <input
+                        ref={avatarFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        disabled={isViewOnly || isUploadingAvatar}
+                        onChange={(e) => {
+                          if (e.target.files?.[0]) {
+                            handleUploadAvatarFile(e.target.files[0]);
+                          }
+                        }}
+                      />
+                      <div className="relative">
+                        <div
+                          onClick={() => {
+                            if (!isViewOnly && !isUploadingAvatar) {
+                              avatarFileInputRef.current?.click();
+                            }
+                          }}
+                          title={!isViewOnly ? 'คลิกเพื่อเลือกรูปภาพจากเครื่อง' : 'รูปถ่ายพนักงาน'}
+                          className={`w-24 h-24 sm:w-28 sm:h-28 rounded-full border-2 border-dashed border-slate-200 bg-slate-50 relative flex items-center justify-center overflow-hidden shadow-inner transition ${
+                            !isViewOnly && !isUploadingAvatar ? 'cursor-pointer hover:border-indigo-400 group' : ''
+                          }`}
+                        >
+                          {(() => {
+                            const resolvedSrc = processImageUrl(watchedAvatarUrl);
+                            if (resolvedSrc && !avatarError) {
+                              return (
+                                <img
+                                  src={resolvedSrc}
+                                  alt="Avatar Preview"
+                                  referrerPolicy="no-referrer"
+                                  className="w-full h-full object-cover"
+                                  onError={() => setAvatarError(true)}
+                                />
+                              );
+                            }
+                            return <User className="w-10 h-10 text-slate-300" />;
+                          })()}
+                          {isUploadingAvatar && (
+                            <div className="absolute inset-0 bg-indigo-950/60 backdrop-blur-xs flex items-center justify-center text-white z-20">
+                              <Loader2 className="w-6 h-6 animate-spin" />
+                            </div>
                           )}
                         </div>
-                        <span className="text-xs text-slate-400 font-medium">รูปถ่ายพนักงาน</span>
+                        {!isViewOnly && (
+                          <button
+                            type="button"
+                            disabled={isUploadingAvatar}
+                            onClick={() => avatarFileInputRef.current?.click()}
+                            className="absolute bottom-0 right-0 p-2 bg-violet-600 hover:bg-violet-700 text-white rounded-full shadow-md transition-all active:scale-95 cursor-pointer z-10 disabled:opacity-50"
+                            title="อัปโหลดรูปภาพจากเครื่อง"
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
+                      <span className="text-xs text-slate-400 font-medium">
+                        {!isViewOnly ? 'คลิกเพื่ออัปโหลดรูปภาพ' : 'รูปถ่ายพนักงาน'}
+                      </span>
+                    </div>
 
-                      {/* Right Account Credentials Card */}
-                      <div className="flex-1 w-full bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 sm:p-5 space-y-4">
+                    {/* Right Account Credentials Card */}
+                    <div className="flex-1 w-full bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 sm:p-5 space-y-4">
+                      <fieldset
+                        disabled={isViewOnly}
+                        className="block min-w-0 border-0 p-0 m-0 [&_input:disabled]:bg-slate-100 [&_input:disabled]:text-slate-500 [&_input:disabled]:cursor-not-allowed"
+                      >
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
                             <label className="block text-sm font-bold text-slate-700 mb-1.5 flex items-center justify-between">
@@ -1280,96 +1496,63 @@ function Staff({
                             )}
                           </div>
                         </div>
+                      </fieldset>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-bold text-slate-700 mb-1.5">
-                              รหัสผ่าน (Password) *
-                            </label>
-                            <div className="relative">
-                              <input
-                                type={showPassword ? 'text' : 'password'}
-                                {...register('password')}
-                                placeholder="กำหนดรหัสผ่าน"
-                                className={`w-full h-[46px] pl-4 pr-11 py-3 bg-white border rounded-xl text-base font-medium font-mono text-slate-800 focus:outline-none focus:ring-2 transition ${
-                                  errors.password ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
-                                }`}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setShowPassword(!showPassword)}
-                                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-indigo-600 transition rounded-lg hover:bg-slate-100 cursor-pointer"
-                                title={showPassword ? 'ซ่อนรหัสผ่าน' : 'ดูรหัสผ่าน'}
-                              >
-                                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                              </button>
+                      {/* รหัสผ่านและการเข้าสู่ระบบ (Privacy-First One-Time Link Workflow) */}
+                      <div className="pt-1">
+                        {editingStaffId ? (
+                          <div className="p-3.5 sm:p-4 bg-white border border-slate-200/90 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="flex items-start gap-2.5">
+                              <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg shrink-0 mt-0.5">
+                                <Lock className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <div className="text-sm font-bold text-slate-800">
+                                  รหัสผ่านถูกซ่อนเพื่อความเป็นส่วนตัว
+                                </div>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                  พนักงานเป็นผู้ตั้งรหัสผ่านเองผ่านลิงก์ชั่วคราว (แอดมินจะไม่เห็นรหัสผ่าน)
+                                </p>
+                              </div>
                             </div>
-                            {errors.password && (
-                              <p className="text-xs text-rose-600 font-bold mt-1">{errors.password.message}</p>
-                            )}
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-bold text-slate-700 mb-1.5 flex items-center justify-between">
-                              <span>ยืนยันรหัสผ่าน (Confirm) *</span>
-                              {watchedConfirmPassword && (
-                                watchedPassword === watchedConfirmPassword ? (
-                                  <span className="text-xs text-emerald-600 font-bold flex items-center gap-0.5">
-                                    <Check className="w-3.5 h-3.5" /> รหัสตรงกัน
-                                  </span>
-                                ) : (
-                                  <span className="text-xs text-rose-500 font-bold">
-                                    รหัสไม่ตรงกัน
-                                  </span>
-                                )
+                            <button
+                              type="button"
+                              disabled={isGeneratingResetLink}
+                              onClick={() => handleGenerateResetLink()}
+                              className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs sm:text-sm font-bold transition flex items-center justify-center gap-1.5 shrink-0 cursor-pointer active:scale-95 disabled:opacity-50"
+                            >
+                              {isGeneratingResetLink ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <KeyRound className="w-4 h-4" />
                               )}
-                            </label>
-                            <div className="relative">
-                              <input
-                                type={showConfirmPassword ? 'text' : 'password'}
-                                {...register('confirmPassword')}
-                                placeholder="กรอกรหัสผ่านซ้ำอีกรอบ"
-                                className={`w-full h-[46px] pl-4 pr-11 py-3 bg-white border rounded-xl text-base font-medium font-mono text-slate-800 focus:outline-none focus:ring-2 transition ${
-                                  (watchedConfirmPassword && watchedPassword !== watchedConfirmPassword) || errors.confirmPassword
-                                    ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500'
-                                    : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
-                                }`}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-indigo-600 transition rounded-lg hover:bg-slate-100 cursor-pointer"
-                                title={showConfirmPassword ? 'ซ่อนรหัสผ่าน' : 'ดูรหัสผ่าน'}
-                              >
-                                {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                              </button>
-                            </div>
-                            {errors.confirmPassword && (
-                              <p className="text-xs text-rose-600 font-bold mt-1">{errors.confirmPassword.message}</p>
-                            )}
+                              <span>เปลี่ยนรหัสผ่าน (สร้างลิงก์ 15 นาที)</span>
+                            </button>
                           </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Avatar URL Input toggle */}
-                    {(showAvatarUrlInput || errors.avatar_url) && (
-                      <div className="p-4 bg-slate-50/80 border border-slate-200/80 rounded-2xl animate-in fade-in duration-200">
-                        <label className="block text-sm font-bold text-slate-700 mb-1.5">
-                          รูปถ่ายพนักงาน (URL หรือ Drive Link)
-                        </label>
-                        <input
-                          type="text"
-                          {...register('avatar_url')}
-                          placeholder="https://... หรือ ลิงก์รูปภาพพนักงาน"
-                          className="w-full h-[46px] px-4 py-3 bg-white border border-slate-200 rounded-xl text-base font-medium font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
-                        />
-                        {errors.avatar_url && (
-                          <p className="text-xs text-rose-600 font-bold mt-1">{errors.avatar_url.message}</p>
+                        ) : (
+                          <div className="p-3.5 sm:p-4 bg-indigo-50/70 border border-indigo-100 rounded-xl flex items-start gap-2.5">
+                            <div className="p-2 bg-white text-indigo-600 rounded-lg border border-indigo-100 shrink-0 mt-0.5">
+                              <KeyRound className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <div className="text-sm font-bold text-indigo-950">
+                                พนักงานตั้งรหัสผ่านด้วยตนเอง
+                              </div>
+                              <p className="text-xs text-indigo-700/90 mt-0.5 leading-relaxed">
+                                เมื่อกดบันทึกพนักงานใหม่ ระบบจะสร้างลิงก์ + QR Code (อายุ 15 นาที) ให้ส่งต่อให้พนักงานตั้งรหัสผ่านเองทันที โดยที่แอดมินไม่ทราบรหัสผ่าน
+                              </p>
+                            </div>
+                          </div>
                         )}
                       </div>
-                    )}
+                    </div>
                   </div>
+                </div>
+
+                <fieldset
+                  disabled={isViewOnly}
+                  className="block min-w-0 border-0 p-0 m-0 space-y-6 [&_input:disabled]:bg-slate-100 [&_input:disabled]:text-slate-500 [&_input:disabled]:cursor-not-allowed [&_select:disabled]:bg-slate-100 [&_select:disabled]:text-slate-500 [&_select:disabled]:cursor-not-allowed"
+                >
 
                   {/* Section 2: ข้อมูลส่วนตัว & สิทธิ์การใช้งาน */}
                   <div className="space-y-4">
@@ -1479,17 +1662,6 @@ function Staff({
                         )}
                       </div>
                     </div>
-
-                    {/* Role explanation alert */}
-                    <div className="p-3.5 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs sm:text-sm text-indigo-900 flex items-start gap-2.5">
-                      <span className="text-base leading-none mt-0.5">💡</span>
-                      <div>
-                        <b>สิทธิ์ของตำแหน่ง {getRoleInfo(watchedRole).label}:</b> {getRoleInfo(watchedRole).desc}
-                        <div className="text-xs text-indigo-600 mt-1">
-                          (สามารถตั้งค่าสิทธิ์ว่าแต่ละตำแหน่งเปิดหน้าจอใดได้บ้าง ที่หน้า <b>ตั้งค่าระบบ &gt; สิทธิ์และบทบาท</b>)
-                        </div>
-                      </div>
-                    </div>
                   </div>
 
                   {/* Section 3: ข้อมูลติดต่อ & ที่อยู่ */}
@@ -1567,56 +1739,61 @@ function Staff({
                       )}
                     </div>
                   </div>
+                </fieldset>
 
-                  {/* Section 4: สถานะบัญชี & ความปลอดภัย */}
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-2 pb-1 border-b border-slate-100 pt-2">
-                      <div className="w-2 h-2 rounded-full bg-indigo-600" />
-                      <h4 className="text-sm font-bold text-slate-800 tracking-tight">
-                        4. สถานะบัญชี &amp; ความปลอดภัย
-                      </h4>
-                    </div>
+                {/* Section 4: สถานะบัญชี & ความปลอดภัย */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 pb-1 border-b border-slate-100 pt-2">
+                    <div className="w-2 h-2 rounded-full bg-indigo-600" />
+                    <h4 className="text-sm font-bold text-slate-800 tracking-tight">
+                      4. สถานะบัญชี &amp; ความปลอดภัย
+                    </h4>
+                  </div>
 
-                    {/* Suspension Banner if Staff is Banned */}
-                    {editingStaffId && (editingStaffExtra.is_banned_permanent || (editingStaffExtra.banned_until && new Date(editingStaffExtra.banned_until) > new Date())) && (
-                      <div className="p-4 bg-rose-50/90 border border-rose-200 rounded-2xl text-xs sm:text-sm text-rose-800 flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-2.5">
-                          <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                          <div>
-                            <div className="font-bold text-rose-900 text-sm">
-                              {editingStaffExtra.is_banned_permanent ? 'บัญชีพนักงานนี้ถูกระงับการใช้งานถาวร' : 'บัญชีพนักงานนี้ถูกระงับการใช้งานชั่วคราว'}
-                            </div>
-                            {editingStaffExtra.banned_until && !editingStaffExtra.is_banned_permanent && (
-                              <div className="text-xs text-rose-700 mt-1">
-                                สิ้นสุดการระงับ: {new Date(editingStaffExtra.banned_until).toLocaleString('th-TH')}
-                              </div>
-                            )}
-                            {editingStaffExtra.ban_reason && (
-                              <div className="text-xs text-rose-600 mt-1">
-                                เหตุผล: {editingStaffExtra.ban_reason}
-                              </div>
-                            )}
+                  {/* Suspension Banner if Staff is Banned */}
+                  {editingStaffId && (editingStaffExtra.is_banned_permanent || (editingStaffExtra.banned_until && new Date(editingStaffExtra.banned_until) > new Date())) && (
+                    <div className="p-4 bg-rose-50/90 border border-rose-200 rounded-2xl text-xs sm:text-sm text-rose-800 flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-2.5">
+                        <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                        <div>
+                          <div className="font-bold text-rose-900 text-sm">
+                            {editingStaffExtra.is_banned_permanent ? 'บัญชีพนักงานนี้ถูกระงับการใช้งานถาวร' : 'บัญชีพนักงานนี้ถูกระงับการใช้งานชั่วคราว'}
                           </div>
+                          {editingStaffExtra.banned_until && !editingStaffExtra.is_banned_permanent && (
+                            <div className="text-xs text-rose-700 mt-1">
+                              สิ้นสุดการระงับ: {new Date(editingStaffExtra.banned_until).toLocaleString('th-TH')}
+                            </div>
+                          )}
+                          {editingStaffExtra.ban_reason && (
+                            <div className="text-xs text-rose-600 mt-1">
+                              เหตุผล: {editingStaffExtra.ban_reason}
+                            </div>
+                          )}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const target = staffList.find(s => s.id === editingStaffId || s.username === editingStaffId || s.staff_code === editingStaffId);
-                            if (target) handleOpenSuspendModal(target);
-                          }}
-                          className="px-3.5 py-1.5 bg-white hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl font-bold text-xs shrink-0 transition cursor-pointer shadow-xs"
-                        >
-                          จัดการ / ปลดระงับ
-                        </button>
                       </div>
-                    )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const target = staffList.find(s => s.id === editingStaffId || s.username === editingStaffId || s.staff_code === editingStaffId);
+                          if (target) handleOpenSuspendModal(target);
+                        }}
+                        className="px-3.5 py-1.5 bg-white hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl font-bold text-xs shrink-0 transition cursor-pointer shadow-xs"
+                      >
+                        จัดการ / ปลดระงับ
+                      </button>
+                    </div>
+                  )}
 
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-slate-50/80 border border-slate-200/80 rounded-2xl">
-                      <label className="flex items-center gap-3 cursor-pointer select-none">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-slate-50/80 border border-slate-200/80 rounded-2xl">
+                    <fieldset
+                      disabled={isViewOnly}
+                      className="min-w-0 border-0 p-0 m-0"
+                    >
+                      <label className={`flex items-center gap-3 select-none ${isViewOnly ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}>
                         <input
                           type="checkbox"
                           {...register('is_active')}
-                          className="w-5 h-5 text-indigo-600 rounded-lg focus:ring-indigo-500 cursor-pointer"
+                          className="w-5 h-5 text-indigo-600 rounded-lg focus:ring-indigo-500 disabled:cursor-not-allowed cursor-pointer"
                         />
                         <div>
                           <span className="text-sm font-bold text-slate-800 block">
@@ -1627,32 +1804,32 @@ function Staff({
                           </span>
                         </div>
                       </label>
+                    </fieldset>
 
-                      {editingStaffId && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const target = staffList.find(s => s.id === editingStaffId || s.username === editingStaffId || s.staff_code === editingStaffId);
-                            if (target) handleOpenSuspendModal(target);
-                          }}
-                          className={`whitespace-nowrap px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition cursor-pointer shadow-xs self-start sm:self-auto ${
-                            editingStaffExtra.is_banned_permanent || (editingStaffExtra.banned_until && new Date(editingStaffExtra.banned_until) > new Date())
-                              ? 'bg-rose-100 text-rose-800 border border-rose-200 hover:bg-rose-200'
-                              : 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200'
-                          }`}
-                          title="คลิกเพื่อตั้งเวลาแบน / เตะออกจากระบบ"
-                        >
-                          <ShieldAlert className="w-4 h-4 text-rose-600" />
-                          <span>
-                            {editingStaffExtra.is_banned_permanent || (editingStaffExtra.banned_until && new Date(editingStaffExtra.banned_until) > new Date())
-                              ? 'จัดการการระงับผู้ใช้'
-                              : 'ระงับผู้ใช้ (เตะทันที)'}
-                          </span>
-                        </button>
-                      )}
-                    </div>
+                    {editingStaffId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const target = staffList.find(s => s.id === editingStaffId || s.username === editingStaffId || s.staff_code === editingStaffId);
+                          if (target) handleOpenSuspendModal(target);
+                        }}
+                        className={`whitespace-nowrap px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition cursor-pointer shadow-xs self-start sm:self-auto ${
+                          editingStaffExtra.is_banned_permanent || (editingStaffExtra.banned_until && new Date(editingStaffExtra.banned_until) > new Date())
+                            ? 'bg-rose-100 text-rose-800 border border-rose-200 hover:bg-rose-200'
+                            : 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200'
+                        }`}
+                        title="คลิกเพื่อตั้งเวลาแบน / เตะออกจากระบบ"
+                      >
+                        <ShieldAlert className="w-4 h-4 text-rose-600" />
+                        <span>
+                          {editingStaffExtra.is_banned_permanent || (editingStaffExtra.banned_until && new Date(editingStaffExtra.banned_until) > new Date())
+                            ? 'จัดการการระงับผู้ใช้'
+                            : 'ระงับผู้ใช้ (เตะทันที)'}
+                        </span>
+                      </button>
+                    )}
                   </div>
-                </fieldset>
+                </div>
               </div>
 
               {/* Modal Footer (Sticky at Bottom) */}
@@ -1682,15 +1859,15 @@ function Staff({
                   <button
                     key="staff-save-submit-btn"
                     type="submit"
-                    disabled={isSaving}
+                    disabled={isSaving || isUploadingAvatar}
                     className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
                   >
-                    {isSaving ? (
+                    {(isSaving || isUploadingAvatar) ? (
                       <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     ) : (
                       <Check className="w-4 h-4" />
                     )}
-                    <span>{isSaving ? 'กำลังบันทึก...' : (editingStaffId ? 'บันทึกการแก้ไข' : 'สร้างบัญชีพนักงาน')}</span>
+                    <span>{isUploadingAvatar ? 'กำลังอัปโหลดรูป...' : isSaving ? 'กำลังบันทึก...' : (editingStaffId ? 'บันทึกการแก้ไข' : 'สร้างบัญชีพนักงาน')}</span>
                   </button>
                 )}
               </div>
@@ -1755,13 +1932,10 @@ function Staff({
               {/* Role badge card */}
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
                 <div>
-                  <span className="text-xs font-bold text-slate-400 block">ตำแหน่งและหน้าที่</span>
+                  <span className="text-xs font-bold text-slate-400 block">ตำแหน่ง</span>
                   <span className="text-base font-bold text-slate-800">
                     {getRoleInfo(selectedStaff.role).label}
                   </span>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {getRoleInfo(selectedStaff.role).desc}
-                  </p>
                 </div>
                 <span className={`px-3 py-1 rounded-xl text-xs font-black border ${getRoleInfo(selectedStaff.role).color}`}>
                   รหัส {getRoleInfo(selectedStaff.role).code}
@@ -1896,6 +2070,13 @@ function Staff({
           </div>
         </div>
       )}
+
+      {/* One-Time Password Reset Link + QR Modal */}
+      <PasswordResetLinkModal
+        isOpen={Boolean(resetLinkData)}
+        onClose={() => setResetLinkData(null)}
+        resetData={resetLinkData}
+      />
 
       {/* Suspend / Ban Staff Modal */}
       <SuspendStaffModal

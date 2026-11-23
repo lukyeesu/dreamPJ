@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, 
   Check, 
@@ -25,13 +25,36 @@ import ModernDateTimePicker from '../common/ModernDateTimePicker';
 import { processImageUrl } from '../../utils/formatters';
 import { useModalCloseGuard } from '../../hooks/useModalCloseGuard';
 
+function compressAvatarImage(file, maxWidth = 800, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = (err) => reject(err);
+      img.src = event.target.result;
+    };
+    reader.onerror = (err) => reject(err);
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function UserProfileModal({
   isOpen,
   onClose,
   userProfile,
   onUpdateProfile,
   showToast = () => {},
-  handleProfileImageUpload = null
+  handleProfileImageUpload = null,
+  isUploadingProfile = false
 }) {
   const [formData, setFormData] = useState({
     name: '',
@@ -52,18 +75,64 @@ export default function UserProfileModal({
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingLocal, setIsUploadingLocal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [avatarLoadError, setAvatarLoadError] = useState(false);
+  const wasOpenRef = useRef(false);
+  const loadedUsernameRef = useRef(null);
+  const prevProfileImageRef = useRef(userProfile?.image);
+  const effectiveUploading = Boolean(isUploadingProfile || isUploadingLocal);
 
   const resolvedAvatarUrl = processImageUrl(formData.avatar_url || '');
   useEffect(() => {
     setAvatarLoadError(false);
   }, [resolvedAvatarUrl]);
 
-  // Load latest staff data from db.staff when modal opens
+  // Load latest staff data from db.staff only when modal opens (or username changes while open)
   useEffect(() => {
-    if (!isOpen || !userProfile?.username) return;
+    if (!isOpen) {
+      if (wasOpenRef.current) {
+        wasOpenRef.current = false;
+        loadedUsernameRef.current = null;
+        setIsEditing(false);
+        setShowPassword(false);
+        setShowConfirmPassword(false);
+        setFormData((prev) => ({
+          ...prev,
+          password: '',
+          confirmPassword: ''
+        }));
+      }
+      return;
+    }
+
+    if (!userProfile?.username) return;
+
+    const shouldReloadFromDb =
+      !wasOpenRef.current || loadedUsernameRef.current !== userProfile.username;
+
+    if (!shouldReloadFromDb) {
+      if (userProfile.image !== prevProfileImageRef.current) {
+        prevProfileImageRef.current = userProfile.image;
+        if (
+          userProfile.image !== undefined &&
+          !String(userProfile.image || '').startsWith('data:image/')
+        ) {
+          setFormData((prev) => ({
+            ...prev,
+            avatar_url: userProfile.image
+          }));
+        }
+      }
+      return;
+    }
+
+    wasOpenRef.current = true;
+    loadedUsernameRef.current = userProfile.username;
+    prevProfileImageRef.current = userProfile.image;
     setIsEditing(false);
+    setShowPassword(false);
+    setShowConfirmPassword(false);
 
     let isMounted = true;
     const fetchStaffData = async () => {
@@ -83,8 +152,8 @@ export default function UserProfileModal({
               address: staff.address || '',
               emergency_contact: staff.emergency_contact || '',
               avatar_url: staff.avatar_url || staff.image || userProfile.image || '',
-              password: staff.password || '',
-              confirmPassword: staff.password || ''
+              password: '',
+              confirmPassword: ''
             });
           } else {
             setFormData({
@@ -120,7 +189,7 @@ export default function UserProfileModal({
     onClose,
     shouldConfirm: isEditing,
     watch: isOpen ? formData : null,
-    disabled: isSaving,
+    disabled: isSaving || effectiveUploading,
     listenEscape: true,
   });
 
@@ -134,17 +203,80 @@ export default function UserProfileModal({
     roleName === 'driver' ? 'พนักงานจัดส่ง' : 'ฝ่ายบัญชีและการเงิน'
   );
 
+  const getSafePreviousAvatar = (currentVal) => {
+    const candidates = [currentVal, staffInfo?.avatar_url, staffInfo?.image, userProfile?.image];
+    const valid = candidates.find((u) => typeof u === 'string' && !u.trim().startsWith('data:image/'));
+    return valid || '';
+  };
+
+  const handleAvatarFileSelection = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    if (!file.type || !file.type.startsWith('image/')) {
+      showToast('กรุณาเลือกไฟล์รูปภาพเท่านั้น', 'error');
+      return;
+    }
+
+    const previousAvatar = getSafePreviousAvatar(formData.avatar_url);
+    setIsUploadingLocal(true);
+    try {
+      const compressedDataUrl = await compressAvatarImage(file, 800, 0.82);
+      setFormData((prev) => ({ ...prev, avatar_url: compressedDataUrl }));
+
+      if (!handleProfileImageUpload) {
+        setFormData((prev) => ({ ...prev, avatar_url: previousAvatar }));
+        showToast('ไม่สามารถอัปโหลดรูปโปรไฟล์ได้ในขณะนี้', 'error');
+        return;
+      }
+
+      const uploadedUrl = await handleProfileImageUpload(file);
+      if (uploadedUrl && typeof uploadedUrl === 'string' && !uploadedUrl.startsWith('data:image/')) {
+        setFormData((prev) => ({ ...prev, avatar_url: uploadedUrl }));
+      } else {
+        setFormData((prev) => ({ ...prev, avatar_url: previousAvatar }));
+      }
+    } catch (uploadErr) {
+      console.error('Avatar upload error:', uploadErr);
+      setFormData((prev) => ({ ...prev, avatar_url: previousAvatar }));
+      showToast('อัปโหลดรูปโปรไฟล์ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง', 'error');
+    } finally {
+      setIsUploadingLocal(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
+
+    if (effectiveUploading) {
+      showToast('กำลังอัปโหลดรูปโปรไฟล์ กรุณารอสักครู่...', 'error');
+      return;
+    }
 
     if (!formData.name.trim()) {
       showToast('กรุณาระบุชื่อ-นามสกุล', 'error');
       return;
     }
 
-    if (formData.password && formData.password !== formData.confirmPassword) {
-      showToast('รหัสผ่านและยืนยันรหัสผ่านไม่ตรงกัน กรุณาตรวจสอบอีกครั้ง', 'error');
+    const cleanAvatarUrl = (formData.avatar_url || '').trim();
+    if (cleanAvatarUrl.startsWith('data:image/')) {
+      const fallbackAvatar = getSafePreviousAvatar('');
+      setFormData((prev) => ({ ...prev, avatar_url: fallbackAvatar }));
+      showToast('อัปโหลดรูปโปรไฟล์ยังไม่สำเร็จ กรุณาเลือกและอัปโหลดรูปใหม่อีกครั้ง', 'error');
       return;
+    }
+
+    const trimmedPassword = (formData.password || '').trim();
+    if (formData.password || formData.confirmPassword) {
+      if (trimmedPassword.length < 6) {
+        showToast('รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 6 ตัวอักษร', 'error');
+        return;
+      }
+      if (formData.password !== formData.confirmPassword) {
+        showToast('รหัสผ่านและยืนยันรหัสผ่านไม่ตรงกัน กรุณาตรวจสอบอีกครั้ง', 'error');
+        return;
+      }
     }
 
     setIsSaving(true);
@@ -152,7 +284,7 @@ export default function UserProfileModal({
       const payload = {
         id: staffCode,
         username: formData.username || userProfile.username,
-        password: formData.password || staffInfo?.password || '1',
+        ...(trimmedPassword.length > 0 ? { password: trimmedPassword } : {}),
         name: formData.name.trim(),
         nickname: formData.nickname.trim(),
         role: roleName,
@@ -162,8 +294,8 @@ export default function UserProfileModal({
         birth_date: formData.birth_date || null,
         address: formData.address.trim(),
         emergency_contact: formData.emergency_contact.trim(),
-        avatar_url: formData.avatar_url.trim(),
-        image: formData.avatar_url.trim(),
+        avatar_url: cleanAvatarUrl,
+        image: cleanAvatarUrl,
         is_active: staffInfo?.is_active !== undefined ? staffInfo.is_active : true
       };
 
@@ -277,24 +409,13 @@ export default function UserProfileModal({
                 {isEditing && (
                   <label className="absolute inset-0 bg-black/45 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer text-white" title="คลิกเพื่อเปลี่ยนรูปถ่าย">
                     <Camera className="w-5 h-5 text-white" />
-                    <span className="text-xs font-bold mt-0.5">เปลี่ยนรูป</span>
+                    <span className="text-xs font-bold mt-0.5">{effectiveUploading ? 'กำลังอัปโหลด...' : 'เปลี่ยนรูป'}</span>
                     <input
                       type="file"
                       accept="image/*"
+                      disabled={effectiveUploading}
                       className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          const file = e.target.files[0];
-                          const reader = new FileReader();
-                          reader.onload = (event) => {
-                            setFormData(prev => ({ ...prev, avatar_url: event.target.result }));
-                          };
-                          reader.readAsDataURL(file);
-                          if (handleProfileImageUpload) {
-                            handleProfileImageUpload(file);
-                          }
-                        }
-                      }}
+                      onChange={handleAvatarFileSelection}
                     />
                   </label>
                 )}
@@ -324,26 +445,15 @@ export default function UserProfileModal({
                 </div>
 
                 {isEditing && (
-                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white text-indigo-700 hover:bg-indigo-50 border border-indigo-200 text-xs font-bold transition shadow-2xs cursor-pointer mt-2.5">
+                  <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white text-indigo-700 hover:bg-indigo-50 border border-indigo-200 text-xs font-bold transition shadow-2xs mt-2.5 ${effectiveUploading ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}>
                     <Camera className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>เปลี่ยนรูปถ่ายโปรไฟล์</span>
+                    <span>{effectiveUploading ? 'กำลังอัปโหลดรูปโปรไฟล์...' : 'เปลี่ยนรูปถ่ายโปรไฟล์'}</span>
                     <input
                       type="file"
                       accept="image/*"
+                      disabled={effectiveUploading}
                       className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          const file = e.target.files[0];
-                          const reader = new FileReader();
-                          reader.onload = (event) => {
-                            setFormData(prev => ({ ...prev, avatar_url: event.target.result }));
-                          };
-                          reader.readAsDataURL(file);
-                          if (handleProfileImageUpload) {
-                            handleProfileImageUpload(file);
-                          }
-                        }
-                      }}
+                      onChange={handleAvatarFileSelection}
                     />
                   </label>
                 )}
@@ -495,7 +605,7 @@ export default function UserProfileModal({
                       type={showPassword ? 'text' : 'password'}
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      placeholder="กำหนดรหัสผ่านใหม่"
+                      placeholder="เว้นว่างไว้หากไม่ต้องการเปลี่ยนรหัสผ่าน (อย่างน้อย 6 ตัวอักษร)"
                       className="w-full pl-3.5 pr-10 py-2.5 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-bold font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
                     />
                     <button
@@ -575,15 +685,15 @@ export default function UserProfileModal({
               <button
                 key="submit-save-btn"
                 type="submit"
-                disabled={isSaving}
-                className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
+                disabled={isSaving || effectiveUploading}
+                className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
-                {isSaving ? (
+                {isSaving || effectiveUploading ? (
                   <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 ) : (
                   <Check className="w-4 h-4" />
                 )}
-                <span>{isSaving ? 'กำลังบันทึก...' : 'บันทึกข้อมูลโปรไฟล์'}</span>
+                <span>{effectiveUploading ? 'กำลังอัปโหลดรูป...' : isSaving ? 'กำลังบันทึก...' : 'บันทึกข้อมูลโปรไฟล์'}</span>
               </button>
             )}
           </div>

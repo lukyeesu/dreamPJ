@@ -5,8 +5,8 @@ import { db } from '../../services/db';
 import { getActiveClient } from '../../services/supabaseClient';
 
 const LOCATION_COLUMNS = 'id,name,zone,gate_info,parking_height_limit,dock_contact_phone,default_map_link,loading_dock_map_link,delivery_tips,is_active';
-const ARTIST_COLUMNS = 'id,name,agency,fandom_name,fandom_color,birth_date,debut_date,bio,social_links,favorite_flowers,avatar_url,notes,created_at';
-const CUSTOMER_COLUMNS = 'id,name,phone,line_id,social_account,email,tax_id,billing_address,vip_tier,primary_artist_id,created_at';
+const ARTIST_COLUMNS = 'id,name,agency,fandom_name';
+const CUSTOMER_COLUMNS = 'id,name,phone,line_id,social_account,email,vip_tier';
 const INVENTORY_COLUMNS = 'id,code,name,category_id,item_type,unit,current_stock,min_alert_threshold,average_cost,storage_location,color,size,status,is_active';
 const PROJECT_LOOKUP_COLUMNS = 'id,name,artist_name,customer_name,location_name,project_datetime';
 
@@ -210,6 +210,7 @@ export default function DbCombobox({
   const rootRef = useRef(null);
   const inputRef = useRef(null);
   const dropdownRef = useRef(null);
+  const hasUserTypedRef = useRef(false);
 
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -224,11 +225,12 @@ export default function DbCombobox({
   // Close if disabled becomes true (e.g., modal switched to view-only lock)
   useEffect(() => {
     if (disabled && isOpen) {
+      hasUserTypedRef.current = false;
       setIsOpen(false);
     }
   }, [disabled, isOpen]);
 
-  // Load IndexedDB table when dropdown opens (zero network cost)
+  // Load IndexedDB table authoritatively when dropdown opens (zero network cost)
   useEffect(() => {
     if (!isOpen || !tableCfg?.dexieTable) return undefined;
     let cancelled = false;
@@ -239,18 +241,12 @@ export default function DbCombobox({
         if (!table || typeof table.toArray !== 'function') return;
         const rows = await table.toArray();
         if (!cancelled && Array.isArray(rows)) {
-          setDbItems((prev) => {
-            const byKey = new Map();
-            rows.forEach((r) => {
-              const norm = tableCfg.mapRow(r);
-              if (norm) byKey.set(norm.value.toLowerCase(), norm);
-            });
-            prev.forEach((item) => {
-              const key = item.value.toLowerCase();
-              if (!byKey.has(key)) byKey.set(key, item);
-            });
-            return Array.from(byKey.values());
+          const byKey = new Map();
+          rows.forEach((r) => {
+            const norm = tableCfg.mapRow(r);
+            if (norm) byKey.set(norm.value.toLowerCase(), norm);
           });
+          setDbItems(Array.from(byKey.values()));
         }
       } catch {
         // Ignore IndexedDB unavailability in SSR / unit tests
@@ -263,6 +259,26 @@ export default function DbCombobox({
     };
   }, [isOpen, tableCfg]);
 
+  // Merge prop options + DB options without duplicates
+  const mergedOptions = useMemo(() => {
+    const byKey = new Map();
+    const list = Array.isArray(options) ? options : [];
+    list.forEach((rawOpt) => {
+      const norm = normalizeOption(rawOpt, tableCfg);
+      if (norm) {
+        const key = `${norm.value.toLowerCase()}::${norm.badge || ''}`;
+        if (!byKey.has(key)) byKey.set(key, norm);
+      }
+    });
+    dbItems.forEach((norm) => {
+      if (norm) {
+        const key = `${norm.value.toLowerCase()}::${norm.badge || ''}`;
+        if (!byKey.has(key)) byKey.set(key, norm);
+      }
+    });
+    return Array.from(byKey.values());
+  }, [options, dbItems, tableCfg]);
+
   // Bounded live Supabase search when dropdown is open and user types (or local list is empty)
   useEffect(() => {
     if (!isOpen || disabled || !tableCfg?.supabaseTable) return undefined;
@@ -270,6 +286,17 @@ export default function DbCombobox({
     const q = stringValue.trim();
     const shouldFetchInitial = dbItems.length === 0 && (!Array.isArray(options) || options.length === 0);
     if (!q && !shouldFetchInitial) return undefined;
+
+    if (q && !hasUserTypedRef.current) {
+      const qLower = q.toLowerCase();
+      const hasLocalMatch = mergedOptions.some((item) => {
+        const labelLower = item.label.toLowerCase();
+        const valueLower = item.value.toLowerCase();
+        const hay = (item.keywords || `${item.label} ${item.sublabel} ${item.badge}`).toLowerCase();
+        return labelLower === qLower || valueLower === qLower || hay.includes(qLower);
+      });
+      if (hasLocalMatch) return undefined;
+    }
 
     let cancelled = false;
     const timer = setTimeout(async () => {
@@ -314,27 +341,7 @@ export default function DbCombobox({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [isOpen, disabled, dbTable, tableCfg, stringValue, dbItems.length, options]);
-
-  // Merge prop options + DB options without duplicates
-  const mergedOptions = useMemo(() => {
-    const byKey = new Map();
-    const list = Array.isArray(options) ? options : [];
-    list.forEach((rawOpt) => {
-      const norm = normalizeOption(rawOpt, tableCfg);
-      if (norm) {
-        const key = `${norm.value.toLowerCase()}::${norm.badge || ''}`;
-        if (!byKey.has(key)) byKey.set(key, norm);
-      }
-    });
-    dbItems.forEach((norm) => {
-      if (norm) {
-        const key = `${norm.value.toLowerCase()}::${norm.badge || ''}`;
-        if (!byKey.has(key)) byKey.set(key, norm);
-      }
-    });
-    return Array.from(byKey.values());
-  }, [options, dbItems, tableCfg]);
+  }, [isOpen, disabled, dbTable, tableCfg, stringValue, dbItems.length, options, mergedOptions]);
 
   const filteredOptions = useMemo(() => {
     const q = stringValue.trim().toLowerCase();
@@ -406,6 +413,7 @@ export default function DbCombobox({
   }, [disabled, computeDropdownStyle]);
 
   const closeDropdown = useCallback(() => {
+    hasUserTypedRef.current = false;
     setIsOpen(false);
     setActiveIndex(-1);
     setDropdownStyle(null);
@@ -531,6 +539,7 @@ export default function DbCombobox({
         }}
         onChange={(e) => {
           if (disabled) return;
+          hasUserTypedRef.current = true;
           onChange?.(e.target.value);
           openDropdown();
           setActiveIndex(-1);

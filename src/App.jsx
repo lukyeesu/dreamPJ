@@ -29,7 +29,6 @@ import {
   ChevronRight,
   ChevronLeft,
   ArrowLeft,
-  PanelLeft,
   ArrowUpRight,
   Folder,
   Plus,
@@ -138,6 +137,8 @@ import {
   subscribeToRealtimeProjects,
   subscribeToRealtimeSettings,
   loadSettingsFromSupabase,
+  loadPublicBrandingFromSupabase,
+  fetchPublicProjectByToken,
   saveSettingsToSupabase,
   extractGoogleDriveFolderId,
   loadLocationsLocalFirst,
@@ -151,6 +152,10 @@ import {
   loadProjectsPaginated,
   loadProjectsByMonth,
   subscribeToStaffRealtime,
+  subscribeToRolesRealtime,
+  subscribeToMasterDataRealtime,
+  subscribeToLocalSyncChannel,
+  allocateNextProjectCodeSync,
   syncDeletedRecords,
   resetProjectLoadCache,
   DEFAULT_STAFF_MEMBERS,
@@ -199,6 +204,7 @@ import ModernDateTimePicker from './components/common/ModernDateTimePicker';
 import DateFilterControl from './components/common/DateFilterControl';
 import SortableHeader from './components/common/SortableHeader';
 import LoginScreen from './components/auth/LoginScreen';
+import ResetPasswordView from './components/auth/ResetPasswordView';
 import CustomerQuotationView from './components/customer/CustomerQuotationView';
 import CustomerTrackingView from './components/customer/CustomerTrackingView';
 import SharePreviewModal from './components/modals/SharePreviewModal';
@@ -337,11 +343,39 @@ const App = () => {
     return saved === 'true';
   });
 
-  // Auto-collapse sidebar on tablet viewports (768px - 1023px) to maximize content breathing room
+  // Auto-collapse sidebar when crossing into tablet viewports (768px - 1023px)
   useEffect(() => {
+    let lastBand = window.innerWidth < 768 ? 'mobile' : window.innerWidth < 1024 ? 'tablet' : 'desktop';
     const handleResize = () => {
-      if (window.innerWidth >= 768 && window.innerWidth < 1024) {
-        setIsSidebarCollapsed(true);
+      const curBand = window.innerWidth < 768 ? 'mobile' : window.innerWidth < 1024 ? 'tablet' : 'desktop';
+      if (curBand !== lastBand) {
+        lastBand = curBand;
+        if (curBand === 'tablet') {
+          sidebarOpIdRef.current += 1;
+          sidebarDragCleanupRef.current?.();
+          if (sidebarAnimRafRef.current) {
+            cancelAnimationFrame(sidebarAnimRafRef.current);
+            sidebarAnimRafRef.current = null;
+          }
+          clearTimeout(sidebarAnimationTimerRef.current);
+          sidebarAnimationTimerRef.current = null;
+          isSidebarAnimatingRef.current = false;
+          isDraggingSidebarRef.current = false;
+          sidebarTargetCollapsedRef.current = true;
+          sidebarCurrentWidthRef.current = SIDEBAR_COLLAPSED_W;
+          sidebarCurrentProgressRef.current = 0;
+          document.body?.classList.remove('is-dragging-sidebar', 'is-sidebar-animating');
+          if (sidebarRef.current) {
+            sidebarRef.current.style.transition = 'none';
+            sidebarRef.current.style.width = `${SIDEBAR_COLLAPSED_W}px`;
+            sidebarRef.current.style.setProperty('--sidebar-p', '0');
+          }
+          if (mainShellRef.current) {
+            mainShellRef.current.style.setProperty('--sidebar-layout-w', `${SIDEBAR_COLLAPSED_W}px`);
+            mainShellRef.current.style.transform = '';
+          }
+          setIsSidebarCollapsed(true);
+        }
       }
     };
     window.addEventListener('resize', handleResize);
@@ -449,6 +483,22 @@ const App = () => {
       }
       return null;
   });
+
+  const [resetToken, setResetToken] = useState(() => {
+      if (typeof window !== 'undefined') {
+          const params = new URLSearchParams(window.location.search);
+          return params.get('reset_token') || null;
+      }
+      return null;
+  });
+
+  const handleExitResetPassword = useCallback(() => {
+      if (typeof window !== 'undefined') {
+          const basePath = getBasePath();
+          window.history.replaceState({}, '', basePath || '/');
+      }
+      setResetToken(null);
+  }, []);
 
   // Image Loading State
   const [areImagesLoaded, setAreImagesLoaded] = useState(() => {
@@ -818,15 +868,496 @@ const App = () => {
     isDirty: false
   });
 
-  const toggleDesktopSidebar = useCallback(() => {
-    setIsSidebarCollapsed((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem('nexus_sidebar_collapsed', String(next));
-      } catch {}
-      return next;
-    });
+  const SIDEBAR_COLLAPSED_W = 80;
+  const SIDEBAR_EXPANDED_W = 256;
+  const sidebarRef = useRef(null);
+  const mainShellRef = useRef(null);
+  const sidebarOpIdRef = useRef(0);
+  const isDraggingSidebarRef = useRef(false);
+  const isSidebarAnimatingRef = useRef(false);
+  const sidebarHasDraggedRef = useRef(false);
+  const suppressSidebarClickRef = useRef(false);
+  const suppressSidebarClickUntilRef = useRef(0);
+  const sidebarStartWidthRef = useRef(isSidebarCollapsed ? 80 : 256);
+  const sidebarCurrentWidthRef = useRef(isSidebarCollapsed ? 80 : 256);
+  const sidebarCurrentProgressRef = useRef(isSidebarCollapsed ? 0 : 1);
+  const sidebarDragStartXRef = useRef(0);
+  const sidebarDragStartYRef = useRef(0);
+  const sidebarRafIdRef = useRef(null);
+  const sidebarAnimRafRef = useRef(null);
+  const sidebarAnimationTimerRef = useRef(null);
+  const sidebarGestureActiveRef = useRef(false);
+  const sidebarDragCleanupRef = useRef(null);
+  const sidebarTargetCollapsedRef = useRef(isSidebarCollapsed);
+
+  useEffect(() => () => {
+    sidebarOpIdRef.current += 1;
+    sidebarDragCleanupRef.current?.();
+    clearTimeout(sidebarAnimationTimerRef.current);
+    if (sidebarRafIdRef.current) cancelAnimationFrame(sidebarRafIdRef.current);
+    if (sidebarAnimRafRef.current) cancelAnimationFrame(sidebarAnimRafRef.current);
+    document.body?.classList.remove('is-dragging-sidebar', 'is-sidebar-animating');
   }, []);
+
+  const enterSidebarGpuMotionMode = useCallback((liveWidth) => {
+    if (mainShellRef.current) {
+      mainShellRef.current.style.setProperty('--sidebar-layout-w', `${SIDEBAR_COLLAPSED_W}px`);
+      const dx = Math.max(0, liveWidth - SIDEBAR_COLLAPSED_W);
+      mainShellRef.current.style.transform = `translate3d(${dx.toFixed(2)}px, 0, 0)`;
+    }
+  }, []);
+
+  const applySidebarMotionFrame = useCallback((width) => {
+    const clampedW = Math.max(SIDEBAR_COLLAPSED_W, Math.min(SIDEBAR_EXPANDED_W, width));
+    const progress = Math.max(
+      0,
+      Math.min(1, (clampedW - SIDEBAR_COLLAPSED_W) / (SIDEBAR_EXPANDED_W - SIDEBAR_COLLAPSED_W))
+    );
+    sidebarCurrentWidthRef.current = clampedW;
+    sidebarCurrentProgressRef.current = progress;
+    if (sidebarRef.current) {
+      sidebarRef.current.style.width = `${clampedW.toFixed(2)}px`;
+      sidebarRef.current.style.setProperty('--sidebar-p', progress.toFixed(4));
+    }
+    if (mainShellRef.current) {
+      const dx = clampedW - SIDEBAR_COLLAPSED_W;
+      mainShellRef.current.style.transform = `translate3d(${dx.toFixed(2)}px, 0, 0)`;
+    }
+  }, []);
+
+  const commitSidebarRestLayout = useCallback((collapsed) => {
+    const w = collapsed ? SIDEBAR_COLLAPSED_W : SIDEBAR_EXPANDED_W;
+    const p = collapsed ? 0 : 1;
+    sidebarCurrentWidthRef.current = w;
+    sidebarCurrentProgressRef.current = p;
+    if (sidebarRef.current) {
+      sidebarRef.current.style.transition = 'none';
+      sidebarRef.current.style.width = `${w}px`;
+      sidebarRef.current.style.setProperty('--sidebar-p', String(p));
+    }
+    if (mainShellRef.current) {
+      mainShellRef.current.style.setProperty('--sidebar-layout-w', `${w}px`);
+      mainShellRef.current.style.transform = '';
+    }
+  }, []);
+
+  const attachSidebarRef = useCallback((node) => {
+    sidebarRef.current = node;
+    if (!node) return;
+    if (!isDraggingSidebarRef.current && !isSidebarAnimatingRef.current) {
+      const collapsed = sidebarTargetCollapsedRef.current;
+      const w = collapsed ? SIDEBAR_COLLAPSED_W : SIDEBAR_EXPANDED_W;
+      const p = collapsed ? 0 : 1;
+      sidebarCurrentWidthRef.current = w;
+      sidebarCurrentProgressRef.current = p;
+      node.style.transition = 'none';
+      node.style.width = `${w}px`;
+      node.style.setProperty('--sidebar-p', String(p));
+    }
+  }, []);
+
+  const attachMainShellRef = useCallback((node) => {
+    mainShellRef.current = node;
+    if (!node) return;
+    if (!isDraggingSidebarRef.current && !isSidebarAnimatingRef.current) {
+      const w = sidebarTargetCollapsedRef.current ? SIDEBAR_COLLAPSED_W : SIDEBAR_EXPANDED_W;
+      node.style.setProperty('--sidebar-layout-w', `${w}px`);
+      node.style.transform = '';
+    }
+  }, []);
+
+  const animateSidebarSmoothly = useCallback((expanded, releaseVelocityX = 0) => {
+    const opId = ++sidebarOpIdRef.current;
+    const nextCollapsed = !expanded;
+    sidebarTargetCollapsedRef.current = nextCollapsed;
+    try {
+      localStorage.setItem('nexus_sidebar_collapsed', String(nextCollapsed));
+    } catch {}
+
+    clearTimeout(sidebarAnimationTimerRef.current);
+    sidebarAnimationTimerRef.current = null;
+    if (sidebarRafIdRef.current) {
+      cancelAnimationFrame(sidebarRafIdRef.current);
+      sidebarRafIdRef.current = null;
+    }
+    if (sidebarAnimRafRef.current) {
+      cancelAnimationFrame(sidebarAnimRafRef.current);
+      sidebarAnimRafRef.current = null;
+    }
+
+    const asideEl = sidebarRef.current;
+    const targetW = expanded ? SIDEBAR_EXPANDED_W : SIDEBAR_COLLAPSED_W;
+
+    const completeCommit = () => {
+      if (opId !== sidebarOpIdRef.current) return;
+      sidebarAnimRafRef.current = null;
+      sidebarAnimationTimerRef.current = null;
+      isSidebarAnimatingRef.current = false;
+      isDraggingSidebarRef.current = false;
+      document.body?.classList.remove('is-sidebar-animating', 'is-dragging-sidebar');
+      sidebarRef.current?.classList.remove('is-dragging-sidebar');
+      commitSidebarRestLayout(nextCollapsed);
+      startTransition(() => {
+        if (opId === sidebarOpIdRef.current) {
+          setIsSidebarCollapsed(() => sidebarTargetCollapsedRef.current);
+        }
+      });
+    };
+
+    if (!asideEl) {
+      completeCommit();
+      return;
+    }
+
+    const prefersReducedMotion =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+
+    const fromW = Number.isFinite(sidebarCurrentWidthRef.current)
+      ? sidebarCurrentWidthRef.current
+      : (asideEl.getBoundingClientRect().width || SIDEBAR_COLLAPSED_W);
+    const dist = Math.abs(targetW - fromW);
+
+    asideEl.classList.remove('is-dragging-sidebar');
+    document.body?.classList.remove('is-dragging-sidebar');
+
+    if (prefersReducedMotion || dist < 0.5) {
+      completeCommit();
+      return;
+    }
+
+    const fullSpan = SIDEBAR_EXPANDED_W - SIDEBAR_COLLAPSED_W;
+    const velocityBoost = Math.min(0.45, Math.abs(releaseVelocityX || 0) * 0.25);
+    const baseDuration = (dist / fullSpan) * 215 * (1 - velocityBoost);
+    const durationMs = Math.max(110, Math.min(220, Math.round(baseDuration)));
+
+    isSidebarAnimatingRef.current = true;
+    document.body?.classList.add('is-sidebar-animating');
+    asideEl.style.transition = 'none';
+    enterSidebarGpuMotionMode(fromW);
+    applySidebarMotionFrame(fromW);
+
+    const startTime = performance.now();
+    const deltaW = targetW - fromW;
+
+    const step = (now) => {
+      if (opId !== sidebarOpIdRef.current) return;
+      const t = Math.min(1, Math.max(0, (now - startTime) / durationMs));
+      // Smooth quintic/quartic ease-out matching cubic-bezier(0.22, 1, 0.36, 1)
+      const eased = 1 - Math.pow(1 - t, 3.2);
+      applySidebarMotionFrame(fromW + deltaW * eased);
+      if (t < 1) {
+        sidebarAnimRafRef.current = requestAnimationFrame(step);
+      } else {
+        completeCommit();
+      }
+    };
+
+    sidebarAnimRafRef.current = requestAnimationFrame(step);
+  }, [applySidebarMotionFrame, commitSidebarRestLayout, enterSidebarGpuMotionMode]);
+
+  const expandSidebarSmoothly = useCallback(() => animateSidebarSmoothly(true), [animateSidebarSmoothly]);
+  const collapseSidebarSmoothly = useCallback(() => animateSidebarSmoothly(false), [animateSidebarSmoothly]);
+
+  const toggleDesktopSidebar = useCallback(() => {
+    if (sidebarTargetCollapsedRef.current) {
+      expandSidebarSmoothly();
+    } else {
+      collapseSidebarSmoothly();
+    }
+  }, [expandSidebarSmoothly, collapseSidebarSmoothly]);
+
+  useLayoutEffect(() => {
+    if (!sidebarRef.current) return;
+    if (isDraggingSidebarRef.current || isSidebarAnimatingRef.current) {
+      return;
+    }
+    commitSidebarRestLayout(sidebarTargetCollapsedRef.current);
+  }, [isSidebarCollapsed, allowedNavItems.length, commitSidebarRestLayout]);
+
+  useEffect(() => {
+    const handleSidebarShortcut = (e) => {
+      if (window.innerWidth < 768) return;
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      if (e.key !== 'b' && e.key !== 'B' && e.code !== 'KeyB') return;
+      const tag = e.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable) return;
+      e.preventDefault();
+      toggleDesktopSidebar();
+    };
+    window.addEventListener('keydown', handleSidebarShortcut);
+    return () => window.removeEventListener('keydown', handleSidebarShortcut);
+  }, [toggleDesktopSidebar]);
+
+  const handleSidebarClickCapture = useCallback((e) => {
+    if (
+      isDraggingSidebarRef.current ||
+      (suppressSidebarClickRef.current && performance.now() < suppressSidebarClickUntilRef.current)
+    ) {
+      suppressSidebarClickRef.current = false;
+      suppressSidebarClickUntilRef.current = 0;
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, []);
+
+  // --- Deterministic Pointer-Driven Sidebar Gesture Engine (Zero Competing Handlers / Zero Mid-Flight Self-Bounce) ---
+  const handleSidebarDragStart = useCallback((e) => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.isPrimary === false) return;
+    if (e.target?.closest?.('input, textarea, select, .no-drag, [data-sidebar-no-drag="true"]')) return;
+
+    // Clean up any lingering listeners from an interrupted gesture before starting fresh
+    sidebarDragCleanupRef.current?.();
+    suppressSidebarClickRef.current = false;
+    suppressSidebarClickUntilRef.current = 0;
+    sidebarGestureActiveRef.current = true;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    sidebarDragStartXRef.current = startX;
+    sidebarDragStartYRef.current = startY;
+
+    const downWidth = Number.isFinite(sidebarCurrentWidthRef.current)
+      ? sidebarCurrentWidthRef.current
+      : (sidebarTargetCollapsedRef.current ? SIDEBAR_COLLAPSED_W : SIDEBAR_EXPANDED_W);
+    const wasAnimatingAtDown = isSidebarAnimatingRef.current;
+
+    sidebarStartWidthRef.current = downWidth;
+    sidebarCurrentWidthRef.current = downWidth;
+    sidebarHasDraggedRef.current = false;
+    isDraggingSidebarRef.current = false;
+
+    let activeDragOpId = 0;
+    let dragAnchorX = startX;
+    let dragAnchorWidth = downWidth;
+    let isDetermined = false;
+
+    const eventTime = (event) => {
+      const ts = event?.nativeEvent?.timeStamp ?? event?.timeStamp;
+      return Number.isFinite(ts) && ts > 0 ? ts : performance.now();
+    };
+
+    const gestureStartedAt = eventTime(e);
+    let motionSamples = [{ x: startX, time: gestureStartedAt }];
+
+    const recordMotion = (x, time) => {
+      const previous = motionSamples[motionSamples.length - 1];
+      if (!previous) {
+        motionSamples = [{ x, time }];
+        return;
+      }
+      if (x === previous.x) return;
+      if (time - previous.time > 90) {
+        motionSamples = [{ x, time }];
+        return;
+      }
+      if (
+        motionSamples.length > 1 &&
+        Math.sign(x - previous.x) !== Math.sign(previous.x - motionSamples[motionSamples.length - 2].x)
+      ) {
+        if (Math.abs(x - previous.x) < 6) return;
+        motionSamples = [previous];
+      }
+      motionSamples.push({ x, time });
+      while (motionSamples.length > 2 && motionSamples[1].time < time - 90) {
+        motionSamples.shift();
+      }
+    };
+
+    const applyWidthImmediate = (width) => {
+      applySidebarMotionFrame(width);
+    };
+
+    const cleanup = () => {
+      sidebarGestureActiveRef.current = false;
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
+      window.removeEventListener('blur', onPointerCancel);
+      if (sidebarRafIdRef.current) {
+        cancelAnimationFrame(sidebarRafIdRef.current);
+        sidebarRafIdRef.current = null;
+      }
+      sidebarDragCleanupRef.current = null;
+    };
+
+    const engageDragAt = (curX) => {
+      activeDragOpId = ++sidebarOpIdRef.current;
+      clearTimeout(sidebarAnimationTimerRef.current);
+      sidebarAnimationTimerRef.current = null;
+      if (sidebarAnimRafRef.current) {
+        cancelAnimationFrame(sidebarAnimRafRef.current);
+        sidebarAnimRafRef.current = null;
+      }
+      const liveW = Number.isFinite(sidebarCurrentWidthRef.current)
+        ? sidebarCurrentWidthRef.current
+        : downWidth;
+
+      if (wasAnimatingAtDown || isSidebarAnimatingRef.current) {
+        dragAnchorWidth = liveW;
+        dragAnchorX = curX;
+      } else {
+        dragAnchorWidth = downWidth;
+        dragAnchorX = startX;
+      }
+
+      sidebarStartWidthRef.current = liveW;
+      sidebarCurrentWidthRef.current = liveW;
+      isSidebarAnimatingRef.current = false;
+      isDraggingSidebarRef.current = true;
+      sidebarHasDraggedRef.current = true;
+
+      if (isProfileMenuOpen) {
+        setIsProfileMenuOpen(false);
+      }
+
+      document.body?.classList.remove('is-sidebar-animating');
+      document.body?.classList.add('is-dragging-sidebar');
+      if (sidebarRef.current) {
+        sidebarRef.current.classList.add('is-dragging-sidebar');
+        sidebarRef.current.style.transition = 'none';
+      }
+      enterSidebarGpuMotionMode(liveW);
+      applySidebarMotionFrame(liveW);
+    };
+
+    const onPointerMove = (moveEv) => {
+      if (moveEv.isPrimary === false) return;
+      const curX = moveEv.clientX;
+      const curY = moveEv.clientY;
+      const deltaX = curX - startX;
+      const deltaY = curY - startY;
+      const now = eventTime(moveEv);
+      recordMotion(curX, now);
+
+      if (!isDraggingSidebarRef.current && !isDetermined) {
+        if (Math.abs(deltaY) > Math.abs(deltaX) && Math.abs(deltaY) > 8) {
+          cleanup();
+          return;
+        }
+        if (Math.abs(deltaX) > 8) {
+          isDetermined = true;
+          engageDragAt(curX);
+        }
+      }
+
+      if (isDraggingSidebarRef.current) {
+        if (activeDragOpId !== sidebarOpIdRef.current) {
+          cleanup();
+          return;
+        }
+        if (moveEv.cancelable) moveEv.preventDefault();
+
+        const rawTargetW = dragAnchorWidth + (curX - dragAnchorX);
+        const clampedW = Math.max(SIDEBAR_COLLAPSED_W, Math.min(SIDEBAR_EXPANDED_W, rawTargetW));
+        sidebarCurrentWidthRef.current = clampedW;
+
+        if (!sidebarRafIdRef.current) {
+          const scheduledOpId = activeDragOpId;
+          sidebarRafIdRef.current = requestAnimationFrame(() => {
+            sidebarRafIdRef.current = null;
+            if (scheduledOpId !== sidebarOpIdRef.current || !isDraggingSidebarRef.current) return;
+            applyWidthImmediate(sidebarCurrentWidthRef.current);
+          });
+        }
+      }
+    };
+
+    const finishGesture = (endEv, isCanceled) => {
+      const hadPendingRaf = Boolean(sidebarRafIdRef.current);
+      cleanup();
+
+      const lastPoint = motionSamples[motionSamples.length - 1];
+      const endX = Number.isFinite(endEv?.clientX) ? endEv.clientX : lastPoint.x;
+      const endY = Number.isFinite(endEv?.clientY) ? endEv.clientY : startY;
+      const totalDeltaX = endX - startX;
+      const totalDeltaY = endY - startY;
+
+      if (
+        !isCanceled &&
+        !sidebarHasDraggedRef.current &&
+        Math.abs(totalDeltaX) > 8 &&
+        Math.abs(totalDeltaX) >= Math.abs(totalDeltaY)
+      ) {
+        engageDragAt(endX);
+        const clampedW = Math.max(
+          SIDEBAR_COLLAPSED_W,
+          Math.min(SIDEBAR_EXPANDED_W, dragAnchorWidth + (endX - dragAnchorX))
+        );
+        sidebarCurrentWidthRef.current = clampedW;
+        applyWidthImmediate(clampedW);
+      } else if (hadPendingRaf && sidebarHasDraggedRef.current && activeDragOpId === sidebarOpIdRef.current) {
+        applyWidthImmediate(sidebarCurrentWidthRef.current);
+      }
+
+      document.body?.classList.remove('is-dragging-sidebar');
+      sidebarRef.current?.classList.remove('is-dragging-sidebar');
+      isDraggingSidebarRef.current = false;
+
+      if (!sidebarHasDraggedRef.current) {
+        return;
+      }
+
+      if (activeDragOpId && activeDragOpId !== sidebarOpIdRef.current) {
+        return;
+      }
+
+      // Arm capture-phase click suppressor so releasing over Logo / nav button never double-toggles
+      suppressSidebarClickRef.current = true;
+      suppressSidebarClickUntilRef.current = performance.now() + 350;
+      sidebarHasDraggedRef.current = false;
+
+      const now = eventTime(endEv);
+      recordMotion(endX, now);
+      const first = motionSamples[0];
+      const last = motionSamples[motionSamples.length - 1];
+      const recentDeltaX = last.x - first.x;
+      const dt = Math.max(1, last.time - first.time);
+      const velocityX = isCanceled ? 0 : recentDeltaX / dt;
+      const isFlick =
+        !isCanceled &&
+        now - last.time <= 90 &&
+        Math.abs(recentDeltaX) >= 14 &&
+        Math.abs(velocityX) >= 0.28;
+
+      const curW = sidebarCurrentWidthRef.current;
+
+      let shouldExpand;
+      if (isFlick) {
+        shouldExpand = velocityX > 0;
+      } else if (downWidth < 120) {
+        shouldExpand = curW >= 132;
+      } else if (downWidth > 216) {
+        shouldExpand = curW >= 204;
+      } else {
+        shouldExpand = curW >= 168;
+      }
+
+      animateSidebarSmoothly(shouldExpand, isFlick ? velocityX : 0);
+    };
+
+    const onPointerUp = (endEv) => finishGesture(endEv, false);
+    const onPointerCancel = (cancelEv) => finishGesture(cancelEv, true);
+
+    sidebarDragCleanupRef.current = () => {
+      cleanup();
+      document.body?.classList.remove('is-dragging-sidebar');
+      sidebarRef.current?.classList.remove('is-dragging-sidebar');
+      isDraggingSidebarRef.current = false;
+    };
+
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
+    window.addEventListener('blur', onPointerCancel);
+  }, [
+    isProfileMenuOpen,
+    animateSidebarSmoothly,
+    applySidebarMotionFrame,
+    enterSidebarGpuMotionMode
+  ]);
 
   useEffect(() => {
     const handleFilterSync = (e) => {
@@ -1168,6 +1699,11 @@ const App = () => {
 
   // Title Effect
   useEffect(() => {
+    const shopName = shopInfo?.shopName || 'NexusPlan';
+    if (resetToken) {
+      document.title = `ตั้งค่ารหัสผ่านใหม่ - ${shopName}`;
+      return;
+    }
     // ถ้าอยู่ในโหมดติดตามหรือเสนอราคา ให้ข้ามการตั้งชื่อตาม Tab หลักไปเลย
     if (trackingId) {
         document.title = "กำลังตรวจสอบสถานะ..."; 
@@ -1178,7 +1714,7 @@ const App = () => {
         return;
     }
 
-    const appTitle = shopInfo?.shopName || 'NexusPlan';
+    const appTitle = shopName;
     const currentTab = navItems.find(item => item.name === activeTab);
     
     if (currentTab) {
@@ -1186,14 +1722,14 @@ const App = () => {
     } else {
       document.title = `${appTitle} Dashboard`;
     }
-  }, [activeTab, trackingId, quotationId, shopInfo]);
+  }, [activeTab, trackingId, quotationId, resetToken, shopInfo]);
 
   // Synchronize URL path with activeTab (e.g. /PlansView, /FinanceView)
   useEffect(() => {
-    if (!trackingId && !quotationId) {
+    if (!trackingId && !quotationId && !resetToken) {
       updateUrlForTab(activeTab);
     }
-  }, [activeTab, trackingId, quotationId]);
+  }, [activeTab, trackingId, quotationId, resetToken]);
 
   // Listen for browser Back/Forward navigation (popstate)
   useEffect(() => {
@@ -1281,6 +1817,31 @@ const App = () => {
 
   // --- 3. FUNCTION DEFINITIONS ---
 
+  const lastSettingsSyncRef = useRef(0);
+  const userProfileRef = useRef(userProfile);
+  userProfileRef.current = userProfile;
+  const refreshActiveProjectScopeRef = useRef(null);
+  refreshActiveProjectScopeRef.current = () => {
+    if (activeTab === 'Plans') {
+      loadProjectsScoped({
+        mode: plansFilter.dateMode,
+        date: plansFilter.date,
+        range: { start: plansFilter.dateRange?.start, end: plansFilter.dateRange?.end }
+      }, (projects, deletedIds) => {
+        applyProjectsData(projects, deletedIds);
+      });
+    } else if (activeTab === 'Finance') {
+      loadProjectsScoped({
+        mode: financeFilter.dateMode,
+        date: financeFilter.date,
+        range: { start: financeFilter.dateRange?.start, end: financeFilter.dateRange?.end },
+        includeDetails: financeFilter.dateMode !== 'year' && financeFilter.dateMode !== 'all'
+      }, (projects, deletedIds) => {
+        applyProjectsData(projects, deletedIds);
+      });
+    }
+  };
+
   // [MODIFIED] โหลดการตั้งค่าตรงจาก Supabase (แทน Google Apps Script) พร้อม Smart Diffing
   const fetchSettings = async (showSyncIndicator = false) => {
     if (showSyncIndicator) setIsSyncingSettings(true);
@@ -1288,6 +1849,7 @@ const App = () => {
     try {
         const data = await loadSettingsFromSupabase();
         if (data) {
+            lastSettingsSyncRef.current = Date.now();
             // Helper ตรวจสอบข้อมูลก่อน อัปเดต State เฉพาะจุดที่มีการเปลี่ยนแปลงเท่านั้น
             const updateIfChanged = (setter, newValue, cacheKey) => {
                 setter(prev => {
@@ -1329,6 +1891,33 @@ const App = () => {
                 updateIfChanged(setPaymentStatuses, data.paymentStatuses, 'nexus_payment_statuses');
             }
 
+            // Authoritative role permissions sync (prevents resurrecting deleted custom roles)
+            if (data.roles) {
+                let nextRolesMatrix = null;
+                if (Array.isArray(data.roles) && data.roles.length > 0) {
+                    nextRolesMatrix = {};
+                    data.roles.forEach((r) => {
+                        if (!r?.name) return;
+                        nextRolesMatrix[r.name] = {
+                            label: r.label || r.name,
+                            code: r.code || '99',
+                            description: r.description || '',
+                            allowed_pages: Array.isArray(r.allowed_pages) ? r.allowed_pages : [],
+                            can_edit_pricing: !!r.can_edit_pricing,
+                            can_delete_project: !!r.can_delete_project,
+                            can_borrow_tools: r.can_borrow_tools !== undefined ? !!r.can_borrow_tools : true,
+                            can_manage_users: !!r.can_manage_users,
+                            is_system_role: !!r.is_system_role
+                        };
+                    });
+                } else if (!Array.isArray(data.roles) && typeof data.roles === 'object' && Object.keys(data.roles).length > 0) {
+                    nextRolesMatrix = data.roles;
+                }
+                if (nextRolesMatrix) {
+                    updateIfChanged(setPermissionMatrix, nextRolesMatrix, 'f2u_role_permissions');
+                }
+            }
+
             if (data.appCredentials && Array.isArray(data.appCredentials) && data.appCredentials.length > 0) {
                 updateIfChanged(setAuthorizedUsers, data.appCredentials, 'nexus_authorized_users');
 
@@ -1364,15 +1953,60 @@ const App = () => {
   };
 
   useEffect(() => {
-    fetchSettings();
-  }, []);
-
-  // [MODIFIED] เรียกใช้งานพร้อมสั่งให้แสดง Indicator
-  useEffect(() => {
-    if (activeTab === 'Settings') {
-      fetchSettings(true); 
+    if (isLoggedIn) {
+      fetchSettings();
+      return;
     }
-  }, [activeTab]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const pub = await loadPublicBrandingFromSupabase();
+        if (!cancelled && pub) {
+          if (pub.shopInfo) {
+            applyThemeVariables(pub.shopInfo.themeColor, pub.shopInfo.themeMode, pub.shopInfo.customColorValue);
+            setShopInfo(prev => {
+              if (JSON.stringify(prev) !== JSON.stringify(pub.shopInfo)) {
+                localStorage.setItem('nexus_shop_info', JSON.stringify(pub.shopInfo));
+                return pub.shopInfo;
+              }
+              return prev;
+            });
+          }
+          if (Array.isArray(pub.dealStatuses)) {
+            setDealStatuses(prev => {
+              if (JSON.stringify(prev) !== JSON.stringify(pub.dealStatuses)) {
+                localStorage.setItem('nexus_deal_statuses', JSON.stringify(pub.dealStatuses));
+                return pub.dealStatuses;
+              }
+              return prev;
+            });
+          }
+          if (Array.isArray(pub.transportStatuses)) {
+            setTransportStatuses(prev => {
+              if (JSON.stringify(prev) !== JSON.stringify(pub.transportStatuses)) {
+                localStorage.setItem('nexus_transport_statuses', JSON.stringify(pub.transportStatuses));
+                return pub.transportStatuses;
+              }
+              return prev;
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Error loading public branding:', err);
+      } finally {
+        if (!cancelled) setIsSettingsLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isLoggedIn]);
+
+  // [MODIFIED] เรียกใช้งานพร้อมสั่งให้แสดง Indicator (จำกัด Freshness Guard 2 นาที)
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    if (activeTab === 'Settings' && Date.now() - lastSettingsSyncRef.current >= 120000) {
+      fetchSettings(true);
+    }
+  }, [isLoggedIn, activeTab]);
 
   // ฟังก์ชันกระจายข้อมูลโปรเจกต์ไปยัง State ที่เกี่ยวข้อง (รวมข้อมูลอย่างฉลาด และกวาดล้างไอดีที่ถูกลบ)
   const applyProjectsData = useCallback((projects, deletedIds = []) => {
@@ -1400,22 +2034,40 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    const artists = [...new Set(allActivities.map(item => item.artist).filter(Boolean))].sort();
+    const artists = [...new Set([
+      ...(Array.isArray(artistList) ? artistList.map(a => a?.name).filter(Boolean) : []),
+      ...allActivities.map(item => item.artist).filter(a => a && a !== '-')
+    ])].sort();
     setSavedArtists(artists);
 
     const customersMap = new Map();
+    if (Array.isArray(customerList)) {
+      customerList.forEach(cust => {
+        if (cust && cust.name) {
+          customersMap.set(cust.name, {
+            name: cust.name,
+            social: cust.social_account || cust.social || '',
+            line: cust.line_id || cust.line || '',
+            phone: cust.phone || '',
+            email: cust.email || '',
+            taxId: cust.tax_id || cust.taxId || '',
+            address: cust.billing_address || cust.address || ''
+          });
+        }
+      });
+    }
     allActivities.forEach(item => {
-      if (item.customer) {
+      if (item.customer && item.customer !== '-') {
         const existing = customersMap.get(item.customer) || {};
         const info = item.customerInfo || {};
         customersMap.set(item.customer, {
           name: item.customer,
-          social: info.social || existing.social || '',
-          line: info.line || existing.line || '',
-          phone: info.phone || existing.phone || '',
-          email: info.email || existing.email || '',
-          taxId: info.taxId || existing.taxId || '',
-          address: info.address || existing.address || ''
+          social: existing.social || info.social || '',
+          line: existing.line || info.line || '',
+          phone: existing.phone || info.phone || '',
+          email: existing.email || info.email || '',
+          taxId: existing.taxId || info.taxId || '',
+          address: existing.address || info.address || ''
         });
       }
     });
@@ -1432,7 +2084,7 @@ const App = () => {
     });
     setSavedRecipients(Array.from(recipientsMap.values()));
 
-  }, [allActivities]);
+  }, [allActivities, customerList, artistList]);
 
   // ดึงข้อมูลผ่านระบบ Local-First (อ่านจาก IndexedDB 0ms ทันที แล้วแอบซิงก์ส่วนต่างจาก Supabase)
   const fetchProjects = async (isSilent = false) => {
@@ -1451,19 +2103,15 @@ const App = () => {
       if (!isSilent || Date.now() - lastMasterSyncRef.current >= 300000) {
         lastMasterSyncRef.current = Date.now();
         loadLocationsLocalFirst((locations) => {
-          if (Array.isArray(locations) && locations.length > 0) setDeliveryLocations(locations);
+          if (Array.isArray(locations) && typeof setDeliveryLocations === 'function') setDeliveryLocations(locations);
         });
         loadCustomersLocalFirst((custs) => {
-          if (Array.isArray(custs) && custs.length > 0) setCustomerList(custs);
+          if (Array.isArray(custs) && typeof setCustomerList === 'function') setCustomerList(custs);
         });
         loadArtistsLocalFirst((arts) => {
-          if (Array.isArray(arts) && arts.length > 0) setArtistList(arts);
+          if (Array.isArray(arts) && typeof setArtistList === 'function') setArtistList(arts);
         });
       }
-      loadArtistsAndCustomersSummaryStats(({ artistStats, customerStats }) => {
-        if (artistStats) setArtistSummaryStats(artistStats);
-        if (customerStats) setCustomerSummaryStats(customerStats);
-      });
 
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -1473,8 +2121,46 @@ const App = () => {
     }
   };
 
+  // Lazy-load Artist & Customer summary stats ONLY when visiting Artists or Customers tabs
   useEffect(() => {
-    if (isLoggedIn || trackingId || quotationId) {
+    if (!isLoggedIn) return;
+    if (activeTab !== 'Artists' && activeTab !== 'Customers') return;
+    let cancelled = false;
+    loadArtistsAndCustomersSummaryStats(({ artistStats, customerStats } = {}) => {
+      if (cancelled) return;
+      if (artistStats) setArtistSummaryStats(artistStats);
+      if (customerStats) setCustomerSummaryStats(customerStats);
+    });
+    return () => { cancelled = true; };
+  }, [isLoggedIn, activeTab]);
+
+  // Public single-project lookup for unauthenticated ?tracking= / ?quotation= links (Zero-Egress)
+  useEffect(() => {
+    const publicToken = trackingId || quotationId;
+    if (!publicToken || isLoggedIn) return;
+    let cancelled = false;
+    setIsLoading(true);
+    fetchPublicProjectByToken(publicToken)
+      .then((pubProj) => {
+        if (cancelled) return;
+        if (pubProj && !pubProj.error && pubProj.id) {
+          setAllActivities([pubProj]);
+        } else {
+          setAllActivities([]);
+        }
+      })
+      .catch((err) => {
+        console.error('Public project lookup error:', err);
+        if (!cancelled) setAllActivities([]);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [isLoggedIn, trackingId, quotationId]);
+
+  useEffect(() => {
+    if (isLoggedIn) {
         lastFocusSyncRef.current = Date.now();
         fetchProjects();
 
@@ -1484,39 +2170,110 @@ const App = () => {
           applyProjectsData(updatedProjects, deletedIds);
         });
 
-        // เปิดรับ Realtime Live Sync สำหรับการตั้งค่าร้านและธีม (ข้ามเครื่อง/ข้ามหน้าจอ)
-        const unsubSettings = subscribeToRealtimeSettings((updatedShopInfo) => {
-          if (updatedShopInfo) {
-            applyThemeVariables(updatedShopInfo.themeColor, updatedShopInfo.themeMode, updatedShopInfo.customColorValue);
-            setShopInfo(prev => {
-              if (JSON.stringify(prev) !== JSON.stringify(updatedShopInfo)) {
-                localStorage.setItem('nexus_shop_info', JSON.stringify(updatedShopInfo));
-                return updatedShopInfo;
+        // เปิดรับ Realtime Live Sync สำหรับการตั้งค่าร้าน, สถานะ, หมวดหมู่ และโฟลเดอร์ Drive
+        const unsubSettings = subscribeToRealtimeSettings((updatedShopInfo, rawSettings) => {
+          const syncStateAndCache = (setter, nextVal, storageKey) => {
+            setter(prev => {
+              if (JSON.stringify(prev) !== JSON.stringify(nextVal)) {
+                if (storageKey) localStorage.setItem(storageKey, JSON.stringify(nextVal));
+                return nextVal;
               }
               return prev;
             });
+          };
+          if (updatedShopInfo) {
+            applyThemeVariables(updatedShopInfo.themeColor, updatedShopInfo.themeMode, updatedShopInfo.customColorValue);
+            syncStateAndCache(setShopInfo, updatedShopInfo, 'nexus_shop_info');
+          }
+          if (rawSettings && typeof rawSettings === 'object') {
+            if (Array.isArray(rawSettings.payment_statuses) && rawSettings.payment_statuses.length > 0) {
+              syncStateAndCache(setPaymentStatuses, rawSettings.payment_statuses, 'nexus_payment_statuses');
+            }
+            if (Array.isArray(rawSettings.deal_statuses)) {
+              syncStateAndCache(setDealStatuses, rawSettings.deal_statuses, 'nexus_deal_statuses');
+            }
+            if (Array.isArray(rawSettings.transport_statuses)) {
+              syncStateAndCache(setTransportStatuses, rawSettings.transport_statuses, 'nexus_transport_statuses');
+            }
+            if (Array.isArray(rawSettings.project_categories)) {
+              syncStateAndCache(setProjectCategories, rawSettings.project_categories, 'nexus_project_categories');
+            }
+            if (Array.isArray(rawSettings.expense_categories)) {
+              syncStateAndCache(setExpenseCategories, rawSettings.expense_categories, 'nexus_expense_categories');
+            }
+            if (Array.isArray(rawSettings.drive_folders)) {
+              const normalizedFolders = rawSettings.drive_folders.map(f => ({
+                ...f,
+                folderId: extractGoogleDriveFolderId(f?.folderId)
+              }));
+              syncStateAndCache(setDriveFolders, normalizedFolders, 'nexus_drive_folders');
+              const ref = normalizedFolders.find(f => f.type === 'reference');
+              const ass = normalizedFolders.find(f => f.type === 'assets');
+              if (ref) setDriveFolderId(ref.folderId);
+              if (ass) setAssetsDriveFolderId(ass.folderId);
+            }
+            if (rawSettings.reference_folder_id !== undefined) {
+              setDriveFolderId(extractGoogleDriveFolderId(rawSettings.reference_folder_id));
+            }
+            if (rawSettings.assets_folder_id !== undefined) {
+              setAssetsDriveFolderId(extractGoogleDriveFolderId(rawSettings.assets_folder_id));
+            }
           }
         });
 
-        // เปิดรับ Realtime Cross-Tab / Multi-Window Sync (สำหรับเปิด 2 จอ / 2 แท็บบนเครื่องเดียวกัน)
-        let bc = null;
-        try {
-          if (typeof BroadcastChannel !== 'undefined') {
-            bc = new BroadcastChannel('flower2u_sync_channel');
-            bc.onmessage = (event) => {
-              if (event.data?.type === 'SHOP_INFO_SYNC' && event.data?.shopInfo) {
-                const s = event.data.shopInfo;
-                applyThemeVariables(s.themeColor, s.themeMode, s.customColorValue);
-                setShopInfo(prev => {
-                  if (JSON.stringify(prev) !== JSON.stringify(s)) {
-                    return s;
+        // เปิดรับ Realtime Roles & Permissions ข้ามอุปกรณ์
+        const unsubRoles = typeof subscribeToRolesRealtime === 'function'
+          ? subscribeToRolesRealtime((newMatrix) => {
+              if (newMatrix && typeof newMatrix === 'object') {
+                setPermissionMatrix(prev => {
+                  if (JSON.stringify(prev) !== JSON.stringify(newMatrix)) {
+                    localStorage.setItem('f2u_role_permissions', JSON.stringify(newMatrix));
+                    return newMatrix;
                   }
                   return prev;
                 });
               }
-            };
-          }
-        } catch (bcErr) {}
+            })
+          : null;
+
+        // เปิดรับ Realtime Master Data (สถานที่จัดส่ง / ศิลปิน / ลูกค้า) ข้ามอุปกรณ์
+        const unsubMaster = typeof subscribeToMasterDataRealtime === 'function'
+          ? subscribeToMasterDataRealtime({
+              onLocationsChange: setDeliveryLocations,
+              onArtistsChange: setArtistList,
+              onCustomersChange: setCustomerList
+            })
+          : null;
+
+        // เปิดรับ Realtime Cross-Tab / Multi-Window Sync ผ่าน LocalSyncChannel
+        const unsubLocalSync = typeof subscribeToLocalSyncChannel === 'function'
+          ? subscribeToLocalSyncChannel((msg) => {
+              if (!msg || typeof msg !== 'object') return;
+              if (msg.type === 'SHOP_INFO_SYNC' && msg.shopInfo) {
+                const s = msg.shopInfo;
+                applyThemeVariables(s.themeColor, s.themeMode, s.customColorValue);
+                setShopInfo(prev => (JSON.stringify(prev) !== JSON.stringify(s) ? s : prev));
+              } else if (msg.type === 'PERMISSIONS_UPDATED' && msg.permissions) {
+                setPermissionMatrix(prev => {
+                  if (JSON.stringify(prev) !== JSON.stringify(msg.permissions)) {
+                    localStorage.setItem('f2u_role_permissions', JSON.stringify(msg.permissions));
+                    return msg.permissions;
+                  }
+                  return prev;
+                });
+              } else if (msg.type === 'RECORD_DELETED' && msg.id) {
+                if (msg.table === 'projects') {
+                  applyProjectsData([], [msg.id]);
+                } else if (msg.table === 'artists') {
+                  setArtistList(prev => prev.filter(item => String(item?.id) !== String(msg.id)));
+                } else if (msg.table === 'customers') {
+                  setCustomerList(prev => prev.filter(item => String(item?.id) !== String(msg.id)));
+                } else if (msg.table === 'delivery_locations') {
+                  setDeliveryLocations(prev => prev.filter(item => String(item?.id) !== String(msg.id)));
+                }
+              }
+            })
+          : null;
 
         // 🛡️ SECURITY DIRECTIVE: ตรวจจับสัญญาณเตะพนักงานที่ถูกระงับ/แบนทันทีแบบ Real-Time (Cross-Tab)
         let kickBc = null;
@@ -1525,10 +2282,11 @@ const App = () => {
             kickBc = new BroadcastChannel('flower2u_staff_kick');
             kickBc.onmessage = async (event) => {
               if (event.data?.type === 'FORCE_KICK_BANNED') {
+                const liveProfile = userProfileRef.current;
                 const targetStaffId = event.data?.staffId;
                 const targetUsername = (event.data?.username || '').toLowerCase();
-                const curStaffCode = userProfile?.staffCode || userProfile?.id;
-                const curUsername = (userProfile?.username || '').toLowerCase();
+                const curStaffCode = liveProfile?.staffCode || liveProfile?.id;
+                const curUsername = (liveProfile?.username || '').toLowerCase();
                 if ((targetStaffId && String(targetStaffId) === String(curStaffCode)) ||
                     (targetUsername && targetUsername === curUsername)) {
                   console.warn('🚨 Account suspended by Admin. Purging all storage and kicking immediately.');
@@ -1539,19 +2297,23 @@ const App = () => {
           }
         } catch (bcErr) {}
 
-        // 🛡️ SECURITY DIRECTIVE: ตรวจจับสัญญาณแบนพนักงานข้ามเครือข่าย/ข้ามเครื่องผ่าน Supabase Realtime
-        const unsubStaff = subscribeToStaffRealtime(async (updatedStaff) => {
-          if (!updatedStaff) return;
-          const curStaffCode = userProfile?.staffCode || userProfile?.id;
-          const curUsername = (userProfile?.username || '').toLowerCase();
-          const targetStaffCode = updatedStaff.staff_code || updatedStaff.id;
-          const targetUsername = (updatedStaff.username || '').toLowerCase();
+        // 🛡️ SECURITY DIRECTIVE: ตรวจจับสัญญาณแบนพนักงานข้ามเครือข่าย/ข้ามเครื่องผ่าน Supabase Realtime + แจ้ง Staff.jsx
+        const unsubStaff = subscribeToStaffRealtime(async (staffRow, eventType) => {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('f2u:staff-realtime', { detail: { staffRow, eventType } }));
+          }
+          if (!staffRow || eventType === 'DELETE') return;
+          const liveProfile = userProfileRef.current;
+          const curStaffCode = liveProfile?.staffCode || liveProfile?.id;
+          const curUsername = (liveProfile?.username || '').toLowerCase();
+          const targetStaffCode = staffRow.staff_code || staffRow.id;
+          const targetUsername = (staffRow.username || '').toLowerCase();
           
           if ((targetStaffCode && String(targetStaffCode) === String(curStaffCode)) ||
               (targetUsername && targetUsername === curUsername)) {
-            const isSuspended = updatedStaff.is_banned_permanent || 
-                                updatedStaff.is_active === false || 
-                                (updatedStaff.banned_until && new Date(updatedStaff.banned_until) > new Date());
+            const isSuspended = staffRow.is_banned_permanent || 
+                                staffRow.is_active === false || 
+                                (staffRow.banned_until && new Date(staffRow.banned_until) > new Date());
             if (isSuspended) {
               console.warn('🚨 Realtime ban detected from server. Purging all storage and kicking immediately.');
               await handleLogout('บัญชีของคุณถูกระงับการใช้งานโดยผู้ดูแลระบบ');
@@ -1577,10 +2339,12 @@ const App = () => {
 
         const onFocus = () => {
             const now = Date.now();
-            if (now - lastFocusSyncRef.current < 30000) return;
+            if (now - lastFocusSyncRef.current < 300000) return;
             lastFocusSyncRef.current = now;
-            fetchProjects(true); // Silent fetch เช็คส่วนต่างเบื้องหลัง
-            fetchSettings(false); // เช็คการตั้งค่าเบื้องหลัง
+            fetchProjects(true);
+            if (typeof refreshActiveProjectScopeRef !== 'undefined') {
+              refreshActiveProjectScopeRef.current?.();
+            }
         };
 
         window.addEventListener('focus', onFocus);
@@ -1588,26 +2352,28 @@ const App = () => {
         return () => {
           window.removeEventListener('focus', onFocus);
           window.removeEventListener('storage', onStorage);
-          if (bc) bc.close();
           if (kickBc) kickBc.close();
+          if (typeof unsubLocalSync === 'function') unsubLocalSync();
+          if (typeof unsubRoles === 'function') unsubRoles();
+          if (typeof unsubMaster === 'function') unsubMaster();
           if (typeof unsubStaff === 'function') unsubStaff();
           if (typeof unsubscribe === 'function') unsubscribe();
           if (typeof unsubSettings === 'function') unsubSettings();
         };
     }
-  }, [isLoggedIn, trackingId, quotationId]);
+  }, [isLoggedIn]);
 
   // 🛡️ SECURITY DIRECTIVE: เมื่อไม่อยู่ในสถานะ Login ให้ล้าง IndexedDB ในเครื่องทันที
   useEffect(() => {
-    if (!isLoggedIn && !trackingId && !quotationId) {
+    if (!isLoggedIn && !trackingId && !quotationId && !resetToken) {
       resetProjectLoadCache();
       clearAllLocalDatabase().catch(() => {});
     }
-  }, [isLoggedIn, trackingId, quotationId]);
+  }, [isLoggedIn, trackingId, quotationId, resetToken]);
 
   // 🛡️ SECURITY SHIELD: ป้องกันการกดเปิด DevTools และคลิกขวาตรวจสอบโค้ดในหน้า Login
   useEffect(() => {
-    if (isLoggedIn) return;
+    if (isLoggedIn || resetToken) return;
     
     const handleKeyDown = (e) => {
       // ดัก F12
@@ -1640,7 +2406,7 @@ const App = () => {
       window.removeEventListener('keydown', handleKeyDown, true);
       window.removeEventListener('contextmenu', handleContextMenu, true);
     };
-  }, [isLoggedIn]);
+  }, [isLoggedIn, resetToken]);
 
   // จัดการการเปลี่ยนเดือนในหน้าปฏิทินแบบ Memoized (ป้องกัน Infinite Fetch Loop)
   const handleCalendarMonthChange = useCallback((ym) => {
@@ -1671,7 +2437,7 @@ const App = () => {
     return () => { cancelled = true; };
   }, [isLoggedIn, activeTab, plansFilter.dateMode, plansFilter.date, plansFilter.dateRange?.start, plansFilter.dateRange?.end, applyProjectsData]);
 
-  // 2. แท็บการเงิน (Finance): ดึงเฉพาะข้อมูลของเดือน/วันที่หน้า Finance เลือกพร้อมรายละเอียดตารางลูก
+  // 2. แท็บการเงิน (Finance): ดึงเฉพาะข้อมูลของเดือน/วันที่หน้า Finance เลือก (ละเว้นตารางลูกตอนดูรายปี/ทั้งหมด)
   useEffect(() => {
     if (!isLoggedIn) return;
     if (activeTab === 'Finance') {
@@ -1680,7 +2446,7 @@ const App = () => {
         mode: financeFilter.dateMode,
         date: financeFilter.date,
         range: { start: financeFilter.dateRange?.start, end: financeFilter.dateRange?.end },
-        includeDetails: true
+        includeDetails: financeFilter.dateMode !== 'year' && financeFilter.dateMode !== 'all'
       }, (projects, deletedIds) => {
         if (!cancelled) applyProjectsData(projects, deletedIds);
       });
@@ -1688,7 +2454,7 @@ const App = () => {
     }
   }, [isLoggedIn, activeTab, financeFilter.dateMode, financeFilter.date, financeFilter.dateRange?.start, financeFilter.dateRange?.end, applyProjectsData]);
 
-  // 3. แท็บวิเคราะห์ (Analytics): ดึงเฉพาะข้อมูลเดือนที่หน้า Analytics เลือก + ยิง Server Pushdown RPC
+  // 3. แท็บวิเคราะห์ (Analytics): ยิง Server Pushdown RPC ล้วน 100% (ไม่ดึงโปรเจกต์ดิบลง IndexedDB)
   useEffect(() => {
     if (!isLoggedIn) return;
     if (activeTab === 'Analytics') {
@@ -1696,36 +2462,50 @@ const App = () => {
       setIsAnalyticsLoading(true);
       setServerAnalytics(null);
 
-      const scopedPromise = loadProjectsScoped({
+      fetchServerAnalytics({
         mode: analyticsFilter.dateMode,
         date: analyticsFilter.date,
         range: { start: analyticsFilter.dateRange?.start, end: analyticsFilter.dateRange?.end },
-        includeDetails: true
-      }, (projects, deletedIds) => {
-        if (!cancelled) applyProjectsData(projects, deletedIds);
-      });
+        category: analyticsFilter.category,
+        dealStatus: analyticsFilter.status,
+        transportStatus: analyticsFilter.transport,
+        search: analyticsFilter.search,
+      })
+        .then((res) => {
+          if (!cancelled && res) {
+            setServerAnalytics(res);
+          }
+        })
+        .catch((err) => {
+          console.warn('[Analytics] Server RPC failed:', err);
+        })
+        .finally(() => {
+          if (!cancelled) setIsAnalyticsLoading(false);
+        });
 
-      const serverPromise = fetchServerAnalytics({
-        mode: analyticsFilter.dateMode,
-        date: analyticsFilter.date,
-        range: { start: analyticsFilter.dateRange?.start, end: analyticsFilter.dateRange?.end },
-        category: analyticsFilter.category !== 'all' ? analyticsFilter.category : null,
-        dealStatus: analyticsFilter.status !== 'all' ? analyticsFilter.status : null
-      }).then(res => {
-        if (!cancelled && res) setServerAnalytics(res);
-      }).catch(err => console.warn('Server analytics RPC notice:', err));
-
-      Promise.allSettled([scopedPromise, serverPromise]).finally(() => {
-        if (!cancelled) setIsAnalyticsLoading(false);
-      });
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
-  }, [isLoggedIn, activeTab, analyticsFilter.dateMode, analyticsFilter.date, analyticsFilter.dateRange?.start, analyticsFilter.dateRange?.end, analyticsFilter.category, analyticsFilter.status, applyProjectsData]);
+  }, [
+    isLoggedIn,
+    activeTab,
+    analyticsFilter.dateMode,
+    analyticsFilter.date,
+    analyticsFilter.dateRange?.start,
+    analyticsFilter.dateRange?.end,
+    analyticsFilter.category,
+    analyticsFilter.status,
+    analyticsFilter.transport,
+    analyticsFilter.search,
+  ]);
   useEffect(() => {
       if ((trackingId || quotationId) && allActivities.length > 0) {
           const targetToken = trackingId || quotationId;
           const foundItem = allActivities.find(item => 
-              generateTrackingToken(item.id, item.rawDateTime) === targetToken
+              item.trackingToken === targetToken ||
+              generateTrackingToken(item.id, item.rawDateTime) === targetToken ||
+              (!isLoggedIn && allActivities.length === 1 && item.id)
           );
 
           const timer = setTimeout(() => {
@@ -1769,7 +2549,7 @@ const App = () => {
       }
 
       try {
-          const saveResult = await saveSettingsToSupabase(partialData);
+          await saveSettingsToSupabase(partialData);
           
           // Update Local State & Cache
           if (partialData.app_credentials) {
@@ -1795,9 +2575,6 @@ const App = () => {
           if (partialData.payment_statuses) {
               setPaymentStatuses(partialData.payment_statuses);
               localStorage.setItem('nexus_payment_statuses', JSON.stringify(partialData.payment_statuses));
-              if (saveResult?.localOnlyPaymentStatuses && !options.silent) {
-                  showToast('บันทึกสถานะการชำระเงินในเครื่องแล้ว (รัน SQL add_settings_columns.sql เพื่อซิงค์คลาวด์)', 'warning');
-              }
           }
 
           if (partialData.drive_folders) {
@@ -1837,7 +2614,7 @@ const App = () => {
               // ซิงค์ไปยังแท็บอื่น / หน้าจออื่นบนเบราว์เซอร์เดียวกันทันที (Multi-Window / Multi-Screen Sync)
               broadcastShopInfoSync(partialData.shop_info);
           }
-          if (!options.silent && !saveResult?.localOnlyPaymentStatuses) {
+          if (!options.silent) {
               showToast("บันทึกการตั้งค่าเรียบร้อยแล้ว", "success");
           }
       } catch (error) {
@@ -2034,6 +2811,7 @@ const App = () => {
       localStorage.removeItem('nexus_profile');
       sessionStorage.removeItem('nexus_auth');
       sessionStorage.removeItem('nexus_profile');
+      sessionStorage.removeItem('nexus_auth_pass');
 
       // 🛡️ SECURITY DIRECTIVE: ล้างข้อมูลแคช IndexedDB ทั้งหมด และทำลายฐานข้อมูลทิ้งทันทีเมื่อออกจากระบบ
       try {
@@ -2113,7 +2891,7 @@ const App = () => {
       setIsScrolled(shouldBeScrolled);
     }
 
-    if (activeTab === 'Plans' || activeTab === 'Analytics') {
+    if (activeTab === 'Plans') {
       if (scrollTop + clientHeight >= scrollHeight - 250) {
         if (visibleCount < filteredAndSortedActivities.length) {
           setVisibleCount(prev => Math.min(prev + 20, filteredAndSortedActivities.length));
@@ -2123,7 +2901,14 @@ const App = () => {
   };
 
   // --- Image Handling Logic ---
-  const compressImage = (file) => {
+  const compressImage = (file, optionsOrMaxWidth = 1024, qualityArg = 0.75) => {
+    const maxWidth = typeof optionsOrMaxWidth === 'object' && optionsOrMaxWidth !== null
+      ? (optionsOrMaxWidth.maxWidth || 1024)
+      : (Number(optionsOrMaxWidth) || 1024);
+    const quality = typeof optionsOrMaxWidth === 'object' && optionsOrMaxWidth !== null
+      ? (optionsOrMaxWidth.quality ?? 0.75)
+      : (Number(qualityArg) || 0.75);
+
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
@@ -2132,12 +2917,11 @@ const App = () => {
         img.src = event.target.result;
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 1024; // Resize if width > 1024
-          const scaleSize = MAX_WIDTH / img.width;
+          const scaleSize = maxWidth / img.width;
           
           if (scaleSize < 1) {
-              canvas.width = MAX_WIDTH;
-              canvas.height = img.height * scaleSize;
+              canvas.width = maxWidth;
+              canvas.height = Math.max(1, Math.round(img.height * scaleSize));
           } else {
               canvas.width = img.width;
               canvas.height = img.height;
@@ -2146,8 +2930,7 @@ const App = () => {
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
           
-          // Compress quality to 0.7
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+          const dataUrl = canvas.toDataURL('image/jpeg', quality);
           resolve(dataUrl);
         };
         img.onerror = (err) => reject(err);
@@ -2175,16 +2958,17 @@ const App = () => {
     reader.onerror = error => reject(error);
   });
 
-  // [ADDED] Handle Profile Image Upload
+  // [MODIFIED] Handle Profile Image Upload (Always compresses & never saves Base64 on Drive failure)
   const handleProfileImageUpload = async (file) => {
-      if (!file) return;
-      
+      if (!file) return null;
+      const previousAvatar = !String(userProfile?.image || '').startsWith('data:image/')
+        ? (userProfile?.image || '')
+        : '';
+
       const targetProfileFolderId = getFolderIdByType('profiles');
-      if (!targetProfileFolderId) {
-          if (GOOGLE_SCRIPT_URL) {
-             showToast("กรุณาระบุโฟลเดอร์รูปโปรไฟล์พนักงาน หรือ Assets Folder ID ในตั้งค่าก่อนอัปโหลด", "error");
-             return;
-          }
+      if (!targetProfileFolderId || !GOOGLE_SCRIPT_URL) {
+          showToast("กรุณาระบุโฟลเดอร์รูปโปรไฟล์พนักงาน หรือ Assets Folder ID ในตั้งค่าก่อนอัปโหลด", "error");
+          return null;
       }
 
       setIsUploadingProfile(true);
@@ -2193,78 +2977,56 @@ const App = () => {
               throw new Error('กรุณาอัพโหลดไฟล์รูปภาพเท่านั้น');
           }
 
-          let processedFile = file;
-          let base64Data = "";
-          
-          if (file.size > 2 * 1024 * 1024) { 
-               base64Data = await compressImage(file);
-          } else {
-               base64Data = await toBase64(file);
-          }
+          const base64Data = await compressImage(file, { maxWidth: 800, quality: 0.82 });
+          setUserProfile(prev => (prev ? { ...prev, image: base64Data } : prev));
 
-          const tempProfile = { ...userProfile, image: base64Data };
-          setUserProfile(tempProfile);
+          const mimeType = base64Data.split(',')[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+          const extension = mimeType.includes('png') ? 'png' : 'jpg';
+          const fileName = `profile_${userProfile?.username || 'user'}_${Date.now()}.${extension}`;
 
-          if (GOOGLE_SCRIPT_URL) {
-              const mimeType = base64Data.split(',')[0].match(/:(.*?);/)[1];
-              const extension = mimeType.includes('png') ? 'png' : 'jpg';
-              const fileName = `profile_${userProfile.username}_${Date.now()}.${extension}`;
-
-              const response = await fetch(GOOGLE_SCRIPT_URL, {
-                  method: 'POST',
-                  headers: { "Content-Type": "text/plain;charset=utf-8" }, // [FIX] เพิ่ม Header
-                  body: JSON.stringify({
-                      action: 'uploadAsset', 
-                      data: {
-                          fileData: base64Data, 
-                          mimeType: mimeType,
-                          fileName: fileName,
-                          folderId: targetProfileFolderId
-                      }
-                  })
-              });
-
-              const result = await response.json();
-              if (result.status === 'success' && result.url) {
-                  let newImageUrl = result.url;
-                  if (result.fileId) {
-                      newImageUrl = `https://drive.google.com/uc?export=view&id=${result.fileId}`;
+          const response = await fetch(GOOGLE_SCRIPT_URL, {
+              method: 'POST',
+              headers: { "Content-Type": "text/plain;charset=utf-8" },
+              body: JSON.stringify({
+                  action: 'uploadAsset', 
+                  data: {
+                      fileData: base64Data, 
+                      mimeType: mimeType,
+                      fileName: fileName,
+                      folderId: targetProfileFolderId
                   }
-                  
-                  const finalProfile = { ...userProfile, image: newImageUrl };
-                  setUserProfile(finalProfile);
-                  localStorage.setItem('nexus_profile', JSON.stringify(finalProfile));
+              })
+          });
 
-                  const updatedUsers = authorizedUsers.map(u => 
-                      u.username.toLowerCase() === userProfile.username.toLowerCase() 
-                      ? { ...u, image: newImageUrl } 
-                      : u
-                  );
-                  setAuthorizedUsers(updatedUsers);
-
-                  await saveSystemSettings('app_credentials', updatedUsers);
-                  
-                  showToast("อัปเดตรูปโปรไฟล์สำเร็จ", "success");
-              } else {
-                  throw new Error(result.message || "Upload failed");
+          const result = await response.json();
+          if (result.status === 'success' && (result.url || result.fileId)) {
+              let newImageUrl = result.url;
+              if (result.fileId) {
+                  newImageUrl = `https://drive.google.com/uc?export=view&id=${result.fileId}`;
               }
-          } else {
-              const updatedProfile = { ...userProfile, image: base64Data };
-              setUserProfile(updatedProfile);
-              localStorage.setItem('nexus_profile', JSON.stringify(updatedProfile));
               
+              const finalProfile = { ...userProfile, image: newImageUrl };
+              setUserProfile(finalProfile);
+              localStorage.setItem('nexus_profile', JSON.stringify(finalProfile));
+
               const updatedUsers = authorizedUsers.map(u => 
-                  u.username.toLowerCase() === userProfile.username.toLowerCase() 
-                  ? { ...u, image: base64Data } 
+                  u.username.toLowerCase() === (userProfile?.username || '').toLowerCase() 
+                  ? { ...u, image: newImageUrl } 
                   : u
               );
               setAuthorizedUsers(updatedUsers);
-              showToast("เปลี่ยนรูปโปรไฟล์ (Offline)", "success");
-          }
 
+              await saveSystemSettings('app_credentials', updatedUsers);
+              
+              showToast("อัปเดตรูปโปรไฟล์สำเร็จ", "success");
+              return newImageUrl;
+          }
+          throw new Error(result.message || "อัปโหลดรูปไม่สำเร็จ");
       } catch (error) {
           console.error(error);
-          showToast("เกิดข้อผิดพลาด: " + error.message, "error");
+          setUserProfile(prev => (prev ? { ...prev, image: previousAvatar } : prev));
+          showToast("อัปโหลดรูปโปรไฟล์ไม่สำเร็จ: " + error.message, "error");
+          return null;
       } finally {
           setIsUploadingProfile(false);
       }
@@ -2456,12 +3218,7 @@ const App = () => {
       for (let i = 0; i < fileList.length; i++) {
         const file = fileList[i];
         if (!file.type || !file.type.startsWith('image/')) continue;
-        let base64Data = '';
-        if (file.size > 2 * 1024 * 1024) {
-          base64Data = await compressImage(file);
-        } else {
-          base64Data = await toBase64(file);
-        }
+        const base64Data = await compressImage(file, { maxWidth: 1024, quality: 0.78 });
         newImages.push({
           id: `ref_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
           url: base64Data,
@@ -2621,12 +3378,7 @@ const App = () => {
       for (let i = 0; i < fileList.length; i++) {
         const file = fileList[i];
         if (!file.type || !file.type.startsWith('image/')) continue;
-        let base64Data = '';
-        if (file.size > 2 * 1024 * 1024) {
-          base64Data = await compressImage(file);
-        } else {
-          base64Data = await toBase64(file);
-        }
+        const base64Data = await compressImage(file, { maxWidth: 1024, quality: 0.78 });
         newSlips.push({
           id: `slip_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
           url: base64Data,
@@ -2812,252 +3564,160 @@ const App = () => {
     () => filterAndSortActivities(allActivities, financeFilter),
     [allActivities, financeFilter, dealStatuses, transportStatuses]
   );
-  const analyticsActivities = useMemo(
-    () => filterAndSortActivities(allActivities, analyticsFilter),
-    [allActivities, analyticsFilter, dealStatuses, transportStatuses]
-  );
   const filteredAndSortedActivities = plansActivities;
 
   const [serverAnalytics, setServerAnalytics] = useState(null);
   const [serverStats, setServerStats] = useState(null);
 
   const analyticsData = useMemo(() => {
-    // คำนวณเฉพาะโปรเจกต์ที่ปิดการขายสำเร็จ (completed) จาก analyticsActivities ที่ถูกกรองตามเดือนของหน้าวิเคราะห์
-    const financialItems = analyticsActivities.filter(item => {
-        if (item.dealStatus === 'completed') return true;
-        const statusDef = dealStatuses.find(s => s.value === item.dealStatus);
-        if (statusDef && statusDef.type === 'completed') return true;
-        return false;
-    });
+    const totals = serverAnalytics?.totals || {};
+    const statusCounts = serverAnalytics?.status_counts || {};
 
-    const currentRevenue = financialItems.reduce((sum, item) => {
-        const qSum = item.quotationItems && item.quotationItems.length > 0
-          ? item.quotationItems.reduce((s, q) => s + (parseFloat(q.price) || ((parseFloat(q.unitPrice) || 0) * (parseFloat(q.quantity) || 1)) || 0), 0)
-          : 0;
-        return sum + (qSum > 0 ? qSum : (parseFloat(item.wage || item.totalRevenue || item.total_revenue) || 0));
-    }, 0);
-    
-    const currentSupport = financialItems.reduce((sum, item) => {
-        const calcSupport = item.customerSupport && item.customerSupport.length > 0
-          ? item.customerSupport.reduce((s, e) => s + (parseFloat(e.price) || ((parseFloat(e.denomination || e.unitPrice) || 0) * (parseFloat(e.quantity) || 1)) || 0), 0)
-          : 0;
-        const itemSupport = calcSupport > 0 ? calcSupport : (parseFloat(item.customerSupportTotal || item.customer_support_total) || 0);
-        return sum + itemSupport;
-    }, 0);
+    const currentRevenue = Number(totals.revenue ?? totals.total_revenue ?? 0);
+    const currentSupport = Number(totals.support ?? totals.total_customer_support ?? 0);
+    const currentCost = Number(totals.cost ?? totals.total_expenses ?? 0);
+    const currentProfit = Number(totals.profit ?? totals.total_net_profit ?? (currentRevenue - currentCost));
 
-    const currentCost = financialItems.reduce((sum, item) => {
-        const calcCost = item.expenses && item.expenses.length > 0
-          ? item.expenses.reduce((s, e) => s + (parseFloat(e.price) || ((parseFloat(e.unitPrice) || 0) * (parseFloat(e.quantity) || 1)) || 0), 0)
-          : 0;
-        const itemCost = calcCost > 0 ? calcCost : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
-        return sum + itemCost;
-    }, 0);
-    
-    const currentProfit = currentRevenue - currentCost; 
+    const totalProjects = Number(statusCounts.total ?? totals.total_projects ?? totals.total_orders ?? 0);
+    const completedProjects = Number(statusCounts.completed || 0);
+    const activeProjects = Number(statusCounts.active || 0);
+    const pendingProjects = Number(statusCounts.pending || 0);
+    const issueProjects = Number(statusCounts.cancelled ?? statusCounts.issue ?? 0);
+    const declinedProjects = Number(statusCounts.declined || 0);
 
-    // Counts remain based on ALL filtered items in analyticsActivities
-    const totalProjects = analyticsActivities.length;
-    const completedProjects = analyticsActivities.filter(a => a.dealStatus === 'confirmed' && a.transportStatus === 'delivered').length;
-    const activeProjects = analyticsActivities.filter(a => a.dealStatus === 'confirmed' && a.transportStatus !== 'delivered' && a.transportStatus !== 'issue').length;
-    const pendingProjects = analyticsActivities.filter(a => a.dealStatus === 'pending').length;
-    const issueProjects = analyticsActivities.filter(a => a.dealStatus === 'cancelled' || a.transportStatus === 'issue').length;
-    const declinedProjects = analyticsActivities.filter(a => a.dealStatus === 'declined').length;
-    
-    // Expense Breakdown (Financial -> Use financialItems)
-    const expenseBreakdown = {};
-    financialItems.forEach(item => {
-        let hasItemized = false;
-        if (item.expenses && item.expenses.length > 0) {
-          item.expenses.forEach(ex => {
-            const val = parseFloat(ex.price) || ((parseFloat(ex.unitPrice) || 0) * (parseFloat(ex.quantity) || 1)) || 0;
-            if (val > 0) {
-              const cat = ex.category || 'ค่าใช้จ่ายทั่วไป';
-              expenseBreakdown[cat] = (expenseBreakdown[cat] || 0) + val;
-              hasItemized = true;
-            }
-          });
-        }
-        if (!hasItemized) {
-          const fallbackCost = parseFloat(item.totalExpenses || item.total_expenses) || 0;
-          if (fallbackCost > 0) {
-            const cat = item.category ? `ต้นทุน (${item.category})` : 'ต้นทุน/ค่าใช้จ่ายงาน';
-            expenseBreakdown[cat] = (expenseBreakdown[cat] || 0) + fallbackCost;
-          }
-        }
-    });
-    const allExpensesList = Object.entries(expenseBreakdown)
-        .map(([category, amount]) => ({ category, amount }))
-        .sort((a, b) => b.amount - a.amount);
-    const maxExpense = Math.max(...allExpensesList.map(e => e.amount), 1);
-    
-    // Artist Revenue (Financial -> Use financialItems)
-    const artistRevenue = {};
-    financialItems.forEach(item => {
-        const name = item.artist || 'Unknown';
-        artistRevenue[name] = (artistRevenue[name] || 0) + (item.wage || 0);
-    });
-    const topPerformers = Object.entries(artistRevenue)
-        .map(([name, amount]) => ({ name, amount }))
-        .sort((a, b) => b.amount - a.amount);
-    const maxPerformerRevenue = Math.max(...topPerformers.map(p => p.amount), 1);
-    
-    // Customer Revenue (Financial -> Use financialItems)
-    const customerRevenue = {};
-    financialItems.forEach(item => {
-        const name = item.customer || 'Unknown';
-        customerRevenue[name] = (customerRevenue[name] || 0) + (item.wage || 0);
-    });
-    const topCustomers = Object.entries(customerRevenue)
-        .map(([name, amount]) => ({ name, amount }))
-        .sort((a, b) => b.amount - a.amount);
-    const maxCustomerRevenue = Math.max(...topCustomers.map(p => p.amount), 1);
-    
-    // Customer Project Counts (Count -> Use analyticsActivities)
-    const customerProjectCounts = {};
-    analyticsActivities.forEach(item => {
-        if (item.dealStatus !== 'cancelled' && item.transportStatus !== 'issue') {
-            const name = item.customer || 'Unknown';
-            customerProjectCounts[name] = (customerProjectCounts[name] || 0) + 1;
-        }
-    });
-    const topCustomerByProjects = Object.entries(customerProjectCounts)
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count);
-    const maxCustomerProjectCount = Math.max(...topCustomerByProjects.map(p => p.count), 1);
+    const avgOrderValue = Number(totals.avg_order_value ?? (totalProjects > 0 ? currentRevenue / totalProjects : 0));
+    const avgSupportValue = totalProjects > 0 ? currentSupport / totalProjects : 0;
+    const netMarginPercent = totals.net_margin_pct !== undefined
+      ? Number(totals.net_margin_pct).toFixed(1)
+      : totals.net_margin_percent !== undefined
+        ? Number(totals.net_margin_percent).toFixed(1)
+        : (currentRevenue > 0 ? ((currentProfit / currentRevenue) * 100).toFixed(1) : '0.0');
 
-    // Category Stats (Count -> Use analyticsActivities)
-    const categoryStats = {};
-    analyticsActivities.forEach(item => {
-        if (item.category) {
-          categoryStats[item.category] = (categoryStats[item.category] || 0) + 1;
-        }
-    });
-    const categoryData = Object.entries(categoryStats).map(([name, count]) => ({ name, count }));
+    const allExpensesList = Array.isArray(serverAnalytics?.expenses)
+      ? serverAnalytics.expenses.map((e) => ({
+          category: e.category || 'ไม่ระบุหมวดหมู่',
+          amount: Number(e.amount || 0),
+        }))
+      : [];
+    const maxExpense = allExpensesList.length > 0 ? Math.max(...allExpensesList.map((e) => e.amount), 1) : 1;
 
-    // Key Ratios (AOV, Support, Net Margin %)
-    const avgOrderValue = financialItems.length > 0 ? Math.round(currentRevenue / financialItems.length) : 0;
-    const avgSupportValue = financialItems.length > 0 ? Math.round(currentSupport / financialItems.length) : 0;
-    const netMarginPercent = currentRevenue > 0 ? ((currentProfit / currentRevenue) * 100).toFixed(1) : '0.0';
+    const topPerformers = Array.isArray(serverAnalytics?.top_artists)
+      ? serverAnalytics.top_artists.map((a) => ({
+          name: a.name,
+          amount: Number(a.amount || 0),
+          count: Number(a.count || 0),
+        }))
+      : [];
+    const maxPerformerRevenue = topPerformers.length > 0 ? Math.max(...topPerformers.map((a) => a.amount), 1) : 1;
 
-    // Banknote Float Breakdown (Denominations 1000, 500, 100, 50, 20)
+    const topCustomers = Array.isArray(serverAnalytics?.top_customers)
+      ? serverAnalytics.top_customers.map((c) => ({
+          name: c.name,
+          amount: Number(c.amount || 0),
+          count: Number(c.count || 0),
+        }))
+      : [];
+    const maxCustomerRevenue = topCustomers.length > 0 ? Math.max(...topCustomers.map((c) => c.amount), 1) : 1;
+
+    const topCustomerByProjects = Array.isArray(serverAnalytics?.top_customers_by_projects)
+      ? serverAnalytics.top_customers_by_projects.map((c) => ({
+          name: c.name,
+          count: Number(c.count || 0),
+          amount: Number(c.amount || 0),
+        }))
+      : [...topCustomers].sort((a, b) => (b.count || 0) - (a.count || 0));
+    const maxCustomerProjectCount = topCustomerByProjects.length > 0 ? Math.max(...topCustomerByProjects.map((c) => c.count), 1) : 1;
+
+    const categoryData = Array.isArray(serverAnalytics?.categories)
+      ? serverAnalytics.categories.map((c) => ({
+          name: c.name || 'ไม่ระบุ',
+          count: Number(c.count || 0),
+        }))
+      : [];
+
     const banknoteBreakdown = {
       1000: { count: 0, amount: 0 },
       500: { count: 0, amount: 0 },
       100: { count: 0, amount: 0 },
       50: { count: 0, amount: 0 },
-      20: { count: 0, amount: 0 }
+      20: { count: 0, amount: 0 },
     };
-    analyticsActivities.forEach(item => {
-      if (item.customerSupport && Array.isArray(item.customerSupport)) {
-        item.customerSupport.forEach(cs => {
-          const denom = Number(cs.denomination);
-          const qty = Number(cs.quantity) || 0;
-          const price = Number(cs.price) || (denom * qty);
-          if (banknoteBreakdown[denom]) {
-            banknoteBreakdown[denom].count += qty;
-            banknoteBreakdown[denom].amount += price;
-          }
-        });
-      }
-    });
-
-    // Top Venues Analysis
-    const venueStats = {};
-    analyticsActivities.forEach(item => {
-      const loc = (item.location || '').trim();
-      if (loc && loc !== '-' && loc.length > 1) {
-        if (!venueStats[loc]) {
-          venueStats[loc] = { name: loc, count: 0, revenue: 0 };
+    const rawBanknotes = serverAnalytics?.banknotes;
+    if (Array.isArray(rawBanknotes)) {
+      rawBanknotes.forEach((b) => {
+        const denom = Number(b?.denomination ?? b?.denom);
+        if (banknoteBreakdown[denom]) {
+          const count = Number(b?.count || 0);
+          banknoteBreakdown[denom] = {
+            count,
+            amount: Number(b?.amount ?? denom * count),
+          };
         }
-        venueStats[loc].count += 1;
-        venueStats[loc].revenue += (item.wage || 0);
-      }
-    });
-    const topVenues = Object.values(venueStats)
-      .sort((a, b) => b.count - a.count || b.revenue - a.revenue)
-      .slice(0, 10);
-    const maxVenueCount = Math.max(...topVenues.map(v => v.count), 1);
-
-    // Low Margin Projects (Margin < 40%)
-    const lowMarginProjects = financialItems.filter(item => {
-      const rev = item.wage || 0;
-      const cost = item.expenses && item.expenses.length > 0
-        ? item.expenses.reduce((s, e) => s + (parseFloat(e.price) || 0), 0)
-        : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
-      if (rev <= 0) return false;
-      const margin = ((rev - cost) / rev) * 100;
-      return margin < 40;
-    }).map(item => {
-      const rev = item.wage || 0;
-      const cost = item.expenses && item.expenses.length > 0
-        ? item.expenses.reduce((s, e) => s + (parseFloat(e.price) || 0), 0)
-        : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
-      return {
-        ...item,
-        revenue: rev,
-        cost,
-        profit: rev - cost,
-        marginPct: ((rev - cost) / rev) * 100
-      };
-    }).sort((a, b) => a.marginPct - b.marginPct).slice(0, 8);
-
-    if (serverAnalytics?.totals) {
-      const effExpenses = serverAnalytics.expenses && serverAnalytics.expenses.length > 0 ? serverAnalytics.expenses : allExpensesList;
-      const effMaxExpense = Math.max(...effExpenses.map(e => e.amount || 0), 1);
-
-      const effPerformers = serverAnalytics.top_artists && serverAnalytics.top_artists.length > 0 ? serverAnalytics.top_artists : topPerformers;
-      const effMaxPerformerRevenue = Math.max(...effPerformers.map(p => p.amount || 0), 1);
-
-      const effCustomers = serverAnalytics.top_customers && serverAnalytics.top_customers.length > 0 ? serverAnalytics.top_customers : topCustomers;
-      const effMaxCustomerRevenue = Math.max(...effCustomers.map(p => p.amount || 0), 1);
-
-      const effVenues = serverAnalytics.top_venues && serverAnalytics.top_venues.length > 0 ? serverAnalytics.top_venues : topVenues;
-      const effMaxVenueCount = Math.max(...effVenues.map(v => v.count || 0), 1);
-
-      return {
-        currentRevenue: serverAnalytics.totals.total_revenue ?? currentRevenue,
-        currentSupport: serverAnalytics.totals.total_customer_support ?? currentSupport,
-        currentCost: serverAnalytics.totals.total_expenses ?? currentCost,
-        currentProfit: serverAnalytics.totals.total_net_profit ?? currentProfit,
-        avgOrderValue: serverAnalytics.totals.avg_order_value ?? avgOrderValue,
-        avgSupportValue: serverAnalytics.totals.avg_support_value ?? avgSupportValue,
-        netMarginPercent: serverAnalytics.totals.net_margin_percent ?? netMarginPercent,
-        totalProjects: serverAnalytics.status_counts?.total ?? totalProjects,
-        completedProjects: serverAnalytics.status_counts?.completed ?? completedProjects,
-        activeProjects: serverAnalytics.status_counts?.active ?? activeProjects,
-        pendingProjects: serverAnalytics.status_counts?.pending ?? pendingProjects,
-        issueProjects: serverAnalytics.status_counts?.issue ?? issueProjects,
-        declinedProjects: serverAnalytics.status_counts?.declined ?? declinedProjects,
-        allExpensesList: effExpenses,
-        maxExpense: effMaxExpense,
-        topPerformers: effPerformers,
-        maxPerformerRevenue: effMaxPerformerRevenue,
-        topCustomers: effCustomers,
-        maxCustomerRevenue: effMaxCustomerRevenue,
-        topCustomerByProjects,
-        maxCustomerProjectCount,
-        categoryData: serverAnalytics.categories && serverAnalytics.categories.length > 0 ? serverAnalytics.categories : categoryData,
-        banknoteBreakdown: serverAnalytics.banknotes && Object.keys(serverAnalytics.banknotes).length > 0 ? serverAnalytics.banknotes : banknoteBreakdown,
-        topVenues: effVenues,
-        maxVenueCount: effMaxVenueCount,
-        lowMarginProjects: serverAnalytics.low_margin && serverAnalytics.low_margin.length > 0 ? serverAnalytics.low_margin : lowMarginProjects
-      };
+      });
+    } else if (rawBanknotes && typeof rawBanknotes === 'object') {
+      [1000, 500, 100, 50, 20].forEach((denom) => {
+        const entry = rawBanknotes[denom] || rawBanknotes[String(denom)];
+        if (entry) {
+          const count = Number(entry.count || 0);
+          banknoteBreakdown[denom] = {
+            count,
+            amount: Number(entry.amount ?? denom * count),
+          };
+        }
+      });
     }
 
+    const topVenues = Array.isArray(serverAnalytics?.top_venues)
+      ? serverAnalytics.top_venues.map((v) => ({
+          name: v.name,
+          count: Number(v.count || 0),
+          revenue: Number(v.revenue || 0),
+        }))
+      : [];
+    const maxVenueCount = topVenues.length > 0 ? Math.max(...topVenues.map((v) => v.count), 1) : 1;
+
+    const lowMarginProjects = Array.isArray(serverAnalytics?.low_margin)
+      ? serverAnalytics.low_margin.map((p) => ({
+          ...p,
+          id: p.id,
+          name: p.name || '-',
+          artist: p.artist || p.artist_name || '-',
+          revenue: Number(p.revenue || 0),
+          cost: Number(p.cost || 0),
+          profit: Number(p.profit ?? (Number(p.revenue || 0) - Number(p.cost || 0))),
+          marginPct: Number(p.marginPct ?? p.margin_pct ?? 0),
+        }))
+      : [];
+
     return {
-        currentRevenue, currentSupport, currentCost, currentProfit,
-        avgOrderValue, avgSupportValue, netMarginPercent,
-        totalProjects, completedProjects, activeProjects, pendingProjects, issueProjects, declinedProjects,
-        allExpensesList, maxExpense,
-        topPerformers, maxPerformerRevenue,
-        topCustomers, maxCustomerRevenue,
-        topCustomerByProjects, maxCustomerProjectCount,
-        categoryData,
-        banknoteBreakdown,
-        topVenues, maxVenueCount,
-        lowMarginProjects
+      currentRevenue,
+      currentSupport,
+      currentCost,
+      currentProfit,
+      avgOrderValue,
+      avgSupportValue,
+      netMarginPercent,
+      totalProjects,
+      completedProjects,
+      activeProjects,
+      pendingProjects,
+      issueProjects,
+      declinedProjects,
+      allExpensesList,
+      maxExpense,
+      topPerformers,
+      maxPerformerRevenue,
+      topCustomers,
+      maxCustomerRevenue,
+      topCustomerByProjects,
+      maxCustomerProjectCount,
+      categoryData,
+      banknoteBreakdown,
+      topVenues,
+      maxVenueCount,
+      lowMarginProjects,
     };
-  }, [analyticsActivities, dealStatuses, serverAnalytics]);
+  }, [serverAnalytics]);
 
   // Sync scroll on mobile window scroll
   useEffect(() => {
@@ -3077,7 +3737,7 @@ const App = () => {
         setIsScrolled(shouldBeScrolled);
       }
 
-      if (activeTab === 'Plans' || activeTab === 'Analytics') {
+      if (activeTab === 'Plans') {
         const scrollHeight = document.documentElement.scrollHeight;
         const clientHeight = window.innerHeight;
         if (scrollTop + clientHeight >= scrollHeight - 250) {
@@ -3287,19 +3947,21 @@ const App = () => {
     const activity =
       typeof activityOrId === 'string'
         ? allActivities.find((a) => String(a.id) === String(activityOrId)) || null
-        : activityOrId;
+        : (activityOrId?.id && !activityOrId.category
+            ? allActivities.find((a) => String(a.id) === String(activityOrId.id)) || activityOrId
+            : activityOrId);
     const effectiveViewOnly = activity ? (viewOnly !== undefined ? Boolean(viewOnly) : true) : false;
     setViewOnlyMode(effectiveViewOnly);
 
     if (activity) {
       setEditingId(activity.id);
       setCurrentId(activity.id);
-      setProjectName(activity.name);
-      setProjectCategory(activity.category);
+      setProjectName(activity.name || '');
+      setProjectCategory(activity.category || '');
       setProjectDateTime(activity.rawDateTime || '');
       setPaymentDate(activity.paymentDate || ''); // [ADDED]
-      setArtistName(activity.artist);
-      setCustomerName(activity.customer);
+      setArtistName(activity.artist || '');
+      setCustomerName(activity.customer || '');
       if (activity.customerInfo) {
         setCustomerSocial(activity.customerInfo.social || '');
         setCustomerLine(activity.customerInfo.line || '');
@@ -3328,22 +3990,71 @@ const App = () => {
       setUploadedImages(rawImages); 
       setUploadedSlips(Array.isArray(activity.slips) ? activity.slips : (activity.slip ? [activity.slip] : [])); 
       
-      // JIT on-demand fetch of detailed heavy images & slips if opened
+      // JIT on-demand fetch of full single-project details, images & slips if opened
       if (activity.id) {
         fetchProjectDetailOnDemand(activity.id).then((detail) => {
           if (reqId !== openModalReqIdRef.current || !detail) return;
           if (addModalGuardStateRef.current.hasUnsavedChanges) return;
+          if (detail.name) setProjectName(detail.name);
+          if (detail.category) setProjectCategory(detail.category);
+          if (detail.rawDateTime) setProjectDateTime(detail.rawDateTime);
+          if (detail.paymentDate) setPaymentDate(detail.paymentDate);
+          if (detail.artist) setArtistName(detail.artist);
+          if (detail.customer) setCustomerName(detail.customer);
+          if (detail.customerInfo) {
+            if (detail.customerInfo.social !== undefined) setCustomerSocial(detail.customerInfo.social || '');
+            if (detail.customerInfo.line !== undefined) setCustomerLine(detail.customerInfo.line || '');
+            if (detail.customerInfo.phone !== undefined) setCustomerPhone(formatPhoneNumber(detail.customerInfo.phone || ''));
+            if (detail.customerInfo.email !== undefined) setCustomerEmail(detail.customerInfo.email || '');
+            if (detail.customerInfo.taxId !== undefined) setCustomerTaxId(detail.customerInfo.taxId || '');
+            if (detail.customerInfo.address !== undefined) setCustomerAddress(detail.customerInfo.address || '');
+          }
+          if (detail.rawDeliveryStart) setDeliveryStart(detail.rawDeliveryStart);
+          if (detail.rawDeliveryEnd || detail.rawDeliveryDateTime) {
+            setDeliveryEnd(detail.rawDeliveryEnd || detail.rawDeliveryDateTime);
+          }
+          if (detail.recipient) setRecipientName(detail.recipient);
+          if (detail.recipientPhone) setRecipientPhone(formatPhoneNumber(detail.recipientPhone));
+          if (detail.location) setLocationName(detail.location);
+          if (detail.mapLink) setMapLink(detail.mapLink);
+          if (detail.note !== undefined && detail.note !== null) setNote(detail.note);
+          if (detail.dealStatus) setDealStatus(detail.dealStatus);
+          if (detail.transportStatus) setTransportStatus(detail.transportStatus);
+          if (detail.paymentStatus) setPaymentStatus(detail.paymentStatus);
+          if (detail.depositAmount !== undefined && detail.depositAmount !== null) {
+            setDepositAmount(detail.depositAmount);
+          }
           if (detail.images && detail.images.length > 0) setUploadedImages(detail.images);
           if (detail.slips && detail.slips.length > 0) setUploadedSlips(detail.slips);
+          const detailFallbackDate = detail.paymentDate || detail.rawDateTime || activity.paymentDate || activity.rawDateTime || getNowDateString();
           if (detail.quotationItems && detail.quotationItems.length > 0) {
-            setQuotationItems(detail.quotationItems);
+            const loadedItems = detail.quotationItems.map((item) => ({
+              ...item,
+              quantity: item.quantity !== undefined ? item.quantity : 1,
+              unitPrice: item.unitPrice !== undefined ? item.unitPrice : (item.price || 0),
+              date: item.date || detailFallbackDate,
+            }));
+            setQuotationItems(loadedItems);
             setWage(detail.quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0));
+          } else if (detail.wage > 0) {
+            setWage(detail.wage);
           }
           if (detail.customerSupport && detail.customerSupport.length > 0) {
-            setCustomerSupportItems(detail.customerSupport);
+            const mappedSupport = detail.customerSupport.map((item) =>
+              item.denomination !== undefined
+                ? { ...item, date: item.date || detailFallbackDate }
+                : { denomination: 1, quantity: item.price, price: item.price, date: item.date || detailFallbackDate }
+            );
+            setCustomerSupportItems(mappedSupport);
           }
           if (detail.expenses && detail.expenses.length > 0) {
-            setExpenses(detail.expenses);
+            const loadedExpenses = detail.expenses.map((item) => ({
+              ...item,
+              quantity: item.quantity !== undefined ? item.quantity : 1,
+              unitPrice: item.unitPrice !== undefined ? item.unitPrice : (item.price || 0),
+              date: item.date || detailFallbackDate,
+            }));
+            setExpenses(loadedExpenses);
           }
           markAddModalClean();
         }).catch(() => {});
@@ -3365,12 +4076,13 @@ const App = () => {
           // [MODIFIED] Initialize with quantity and unitPrice and date
           const initialItems = [];
           const fallbackDate = activity.paymentDate || activity.rawDateTime || getNowDateString();
-          if (activity.wage > 0) initialItems.push({ category: 'ค่าบริการ/อุปกรณ์', detail: 'ค่าจ้างเดิม', quantity: 1, unitPrice: activity.wage, price: activity.wage, date: fallbackDate });
+          const initialWage = activity.wage ?? activity.revenue ?? 0;
+          if (initialWage > 0) initialItems.push({ category: 'ค่าบริการ/อุปกรณ์', detail: 'ค่าจ้างเดิม', quantity: 1, unitPrice: initialWage, price: initialWage, date: fallbackDate });
           if (activity.deliveryFee > 0) initialItems.push({ category: 'ค่าจัดส่ง', detail: 'ค่าส่งเดิม', quantity: 1, unitPrice: activity.deliveryFee, price: activity.deliveryFee, date: fallbackDate });
           
           if (initialItems.length === 0) initialItems.push({ category: '', detail: '', quantity: 1, unitPrice: 0, price: 0, date: fallbackDate });
           setQuotationItems(initialItems);
-          setWage(activity.wage || 0);
+          setWage(initialWage);
       }
 
       if (activity.customerSupport && activity.customerSupport.length > 0) {
@@ -3398,17 +4110,17 @@ const App = () => {
               date: item.date || fallbackDate
           }));
           setExpenses(loadedExpenses);
-      } else if ((parseFloat(activity.totalExpenses || activity.total_expenses) || 0) > 0) {
+      } else if ((parseFloat(activity.totalExpenses || activity.total_expenses || activity.cost) || 0) > 0) {
           const fallbackDate = activity.paymentDate || activity.rawDateTime || getNowDateString();
-          const expTotal = parseFloat(activity.totalExpenses || activity.total_expenses) || 0;
+          const expTotal = parseFloat(activity.totalExpenses || activity.total_expenses || activity.cost) || 0;
           setExpenses([{ category: 'ต้นทุน/ค่าใช้จ่ายเดิม', detail: 'ค่าใช้จ่ายจริงรวม', quantity: 1, unitPrice: expTotal, price: expTotal, date: fallbackDate }]);
       } else {
           setExpenses([{ category: '', detail: '', quantity: 1, unitPrice: 0, price: 0, date: getNowDateString() }]);
       }
 
       setNote(activity.note || '');
-      setDealStatus(activity.dealStatus);
-      setTransportStatus(activity.transportStatus);
+      setDealStatus(activity.dealStatus || (dealStatuses[0]?.value || ''));
+      setTransportStatus(activity.transportStatus || (transportStatuses[0]?.value || ''));
       setPaymentStatus(activity.paymentStatus || (activity.dealStatus === 'completed' ? 'paid' : 'unpaid'));
       setDepositAmount(activity.depositAmount || 0);
     } else {
@@ -3492,14 +4204,28 @@ const App = () => {
     let finalId = currentId;
 
     if (!editingId) {
-      // กรณีสร้างใหม่: คำนวณ ID ใหม่ล่าสุดเพื่อป้องกัน ID ชนกัน
-      const ids = allActivities.map(item => {
-        if (!item.id) return 0;
-        const match = String(item.id).match(/\d+/); 
-        return match ? parseInt(match[0]) : 0;
-      });
-      const maxId = ids.length > 0 ? Math.max(...ids) : 0;
-      finalId = `P-${String(maxId + 1).padStart(4, '0')}`;
+      if (typeof allocateNextProjectCodeSync === 'function') {
+        try {
+          finalId = await allocateNextProjectCodeSync(allActivities);
+        } catch (allocErr) {
+          console.warn('allocateNextProjectCodeSync fallback:', allocErr);
+          const ids = allActivities.map(item => {
+            if (!item.id) return 0;
+            const match = String(item.id).match(/\d+/);
+            return match ? parseInt(match[0], 10) : 0;
+          });
+          const maxId = ids.length > 0 ? Math.max(...ids) : 0;
+          finalId = `P-${String(maxId + 1).padStart(4, '0')}`;
+        }
+      } else {
+        const ids = allActivities.map(item => {
+          if (!item.id) return 0;
+          const match = String(item.id).match(/\d+/); 
+          return match ? parseInt(match[0], 10) : 0;
+        });
+        const maxId = ids.length > 0 ? Math.max(...ids) : 0;
+        finalId = `P-${String(maxId + 1).padStart(4, '0')}`;
+      }
     } else {
       // กรณีแก้ไข: เช็คว่างานนี้ยังอยู่ในระบบไหม
       const stillExists = allActivities.some(item => item.id === editingId);
@@ -3559,20 +4285,34 @@ const App = () => {
       slips: uploadedSlips
     };
 
+    const hasBase64Item = (list) =>
+      Array.isArray(list) &&
+      list.some((entry) => {
+        const u = typeof entry === 'object' ? entry?.url : entry;
+        return typeof u === 'string' && u.startsWith('data:image');
+      });
+
     if (GOOGLE_SCRIPT_URL) {
       try {
-        // Upload any base64 reference images to Google Drive reference folder if configured
-        const refFolderId = getFolderIdByType('reference');
+        // Upload any base64 reference images to Google Drive reference folder (strictly forbid Base64 leak into DB)
         let finalImages = Array.isArray(uploadedImages) ? [...uploadedImages] : [];
-        if (refFolderId && finalImages.length > 0) {
+        if (hasBase64Item(finalImages)) {
+          const refFolderId = getFolderIdByType('reference');
+          if (!refFolderId) {
+            showToast('กรุณาตั้งค่าโฟลเดอร์ Google Drive สำหรับรูปภาพอ้างอิงก่อนบันทึก', 'error');
+            setIsSaving(false);
+            return;
+          }
           for (let i = 0; i < finalImages.length; i++) {
             const itemImg = finalImages[i];
             const imgUrl = typeof itemImg === 'object' ? itemImg.url : itemImg;
             if (typeof imgUrl === 'string' && imgUrl.startsWith('data:image')) {
+              const mimeType = imgUrl.split(',')[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+              const rawBase64 = imgUrl.substring(imgUrl.indexOf(',') + 1);
+              const fileName = `ref_${activityData.id}_${Date.now()}_${i + 1}.jpg`;
+              let uploadedLink = null;
+              let uploadedFileId = null;
               try {
-                const mimeType = imgUrl.split(',')[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
-                const rawBase64 = imgUrl.substring(imgUrl.indexOf(',') + 1);
-                const fileName = `ref_${activityData.id}_${Date.now()}_${i + 1}.png`;
                 const uploadRes = await fetch(GOOGLE_SCRIPT_URL, {
                   method: 'POST',
                   headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -3587,35 +4327,49 @@ const App = () => {
                   })
                 });
                 const resJson = await uploadRes.json();
-                if (resJson.status === 'success' && resJson.url) {
-                  const fileLink = resJson.fileId 
+                if (resJson.status === 'success' && (resJson.url || resJson.fileId)) {
+                  uploadedFileId = resJson.fileId || null;
+                  uploadedLink = resJson.fileId 
                     ? `https://drive.google.com/uc?export=view&id=${resJson.fileId}`
                     : resJson.url;
-                  finalImages[i] = typeof itemImg === 'object' 
-                    ? { ...itemImg, url: fileLink, fileId: resJson.fileId }
-                    : fileLink;
                 }
               } catch (imgErr) {
                 console.warn("Upload ref image to Drive error:", imgErr);
               }
+              if (!uploadedLink || uploadedLink.startsWith('data:image')) {
+                showToast('อัปโหลดรูปภาพอ้างอิงขึ้น Google Drive ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง', 'error');
+                setIsSaving(false);
+                return;
+              }
+              finalImages[i] = typeof itemImg === 'object' 
+                ? { ...itemImg, url: uploadedLink, ...(uploadedFileId ? { fileId: uploadedFileId } : {}) }
+                : uploadedLink;
             }
           }
+          setUploadedImages(finalImages);
           activityData.images = finalImages;
           activityData.image = finalImages.length > 0 ? (typeof finalImages[0] === 'object' ? finalImages[0].url : finalImages[0]) : null;
         }
 
-        // Upload any base64 slips to Google Drive slips folder if configured
-        const slipFolderId = getFolderIdByType('slips');
+        // Upload any base64 slips to Google Drive slips folder (strictly forbid Base64 leak into DB)
         let finalSlips = Array.isArray(uploadedSlips) ? [...uploadedSlips] : [];
-        if (slipFolderId && finalSlips.length > 0) {
+        if (hasBase64Item(finalSlips)) {
+          const slipFolderId = getFolderIdByType('slips');
+          if (!slipFolderId) {
+            showToast('กรุณาตั้งค่าโฟลเดอร์ Google Drive สำหรับสลิปโอนเงินก่อนบันทึก', 'error');
+            setIsSaving(false);
+            return;
+          }
           for (let i = 0; i < finalSlips.length; i++) {
             const itemSlip = finalSlips[i];
             const slipUrl = typeof itemSlip === 'object' ? itemSlip.url : itemSlip;
             if (typeof slipUrl === 'string' && slipUrl.startsWith('data:image')) {
+              const mimeType = slipUrl.split(',')[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+              const rawBase64 = slipUrl.substring(slipUrl.indexOf(',') + 1);
+              const fileName = `slip_${activityData.id}_${Date.now()}_${i + 1}.jpg`;
+              let uploadedSlipLink = null;
+              let uploadedSlipFileId = null;
               try {
-                const mimeType = slipUrl.split(',')[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
-                const rawBase64 = slipUrl.substring(slipUrl.indexOf(',') + 1);
-                const fileName = `slip_${activityData.id}_${Date.now()}_${i + 1}.png`;
                 const uploadRes = await fetch(GOOGLE_SCRIPT_URL, {
                   method: 'POST',
                   headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -3630,19 +4384,26 @@ const App = () => {
                   })
                 });
                 const resJson = await uploadRes.json();
-                if (resJson.status === 'success' && resJson.url) {
-                  const fileLink = resJson.fileId 
+                if (resJson.status === 'success' && (resJson.url || resJson.fileId)) {
+                  uploadedSlipFileId = resJson.fileId || null;
+                  uploadedSlipLink = resJson.fileId 
                     ? `https://drive.google.com/uc?export=view&id=${resJson.fileId}`
                     : resJson.url;
-                  finalSlips[i] = typeof itemSlip === 'object' 
-                    ? { ...itemSlip, url: fileLink, fileId: resJson.fileId }
-                    : fileLink;
                 }
               } catch (slipErr) {
                 console.warn("Upload slip to Drive error:", slipErr);
               }
+              if (!uploadedSlipLink || uploadedSlipLink.startsWith('data:image')) {
+                showToast('อัปโหลดสลิปโอนเงินขึ้น Google Drive ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง', 'error');
+                setIsSaving(false);
+                return;
+              }
+              finalSlips[i] = typeof itemSlip === 'object' 
+                ? { ...itemSlip, url: uploadedSlipLink, ...(uploadedSlipFileId ? { fileId: uploadedSlipFileId } : {}) }
+                : uploadedSlipLink;
             }
           }
+          setUploadedSlips(finalSlips);
           activityData.slips = finalSlips;
         }
 
@@ -3692,13 +4453,18 @@ const App = () => {
         showToast("เกิดข้อผิดพลาดในการเชื่อมต่อ: " + error.message, 'error');
       }
     } else {
+      if (hasBase64Item(uploadedImages) || hasBase64Item(uploadedSlips)) {
+        showToast('กรุณาตั้งค่าระบบอัปโหลดรูปภาพ Google Drive ก่อนบันทึกรูปภาพหรือสลิป', 'error');
+        setIsSaving(false);
+        return;
+      }
       if (editingId) {
         setAllActivities(allActivities.map(item => item.id === editingId ? activityData : item));
       } else {
         setAllActivities([activityData, ...allActivities]);
       }
       closeModal();
-      showToast("บันทึกข้อมูลสำเร็จ (โหมดออฟไลน์)", 'success');
+      showToast("บันทึกข้อมูลสำเร็จ", 'success');
     }
     setIsSaving(false);
   };
@@ -3715,26 +4481,20 @@ const App = () => {
   };
 
   const executeDelete = async () => {
-    if (deleteConfirm.id) {
-      setIsSaving(true);
-
-      const itemToDelete = allActivities.find(item => item.id === deleteConfirm.id);
-      const imageInfo = itemToDelete ? itemToDelete.image : null;
-
-      // 1. ลบจาก Supabase และ IndexedDB แบบ Realtime
-      try {
-        await deleteProjectSync(deleteConfirm.id);
-      } catch (supaErr) {
-        console.warn("Supabase delete note:", supaErr);
-      }
-
+    if (!deleteConfirm.id) return;
+    setIsSaving(true);
+    try {
+      await deleteProjectSync(deleteConfirm.id);
       setAllActivities(prev => prev.filter(item => item.id !== deleteConfirm.id));
       showToast("ลบข้อมูลเรียบร้อยแล้ว", 'success');
-      
       closeDeleteModal();
       if (deleteConfirm.fromModal) {
         closeModal();
       }
+    } catch (supaErr) {
+      console.error("Delete project error:", supaErr);
+      showToast("ไม่สามารถลบรายการได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง", 'error');
+    } finally {
       setIsSaving(false);
     }
   };
@@ -4507,6 +5267,16 @@ const App = () => {
   };
 
   const renderContent = () => {
+    if (resetToken) {
+      return (
+        <ResetPasswordView
+          token={resetToken}
+          shopInfo={shopInfo}
+          onBackToLogin={handleExitResetPassword}
+        />
+      );
+    }
+
     // 1. ถ้ามี Tracking ID ให้แสดงหน้า Tracking View โดยไม่ต้อง Login
     if (trackingId) {
         // [MODIFIED] Check isSettingsLoaded AND areImagesLoaded to ensure theme & images are ready before text
@@ -4520,9 +5290,11 @@ const App = () => {
             );
         }
         
-        // [FIX] Match against generated token instead of direct ID for security
+        // [FIX] Match against generated token or verified public single-project lookup
         const trackData = allActivities.find(item => 
-            generateTrackingToken(item.id, item.rawDateTime) === trackingId
+            item.trackingToken === trackingId ||
+            generateTrackingToken(item.id, item.rawDateTime) === trackingId ||
+            (!isLoggedIn && allActivities.length === 1 && item.id)
         );
         
         if (!trackData) {
@@ -4555,7 +5327,9 @@ const App = () => {
         }
         
         const quoteData = allActivities.find(item => 
-            generateTrackingToken(item.id, item.rawDateTime) === quotationId
+            item.trackingToken === quotationId ||
+            generateTrackingToken(item.id, item.rawDateTime) === quotationId ||
+            (!isLoggedIn && allActivities.length === 1 && item.id)
         );
         
         if (!quoteData) {
@@ -4606,18 +5380,6 @@ const App = () => {
       );
     }
 
-    // [OPTIMIZATION] Destructure Data for Persistent Views
-    // เตรียมข้อมูล Analytics ไว้เสมอ (เพราะเราจะ Render ทิ้งไว้แบบ hidden)
-    const {
-        currentRevenue, currentSupport, currentCost, currentProfit,
-        totalProjects, completedProjects, activeProjects, pendingProjects, issueProjects, declinedProjects,
-        allExpensesList, maxExpense,
-        topPerformers, maxPerformerRevenue,
-        topCustomers, maxCustomerRevenue,
-        topCustomerByProjects, maxCustomerProjectCount,
-        categoryData
-    } = analyticsData;
-
     // [PERFORMANCE FIX] ใช้เทคนิค Lazy Mount + Persistent Warm Layout พร้อม startTransition เพื่อความลื่นไหลระดับ 60fps
     return (
       <>
@@ -4645,9 +5407,6 @@ const App = () => {
               resetFilters={() => resetTabFilter('Analytics')}
               setFilterStatus={(s) => updateTabFilter('Analytics', { status: s })}
               setFilterTransport={(t) => updateTabFilter('Analytics', { transport: t })}
-              openModal={openModal}
-              renderTable={renderTable}
-              filteredAndSortedActivities={analyticsActivities}
               isActive={activeTab === 'Analytics'}
               onOpenVenueModal={(venueOrName) => {
                 const match = typeof venueOrName === 'string'
@@ -4847,9 +5606,11 @@ const App = () => {
           <PersistentPage active={activeTab === 'Staff'} className="block">
             <Staff
               activities={allActivities}
+              currentUser={userProfile}
               isCreateOpen={isCreateStaffOpen}
               onCloseCreate={() => setIsCreateStaffOpen(false)}
               onRefresh={fetchSettings}
+              profilesDriveFolderId={getFolderIdByType('profiles')}
             />
           </PersistentPage>
         )}
@@ -4917,7 +5678,7 @@ const App = () => {
   };
 
   return (
-    <div className="min-h-screen w-full flex flex-col md:flex-row bg-[#F8FAFC] font-sans text-slate-800 selection:bg-indigo-100 selection:text-indigo-900 md:h-screen md:overflow-hidden">
+    <div className="min-h-screen w-full flex flex-col md:flex-row bg-[#F8FAFC] font-sans text-slate-800 selection:bg-indigo-100 selection:text-indigo-900 md:h-screen md:overflow-hidden md:relative">
       
       <style>{`
         @keyframes modalEnter {
@@ -4996,190 +5757,239 @@ const App = () => {
         />
       )}
 
-      {/* --- Desktop Sidebar --- */}
+      {/* --- Desktop / Tablet Sidebar (Zero-Reflow GPU 60-120 FPS, Deterministic Single-Token Gesture Engine) --- */}
       {/* Only show sidebar if logged in AND NOT in tracking mode */}
-      {isLoggedIn && !trackingId && !quotationId && (
-        <aside className={`hidden md:flex flex-col ${isSidebarCollapsed ? 'w-20' : 'w-72'} bg-white border-r border-slate-200/75 z-20 transition-all duration-300 relative`}>
-            <div className={`px-5 py-4 min-h-[72px] border-b border-slate-200/75 flex items-center shrink-0 ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
-            {/* Sidebar Brand Logo */}
-            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 overflow-hidden relative ${shopInfo.logo ? '' : 'theme-logo-bg'}`}>
+      {isLoggedIn && !trackingId && !quotationId && !resetToken && (
+        <aside
+          ref={attachSidebarRef}
+          data-desktop-sidebar="true"
+          onPointerDown={handleSidebarDragStart}
+          onClickCapture={handleSidebarClickCapture}
+          style={{
+            touchAction: 'pan-y'
+          }}
+          className={`hidden md:flex flex-col shrink-0 bg-white border-r border-slate-200/80 shadow-[0_4px_24px_rgba(0,0,0,0.03)] ${isProfileMenuOpen ? 'z-[60]' : 'z-30'} md:absolute md:inset-y-0 md:left-0 select-none`}
+        >
+          {/* Invisible Right-Edge Drag Strip (Bubbles cleanly to single aside onPointerDown) */}
+          <div
+            className="sidebar-drag-handle hidden md:block absolute top-0 -right-1.5 w-3 h-full z-[70] touch-none select-none"
+            aria-hidden="true"
+          />
+
+          {/* Clipped Inner Rail: Icons stay locked on x = 40px axis; single-line labels clip & fade smoothly */}
+          <div className="sidebar-inner-rail flex flex-col flex-1 min-h-0 w-full overflow-hidden">
+            {/* Header & Logo (Seamless without divider border; click or swipe to expand/collapse) */}
+            <div
+              data-sidebar-logo-toggle="true"
+              onClick={() => {
+                if (isDraggingSidebarRef.current) return;
+                toggleDesktopSidebar();
+              }}
+              title={isSidebarCollapsed ? 'คลิกเพื่อขยายเมนู' : 'คลิกเพื่อย่อเมนู'}
+              className="pl-5 pr-4 pt-[calc(18px+env(safe-area-inset-top,0px))] pb-2 min-h-[calc(72px+env(safe-area-inset-top,0px))] flex items-center gap-3.5 shrink-0 w-[256px] cursor-pointer group select-none"
+            >
+              {/* Sidebar Brand Logo */}
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 overflow-hidden relative group-hover:scale-105 transition-transform duration-200 ${shopInfo.logo ? '' : 'theme-logo-bg'}`}>
                 {shopInfo.logo ? (
-                    <img 
-                        src={processImageUrl(shopInfo.logo)} 
-                        alt="App Logo" 
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                        onError={(e) => { 
-                            e.target.style.display = 'none'; 
-                            if(e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
-                            e.target.parentElement.classList.add('theme-logo-bg');
-                        }}
-                    />
+                  <img
+                    src={processImageUrl(shopInfo.logo)}
+                    alt="App Logo"
+                    draggable={false}
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                      if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                      e.target.parentElement.classList.add('theme-logo-bg');
+                    }}
+                  />
                 ) : null}
                 <div className={`w-full h-full flex items-center justify-center ${shopInfo.logo ? 'hidden' : 'flex'}`}>
-                    <Clipboard className="w-6 h-6 text-white" />
+                  <Clipboard className="w-6 h-6 text-white" />
                 </div>
-            </div>
-            {!isSidebarCollapsed && (
-                <span className="text-xl font-extrabold text-slate-900 tracking-[-0.02em] whitespace-nowrap overflow-hidden truncate">
+              </div>
+              <span
+                className="sidebar-text-label shrink-0 w-[166px] text-xl font-extrabold text-slate-900 tracking-[-0.02em] whitespace-nowrap truncate pointer-events-none will-change-transform"
+              >
                 {shopInfo.shopName || 'Flower2you'}
-                </span>
-            )}
+              </span>
             </div>
-            
-            <nav className="flex-1 px-4 py-6 space-y-2">
-            {allowedNavItems.map((item) => (
+
+            <nav className="flex-1 min-h-0 px-3 pt-2 pb-4 space-y-1.5 overflow-y-auto overflow-x-hidden no-scrollbar">
+              {allowedNavItems.map((item) => (
                 <button
-                key={item.name}
-                onClick={() => handleSelectTab(item.name)}
-                className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-2' : 'gap-4 px-6'} py-4 text-sm font-bold rounded-[1.2rem] transition-all duration-300 group ${
+                  key={item.name}
+                  type="button"
+                  onClick={() => {
+                    if (isDraggingSidebarRef.current) return;
+                    handleSelectTab(item.name);
+                  }}
+                  className={`w-full h-12 pl-[18px] pr-0 flex items-center gap-3.5 text-sm font-bold rounded-[1.2rem] overflow-hidden shrink-0 transition-[background-color,color,box-shadow,transform] duration-150 group cursor-pointer ${
                     activeTab === item.name
-                    ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-lg shadow-violet-200/60 scale-100'
-                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
-                }`}
-                title={isSidebarCollapsed ? item.label : ''}
+                      ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-lg shadow-violet-200/60 scale-100'
+                      : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                  }`}
+                  title={isSidebarCollapsed ? item.label : undefined}
                 >
-                <item.icon className={`w-5 h-5 transition-transform group-hover:scale-110 ${activeTab === item.name ? 'text-white' : 'text-slate-400 group-hover:text-slate-600'}`} />
-                {!isSidebarCollapsed && <span>{item.label}</span>}
+                  <item.icon className={`w-5 h-5 shrink-0 transition-transform duration-200 group-hover:scale-110 pointer-events-none ${activeTab === item.name ? 'text-white' : 'text-slate-400 group-hover:text-slate-600'}`} />
+                  <span
+                    className="sidebar-text-label shrink-0 whitespace-nowrap pr-4 pointer-events-none will-change-transform"
+                  >
+                    {item.label}
+                  </span>
                 </button>
-            ))}
+              ))}
             </nav>
 
-            <div className="p-4 border-t border-slate-50 relative">
-                <div 
-                  onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
-                  className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-4'} cursor-pointer p-2 sm:p-4 rounded-[1.5rem] bg-slate-50 hover:bg-white hover:shadow-lg hover:shadow-slate-100 transition-all duration-300 border border-transparent hover:border-slate-100 group select-none`}
-                  title="โปรไฟล์และบัญชีผู้ใช้"
-                >
-                {/* [MODIFIED] Profile Image in Sidebar */}
+            <div className="p-3 border-t border-slate-100/80 shrink-0">
+              <div
+                onClick={() => {
+                  if (isDraggingSidebarRef.current) return;
+                  setIsProfileMenuOpen((prev) => !prev);
+                }}
+                className="w-full h-14 pl-2 pr-0 flex items-center gap-3 cursor-pointer rounded-2xl bg-slate-50 hover:bg-white hover:shadow-lg hover:shadow-slate-100 transition-[background-color,box-shadow,border-color] duration-200 border border-transparent hover:border-slate-100 group select-none overflow-hidden"
+                title="โปรไฟล์และบัญชีผู้ใช้"
+              >
+                {/* Profile Image in Sidebar */}
                 <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-white text-xs font-bold ring-4 ring-white shadow-md shrink-0 overflow-hidden">
-                    {userProfile?.image ? (
-                        <img 
-                            src={processImageUrl(userProfile.image)} 
-                            alt="Profile" 
-                            className="w-full h-full object-cover" 
-                            referrerPolicy="no-referrer"
-                            onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
-                        />
-                    ) : (
-                        userProfile?.name?.charAt(0) || 'U'
-                    )}
-                    {/* Fallback text if image fails loading (hidden by default if img present) */}
-                    {userProfile?.image && <div className="hidden w-full h-full items-center justify-center bg-slate-900 text-white">{userProfile?.name?.charAt(0) || 'U'}</div>}
+                  {userProfile?.image ? (
+                    <img
+                      src={processImageUrl(userProfile.image)}
+                      alt="Profile"
+                      draggable={false}
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                    />
+                  ) : (
+                    userProfile?.name?.charAt(0) || 'U'
+                  )}
+                  {userProfile?.image && <div className="hidden w-full h-full items-center justify-center bg-slate-900 text-white">{userProfile?.name?.charAt(0) || 'U'}</div>}
                 </div>
-                {!isSidebarCollapsed && (
-                    <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-slate-900 truncate">{userProfile?.name || 'Guest User'}</p>
-                        <p className="text-xs text-slate-500 truncate font-medium">{userProfile?.role || 'Viewer'}</p>
-                    </div>
-                )}
+                <div
+                  className="sidebar-text-label shrink-0 w-[160px] pr-3 min-w-0 pointer-events-none will-change-transform"
+                >
+                  <p className="text-sm font-bold text-slate-900 whitespace-nowrap truncate">{userProfile?.name || 'Guest User'}</p>
+                  <p className="text-xs text-slate-500 whitespace-nowrap truncate font-medium">{userProfile?.role || 'Viewer'}</p>
                 </div>
-
-                {/* Profile Popup Menu at Bottom-Left (Screenshot 3 Facebook style) */}
-                {isProfileMenuOpen && (
-                    <>
-                        <div className="fixed inset-0 z-40" onClick={() => setIsProfileMenuOpen(false)}></div>
-                        <div 
-                          className={`absolute ${isSidebarCollapsed ? 'left-20 bottom-0' : 'left-4 bottom-full mb-2'} bg-white rounded-3xl shadow-2xl border border-slate-100 p-2.5 w-72 sm:w-80 z-50 animate-in fade-in zoom-in-95 origin-bottom-left flex flex-col gap-1.5`}
-                        >
-                            {/* Top User Card (Matching Screenshot 3) */}
-                            <div 
-                              onClick={() => {
-                                setIsUserProfileModalOpen(true);
-                                setIsProfileMenuOpen(false);
-                              }}
-                              className="p-3 bg-gradient-to-br from-indigo-50/90 via-slate-50 to-purple-50/50 rounded-2xl border border-indigo-100/70 hover:bg-indigo-50 transition cursor-pointer group"
-                            >
-                              <div className="flex items-center gap-3">
-                                <div className="w-12 h-12 rounded-full bg-slate-900 text-white font-bold flex items-center justify-center text-lg overflow-hidden shrink-0 ring-2 ring-white shadow-md">
-                                  {userProfile?.image ? (
-                                    <img 
-                                      src={processImageUrl(userProfile.image)} 
-                                      alt="Profile" 
-                                      className="w-full h-full object-cover" 
-                                      referrerPolicy="no-referrer"
-                                      onError={(e) => {
-                                        e.target.style.display = 'none';
-                                        if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
-                                      }}
-                                    />
-                                  ) : (
-                                    userProfile?.name?.charAt(0) || 'U'
-                                  )}
-                                  {userProfile?.image && (
-                                    <div className="hidden w-full h-full items-center justify-center bg-slate-900 text-white">
-                                      {userProfile?.name?.charAt(0) || 'U'}
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <h4 className="text-sm font-black text-slate-900 truncate group-hover:text-indigo-600 transition">
-                                    {userProfile?.name || 'Guest User'}
-                                  </h4>
-                                  <div className="flex items-center gap-1.5 mt-0.5">
-                                    <span className="font-mono text-xs font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-100">
-                                      {userProfile?.id || userProfile?.staff_code || '2611001'}
-                                    </span>
-                                    <span className="text-xs text-slate-500 font-medium truncate">
-                                      @{userProfile?.username || 'user'}
-                                    </span>
-                                  </div>
-                                  <div className="mt-1">
-                                    <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-indigo-600 text-white inline-block">
-                                      {userProfile?.role_label || (userProfile?.role === 'admin' ? 'ผู้ดูแลระบบ' : userProfile?.role || 'พนักงาน')}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Menu Items */}
-                            <div className="space-y-1">
-                              <button 
-                                onClick={() => {
-                                  setIsUserProfileModalOpen(true);
-                                  setIsProfileMenuOpen(false);
-                                }}
-                                className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 text-slate-700 text-xs font-bold transition text-left cursor-pointer"
-                              >
-                                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
-                                  <User className="w-4 h-4" />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-slate-900 font-bold">โปรไฟล์ของฉัน (My Profile)</div>
-                                  <div className="text-xs text-slate-500 font-normal">แก้ไขชื่อ, เลขบัตร ปชช., เบอร์โทร, รหัสผ่าน</div>
-                                </div>
-                              </button>
-
-                            </div>
-
-                            <div className="h-px bg-slate-100 my-1" />
-
-                            {/* Logout Button */}
-                            <button 
-                              onClick={() => {
-                                setIsProfileMenuOpen(false);
-                                handleLogout();
-                              }}
-                              className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-rose-50 text-rose-600 text-xs font-bold transition text-left cursor-pointer"
-                            >
-                              <div className="p-2 bg-rose-100 text-rose-500 rounded-xl">
-                                <LogOut className="w-4 h-4" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="font-bold">ออกจากระบบ</div>
-                              </div>
-                            </button>
-                        </div>
-                    </>
-                )}
+              </div>
             </div>
+          </div>
+
+          {/* Profile Popup Menu at Bottom-Left (kept outside overflow-hidden so popup is never clipped) */}
+          {isProfileMenuOpen && (
+            <>
+              <div
+                data-sidebar-no-drag="true"
+                className="fixed inset-0 z-40"
+                onClick={() => setIsProfileMenuOpen(false)}
+              />
+              <div
+                data-sidebar-no-drag="true"
+                className={`absolute ${isSidebarCollapsed ? 'left-20 bottom-3' : 'left-3 bottom-[84px]'} bg-white rounded-3xl shadow-2xl border border-slate-100 p-2.5 w-72 sm:w-80 z-50 animate-in fade-in zoom-in-95 origin-bottom-left flex flex-col gap-1.5`}
+              >
+                {/* Top User Card */}
+                <div
+                  onClick={() => {
+                    setIsUserProfileModalOpen(true);
+                    setIsProfileMenuOpen(false);
+                  }}
+                  className="p-3 bg-gradient-to-br from-indigo-50/90 via-slate-50 to-purple-50/50 rounded-2xl border border-indigo-100/70 hover:bg-indigo-50 transition cursor-pointer group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-slate-900 text-white font-bold flex items-center justify-center text-lg overflow-hidden shrink-0 ring-2 ring-white shadow-md">
+                      {userProfile?.image ? (
+                        <img
+                          src={processImageUrl(userProfile.image)}
+                          alt="Profile"
+                          draggable={false}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                          }}
+                        />
+                      ) : (
+                        userProfile?.name?.charAt(0) || 'U'
+                      )}
+                      {userProfile?.image && (
+                        <div className="hidden w-full h-full items-center justify-center bg-slate-900 text-white">
+                          {userProfile?.name?.charAt(0) || 'U'}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-black text-slate-900 truncate group-hover:text-indigo-600 transition">
+                        {userProfile?.name || 'Guest User'}
+                      </h4>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="font-mono text-xs font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-100">
+                          {userProfile?.id || userProfile?.staff_code || '2611001'}
+                        </span>
+                        <span className="text-xs text-slate-500 font-medium truncate">
+                          @{userProfile?.username || 'user'}
+                        </span>
+                      </div>
+                      <div className="mt-1">
+                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-indigo-600 text-white inline-block">
+                          {userProfile?.role_label || (userProfile?.role === 'admin' ? 'ผู้ดูแลระบบ' : userProfile?.role || 'พนักงาน')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Menu Items */}
+                <div className="space-y-1">
+                  <button
+                    onClick={() => {
+                      setIsUserProfileModalOpen(true);
+                      setIsProfileMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 text-slate-700 text-xs font-bold transition text-left cursor-pointer"
+                  >
+                    <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                      <User className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-slate-900 font-bold">โปรไฟล์ของฉัน (My Profile)</div>
+                      <div className="text-xs text-slate-500 font-normal">แก้ไขชื่อ, เลขบัตร ปชช., เบอร์โทร, รหัสผ่าน</div>
+                    </div>
+                  </button>
+                </div>
+
+                <div className="h-px bg-slate-100 my-1" />
+
+                {/* Logout Button */}
+                <button
+                  onClick={() => {
+                    setIsProfileMenuOpen(false);
+                    handleLogout();
+                  }}
+                  className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-rose-50 text-rose-600 text-xs font-bold transition text-left cursor-pointer"
+                >
+                  <div className="p-2 bg-rose-100 text-rose-500 rounded-xl">
+                    <LogOut className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold">ออกจากระบบ</div>
+                  </div>
+                </button>
+              </div>
+            </>
+          )}
         </aside>
       )}
 
-      <div className="flex-1 flex flex-col min-h-screen md:min-h-0 md:h-full md:overflow-hidden relative">
+      <div
+        ref={attachMainShellRef}
+        data-main-shell="true"
+        data-has-desktop-sidebar={isLoggedIn && !trackingId && !quotationId && !resetToken ? 'true' : undefined}
+        className="flex-1 min-w-0 flex flex-col min-h-screen md:min-h-0 md:h-full md:overflow-hidden relative"
+      >
         {/* Only show header if logged in AND NOT in tracking mode */}
-        {isLoggedIn && !trackingId && !quotationId && (() => {
+        {isLoggedIn && !trackingId && !quotationId && !resetToken && (() => {
           const isInventorySubView = activeTab === 'Inventory' && isInventoryHistoryOpen;
           const currentHeaderTitle = isInventorySubView ? 'ประวัติคลังสินค้า' : getPageTitle(activeTab);
           const primaryActionBtnClass =
@@ -5231,7 +6041,7 @@ const App = () => {
               >
                 {/* ================= ZONE 1: LEFT NAVIGATION / MOBILE SEARCH (+ TITLE ON WIDE PC) ================= */}
                 <div className="justify-self-start flex items-center gap-1.5 sm:gap-2 lg:gap-2.5 min-w-0 relative">
-                  {isInventorySubView ? (
+                  {isInventorySubView && (
                     <button
                       type="button"
                       onClick={() => window.dispatchEvent(new CustomEvent('trigger-inventory-history'))}
@@ -5240,18 +6050,6 @@ const App = () => {
                       aria-label="กลับคลังสินค้า"
                     >
                       <ArrowLeft aria-hidden="true" className="w-[21px] h-[21px] stroke-[2.2]" />
-                    </button>
-                  ) : (
-                    /* Tablet & Wide PC (md+): Minimal Sidebar Toggle */
-                    <button
-                      type="button"
-                      onClick={toggleDesktopSidebar}
-                      className="hidden md:flex w-10 h-10 -ml-1.5 rounded-full text-slate-800 hover:text-slate-950 hover:bg-slate-100 items-center justify-center transition active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
-                      title={isSidebarCollapsed ? 'ขยายแถบเมนูซ้าย' : 'ย่อแถบเมนูซ้าย'}
-                      aria-label="สลับแถบเมนูซ้าย"
-                      aria-pressed={!isSidebarCollapsed}
-                    >
-                      <PanelLeft aria-hidden="true" className="w-[20px] h-[20px] stroke-[2]" />
                     </button>
                   )}
 
@@ -5536,6 +6334,7 @@ const App = () => {
         })()}
 
         <main
+          id="main-scroll-container"
           ref={mainRef}
           className="flex-1 md:overflow-y-auto bg-[#F8FAFC]"
           onScroll={handleScroll}
@@ -5548,7 +6347,7 @@ const App = () => {
 
       {/* --- Mobile Bottom Navigation --- */}
       {/* Only show nav if logged in AND NOT in tracking mode */}
-      {isLoggedIn && !trackingId && !quotationId && (
+      {isLoggedIn && !trackingId && !quotationId && !resetToken && (
         <>
           {/* Backdrop for Expanded Drawer / Dragging (Fades in/out smoothly, covers entire screen including header & filter with frosted blur) */}
           <div 
@@ -6108,6 +6907,7 @@ const App = () => {
         }}
         showToast={showToast}
         handleProfileImageUpload={handleProfileImageUpload}
+        isUploadingProfile={isUploadingProfile}
       />
 
       {/* Modern Add Item Modal - Expanded Version */}

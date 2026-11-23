@@ -253,15 +253,19 @@ export function evaluateStagedBagAvailability(bag, catalogItems = [], assetUnits
     }
 
     // Material (consumable / reusable)
-    const liveStock = liveItem ? Number(liveItem.current_stock) || 0 : Number(line.quantity) || 0;
+    const isUnavailableItem =
+      !liveItem ||
+      liveItem.is_active === false ||
+      liveItem.status === 'retired';
+    const liveStock = isUnavailableItem ? 0 : (Number(liveItem.current_stock) || 0);
     const reqQty = Math.max(1, Number(line.quantity) || 1);
 
-    if (liveItem && liveStock <= 0) {
+    if (isUnavailableItem || liveStock <= 0) {
       greyedOutCount += 1;
       return {
         ...line,
         isTool: false,
-        liveItem,
+        liveItem: liveItem || null,
         availableQty: 0,
         state: 'OUT_OF_STOCK',
         isGreyedOut: true,

@@ -76,12 +76,20 @@
 ### 13. Multi-Agent Orchestration Policy (Gemini 4 Only — No Gemini 3)
 - **ห้ามใช้ Gemini 3 เด็ดขาด**:
   - ใน `invoke_subagent` ห้ามส่ง `Model: "flash"` (ซึ่งแมปไป Gemini 3.8 Flash) หรือ `Model: "pro"` (ซึ่งแมปไป Gemini 3.1 Pro) หรือ `Model: "flash_lite"` เป็นอันขาด เพราะ Gemini 3 เปลือง Token และมักแก้เกินคำสั่ง
-  - **ต้องใช้ `Model: "inherit"` เสมอ** เพื่อให้ Subagent ทุกตัวรันบน **Gemini 4** เหมือนตัวหลัก (หรือระบุ `--model "Gemini 4 Carbon (High)"` / `"Gemini 4 Carbon (Medium)"` / `"Gemini 4 Hydrogen (Medium)"` เฉพาะตอนเรียกผ่าน CLI `agy`)
-- **บทบาทหัวหน้างาน (Lead Orchestrator — Gemini 4 Carbon)**:
-  - วิเคราะห์โจทย์ แตกงานเป็นส่วนย่อยที่ไม่แก้ไขไฟล์ชนกัน กระจายงานให้ Subagents รันพร้อมกันแบบขนาน (`invoke_subagent` ด้วย `Model: "inherit"`) แล้วทำหน้าที่ตรวจทานโค้ด (`git diff`), รันชุดทดสอบ (`npm test`, `npm run build`), และตรวจสอบหน้าจอจริงก่อนส่งมอบทุกครั้ง
-- **การเลือกระดับความลึกเมื่อเรียกผ่าน CLI (`Medium` vs `High`)**:
-  - งานตรวจหาบั๊ก / ฐานข้อมูล / การคำนวณเงิน / Race Condition / งานกระทบหลายโมดูล ➔ `Gemini 4 Carbon (High)` หรือ `Model: "inherit"`
-  - งานย่อยที่ขอบเขตชัดเจน ➔ `Gemini 4 Carbon (Medium)` หรือ `Model: "inherit"`
+  - **ต้องใช้ `Model: "inherit"` เสมอ** เมื่อเรียกผ่าน `invoke_subagent` เพื่อให้ Subagent รันบน **Gemini 4** เหมือนตัวหลัก
+- **บทบาทหัวหน้างาน (Lead Orchestrator)**:
+  - เมื่อได้รับงานที่มีตั้งแต่ 2 งานย่อยหรือกระทบตั้งแต่ 2 ไฟล์ขึ้นไป ให้วิเคราะห์โจทย์ แตกงานเป็นส่วนย่อยที่ไม่แก้ไขไฟล์ชนกัน แล้วกระจายงานให้ Subagents รันพร้อมกันแบบขนานอัตโนมัติ (ผ่าน `invoke_subagent` ด้วย `Model: "inherit"` หรือ `run_workflow` หรือ `agy` CLI)
+  - เมื่อลูกทีมทำงานเสร็จ หัวหน้างานต้องตรวจทานโค้ด (`git diff`), รันชุดทดสอบ (`npm test`, `npm run build`), และตรวจสอบหน้าจอจริงก่อนส่งมอบทุกครั้ง
+- **การเลือกโมเดลและระดับความลึกแยกรายตัวผ่าน CLI (`agy --model <id> --mode auto -p "..."`)**:
+  - **Hydrogen (`gemini-4-hydrogen-low` / `gemini-4-hydrogen-medium`)**: งานเบา/เร็ว ขอบเขตชัด อ่าน/สรุปโค้ด ค้นหาไฟล์ แก้จุดเล็ก/ข้อความ หรือเขียนเทสย่อย
+  - **Neon (`gemini-4-neon-medium` / `gemini-4-neon-high`)**: เหนือกว่า Hydrogen เหมาะกับงาน UX/UI จัดสไตล์ งานพัฒนาทั่วไปหลายไฟล์ สร้าง Component/หน้าใหม่ แก้บั๊กทั่วไป หรือ Refactor เฉพาะโมดูล (ใช้ `gemini-4-neon-xhigh` เมื่อต้องวิเคราะห์ลึกเป็นพิเศษ)
+  - **Carbon (`gemini-4-carbon-medium` / `gemini-4-carbon-high`)**: งานซับซ้อน/เสี่ยงสูง ตรรกะระบบ ฐานข้อมูล/SQL คำนวณเงิน Race Condition ดีบั๊กยาก หรือ Code Review ทั้งระบบ
+
+---
+
+### 14. Strict Clean Production UI (Zero Developer / SQL / Technical Notices in App)
+- **เด็ดขาด ห้ามแสดงข้อความแจ้งเตือนเชิงเทคนิคหรือคำสั่งสำหรับนักพัฒนาบนหน้าเว็บ/แอปหรือใน Toast**: เช่น `"กรุณารันสคริปต์ .sql บน Supabase"`, `"โหมดสำรองในเครื่อง"`, `"Zero-Egress"`, ชื่อไฟล์โค้ด/ตาราง DB หรือคำแนะนำทางเทคนิคที่ไม่เกี่ยวข้องกับผู้ใช้งานทั่วไป
+- หากมีขั้นตอนที่เจ้าของระบบต้องรัน SQL หรือตั้งค่า Infrastructure ให้แจ้งเฉพาะใน **ข้อความสรุปส่งงานในแชต** เท่านั้น ห้ามฝังป้ายเตือนลงในหน้าจอแอปเด็ดขาด
 
 
 

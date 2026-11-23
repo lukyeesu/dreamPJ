@@ -7,7 +7,8 @@ export const projectExpenseItemSchema = z.object({
   id: z.any().optional(),
   name: z.string().default(''),
   price: z.coerce.number().min(0).default(0),
-  paidBy: z.string().optional().default('')
+  paidBy: z.string().optional().default(''),
+  is_voided: z.preprocess((v) => (v === null || v === undefined ? false : Boolean(v)), z.boolean()).optional().default(false)
 }).passthrough();
 
 /**
@@ -17,7 +18,8 @@ export const projectQuotationItemSchema = z.object({
   id: z.any().optional(),
   name: z.string().default(''),
   price: z.coerce.number().min(0).default(0),
-  quantity: z.coerce.number().min(0).default(1)
+  quantity: z.coerce.number().min(0).default(1),
+  is_voided: z.preprocess((v) => (v === null || v === undefined ? false : Boolean(v)), z.boolean()).optional().default(false)
 }).passthrough();
 
 /**

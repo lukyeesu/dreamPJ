@@ -171,10 +171,11 @@ export default function ProductionHubView({
     try {
       const result = await productionService.loadProductionWorkCards({ projectId: selectedProjectId, assignmentIds });
       if (!isMountedRef.current || token !== loadTokenRef.current) return;
+      const cards = Array.isArray(result) ? result : (result?.assignments || []);
       setBoardData((previous) => previous ? {
         ...previous,
-        ...(result.summary ? { summary: result.summary } : {}),
-        assignments: (previous.assignments || []).map((card) => result.assignments?.find((next) => next.id === card.id) || card)
+        ...(result?.summary ? { summary: result.summary } : {}),
+        assignments: (previous.assignments || []).map((card) => cards.find((next) => next.id === card.id) || card)
       } : previous);
       setDetailsById((previous) => Object.fromEntries(Object.entries(previous).filter(([id]) => !assignmentIds.includes(id))));
     } catch (error) {
