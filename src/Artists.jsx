@@ -34,8 +34,10 @@ import {
 import { saveArtistSync, deleteArtistSync } from './services/syncService';
 import ModernDateTimePicker from './components/common/ModernDateTimePicker';
 import Toast from './components/common/Toast';
+import StatusDropdown from './components/common/StatusDropdown';
 import ConfirmDialog from './components/common/ConfirmDialog';
 import { useStickyFilter } from './hooks/useStickyFilter';
+import { useModalCloseGuard } from './hooks/useModalCloseGuard';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { artistFormSchema } from './schemas/artistSchema';
@@ -91,6 +93,7 @@ function Artists({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAgency, setSelectedAgency] = useState('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isViewOnly, setIsViewOnly] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedArtistForDetail, setSelectedArtistForDetail] = useState(null);
   const [editingArtist, setEditingArtist] = useState(null);
@@ -108,7 +111,7 @@ function Artists({
     setValue,
     watch,
     control,
-    formState: { errors }
+    formState: { errors, isDirty }
   } = useForm({
     resolver: zodResolver(artistFormSchema),
     defaultValues: {
@@ -149,7 +152,7 @@ function Artists({
       }
 
       // Show temporary preview immediately
-      setValue('avatar_url', base64Data);
+      setValue('avatar_url', base64Data, { shouldDirty: true });
 
       // Target Google Drive Folder ID
       const targetFolderId = assetsDriveFolderId && assetsDriveFolderId.trim() !== ''
@@ -179,7 +182,7 @@ function Artists({
         const directUrl = result.fileId
           ? `https://lh3.googleusercontent.com/d/${result.fileId}`
           : (result.url || base64Data);
-        setValue('avatar_url', directUrl);
+        setValue('avatar_url', directUrl, { shouldDirty: true });
         showToast('อัปโหลดรูปภาพไปยัง Google Drive สำเร็จ', 'success');
       } else {
         throw new Error(result.message || 'ไม่สามารถอัปโหลดไปยัง Google Drive ได้');
@@ -205,17 +208,31 @@ function Artists({
     }
   }, [isCreateOpen]);
 
+  const {
+    requestClose: requestCloseModal,
+    isConfirmOpen: isModalCloseConfirmOpen,
+    closeConfirmDialog: modalCloseConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen: isModalOpen,
+    onClose: () => setIsModalOpen(false),
+    shouldConfirm: !isViewOnly,
+    dirty: isDirty,
+    listenEscape: false,
+  });
+
   // Keyboard shortcut: close modals on Escape
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        if (isModalOpen) setIsModalOpen(false);
+        if (e.defaultPrevented) return;
+        if (isModalCloseConfirmOpen) return;
         if (isDetailModalOpen) setIsDetailModalOpen(false);
+        else if (isModalOpen) requestCloseModal();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isModalOpen, isDetailModalOpen]);
+  }, [isModalOpen, isDetailModalOpen, isModalCloseConfirmOpen, requestCloseModal]);
 
   // Aggregate artists from explicit artists table, server summary stats, and loaded project activities
   const artistDirectory = useMemo(() => {
@@ -367,8 +384,6 @@ function Artists({
   const totalJobsAll = artistDirectory.reduce((sum, a) => sum + a.projectCount, 0);
 
   // Open Create / Edit Modal
-  const [isViewOnly, setIsViewOnly] = useState(false);
-
   const handleOpenCreateModal = (artist = null, startLocked = true) => {
     if (artist) {
       setIsViewOnly(Boolean(startLocked));
@@ -521,18 +536,20 @@ function Artists({
           setSelectedAgency('all');
         }}
       >
-        <div className="relative w-full sm:w-72">
-          <select
+        <div className="w-full sm:w-72">
+          <StatusDropdown
             value={selectedAgency}
-            onChange={(e) => setSelectedAgency(e.target.value)}
-            className="w-full h-10 pl-3.5 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 appearance-none cursor-pointer"
-          >
-            <option value="all">ทุกสังกัด / ค่าย ({artistDirectory.length})</option>
-            {agencies.map((ag) => (
-              <option key={ag} value={ag}>{ag}</option>
-            ))}
-          </select>
-          <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            onChange={setSelectedAgency}
+            options={[
+              { value: 'all', label: `ทุกสังกัด / ค่าย (${artistDirectory.length})` },
+              ...agencies.map((ag) => ({ value: ag, label: ag })),
+            ]}
+            placeholder="ทุกสังกัด / ค่าย"
+            size="sm"
+            showDot={false}
+            className="bg-slate-50 border-slate-200 hover:border-slate-300 text-slate-700"
+            ariaLabel="เลือกสังกัด / ค่าย"
+          />
         </div>
       </HeaderFilterPortal>
 
@@ -784,12 +801,12 @@ function Artists({
       </div>
 
       {/* CREATE / EDIT ARTIST MODAL */}
+      {modalCloseConfirmDialog}
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
           {/* Backdrop */}
           <div
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
-            onClick={() => setIsModalOpen(false)}
           />
 
           <div
@@ -820,7 +837,7 @@ function Artists({
               </div>
               <button
                 type="button"
-                onClick={() => setIsModalOpen(false)}
+                onClick={requestCloseModal}
                 className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors active:scale-95 cursor-pointer"
               >
                 <X className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -876,7 +893,7 @@ function Artists({
                       <input
                         type="color"
                         value={watchedFandomColor}
-                        onChange={(e) => setValue('fandom_color', e.target.value)}
+                        onChange={(e) => setValue('fandom_color', e.target.value, { shouldDirty: true })}
                         className="w-10 h-10 p-0.5 rounded-xl border border-slate-200 cursor-pointer"
                       />
                       <input
@@ -986,7 +1003,7 @@ function Artists({
                           {watchedAvatarUrl && (
                             <button
                               type="button"
-                              onClick={() => setValue('avatar_url', '')}
+                              onClick={() => setValue('avatar_url', '', { shouldDirty: true })}
                               disabled={isUploadingAvatar}
                               className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer"
                               title="ลบรูปโปรไฟล์"
@@ -1042,15 +1059,16 @@ function Artists({
               <div className="px-5 py-4 sm:px-8 sm:py-5 border-t border-slate-100 bg-white/95 backdrop-blur-xl sticky bottom-0 z-30 flex items-center justify-between gap-3 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={requestCloseModal}
                   className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
                   {isViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
                 {isViewOnly ? (
                   <button
+                    key="unlock-edit-btn"
                     type="button"
-                    onClick={() => setIsViewOnly(false)}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsViewOnly(false); }}
                     className="py-3 px-7 sm:px-8 bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
                   >
                     <Edit className="w-4 h-4" />
@@ -1058,6 +1076,7 @@ function Artists({
                   </button>
                 ) : (
                   <button
+                    key="submit-save-btn"
                     type="submit"
                     disabled={isSaving}
                     className="py-3 px-7 sm:px-8 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-purple-200 hover:shadow-purple-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"

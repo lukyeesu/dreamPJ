@@ -11,8 +11,10 @@ import {
   Loader2
 } from 'lucide-react';
 import Toast from '../common/Toast.jsx';
+import StatusDropdown from '../common/StatusDropdown.jsx';
 import InventoryItemImage from './InventoryItemImage.jsx';
 import { useWarehouseCommandKey } from '../../hooks/useWarehouseCommandKey.js';
+import { useModalCloseGuard } from '../../hooks/useModalCloseGuard.jsx';
 
 /**
  * ItemFormModal Component
@@ -110,17 +112,35 @@ export default function ItemFormModal({
     }
   }, [isOpen]);
 
-  // ESC key listener (blocked during active pending)
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && !isPendingRef.current && !isSubmitting && !isLocalPending) {
-        if (onClose) onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isSubmitting, isLocalPending, onClose]);
+  const isSyncedOpen = isOpen && editingItem === prevEditingItem;
+  const {
+    requestClose,
+    closeConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen: isSyncedOpen,
+    onClose,
+    shouldConfirm: true,
+    watch: isSyncedOpen ? [
+      name,
+      code,
+      categoryId,
+      itemType,
+      imageUrl,
+      unit,
+      initialStock,
+      openingStockReason,
+      minAlertThreshold,
+      storageLocation,
+      color,
+      size,
+      averageCost,
+      status,
+      newUnitCode,
+      newUnitNotes,
+    ] : null,
+    disabled: isSubmitting || isLocalPending,
+    listenEscape: true,
+  });
 
   if (!isOpen) return null;
 
@@ -278,18 +298,13 @@ export default function ItemFormModal({
     }
   };
 
-  const handleBackdropClick = (e) => {
-    if (e.target === e.currentTarget && !isPendingRef.current && !pending) {
-      if (onClose) onClose();
-    }
-  };
-
   const modalContent = (
+    <>
+    {closeConfirmDialog}
     <div
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
-      onClick={handleBackdropClick}
     >
       {toastMessage && (
         <Toast
@@ -315,7 +330,7 @@ export default function ItemFormModal({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             disabled={pending}
             className="min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer disabled:opacity-40"
           >
@@ -413,19 +428,21 @@ export default function ItemFormModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-1">หมวดหมู่พัสดุ:</label>
-                <select
+                <StatusDropdown
                   value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value)}
+                  onChange={(val) => setCategoryId(val)}
                   disabled={pending}
-                  className="w-full min-h-[44px] px-3 bg-white border border-slate-200 rounded-xl text-sm sm:text-sm text-slate-800 outline-hidden focus:border-[var(--theme-main,#8b5cf6)]"
-                >
-                  <option value="">-- ไม่ระบุหมวดหมู่ --</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="-- ไม่ระบุหมวดหมู่ --"
+                  showDot={false}
+                  options={[
+                    { value: '', label: '-- ไม่ระบุหมวดหมู่ --' },
+                    ...categories.map((c) => ({
+                      value: c.id,
+                      label: c.name
+                    }))
+                  ]}
+                  className="w-full"
+                />
               </div>
 
               <div>
@@ -594,7 +611,7 @@ export default function ItemFormModal({
           <div className="flex items-center justify-end gap-2 p-3 sm:p-4 border-t border-slate-100 bg-slate-50/60 shrink-0">
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               disabled={pending}
               className="min-h-[44px] px-4 py-2 border border-slate-200 text-slate-600 rounded-xl text-sm sm:text-sm font-bold hover:bg-slate-50 cursor-pointer disabled:opacity-50"
             >
@@ -612,6 +629,7 @@ export default function ItemFormModal({
         </form>
       </div>
     </div>
+    </>
   );
 
   if (typeof document !== 'undefined' && document.body) {

@@ -12,7 +12,9 @@ import {
   Loader2
 } from 'lucide-react';
 import Toast from '../common/Toast.jsx';
+import StatusDropdown from '../common/StatusDropdown.jsx';
 import { useWarehouseCommandKey } from '../../hooks/useWarehouseCommandKey.js';
+import { useModalCloseGuard } from '../../hooks/useModalCloseGuard.jsx';
 
 /**
  * CategoryManageModal Component
@@ -52,17 +54,25 @@ export default function CategoryManageModal({
     }
   }, [isOpen]);
 
-  // ESC key listener (blocked during active pending)
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && !isPendingRef.current && !isSubmitting && !isLocalPending) {
-        if (onClose) onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isSubmitting, isLocalPending, onClose]);
+  const doClose = () => {
+    setNewCatName('');
+    setNewCatType('consumable');
+    setEditingId(null);
+    setEditingName('');
+    setToastMessage(null);
+    onClose?.();
+  };
+
+  const {
+    requestClose,
+    closeConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen,
+    onClose: doClose,
+    shouldConfirm: Boolean(newCatName.trim() || editingId),
+    disabled: isSubmitting || isLocalPending,
+    listenEscape: true,
+  });
 
   if (!isOpen) return null;
 
@@ -158,18 +168,13 @@ export default function CategoryManageModal({
     }
   };
 
-  const handleBackdropClick = (e) => {
-    if (e.target === e.currentTarget && !isPendingRef.current && !pending) {
-      if (onClose) onClose();
-    }
-  };
-
   const modalContent = (
+    <>
+    {closeConfirmDialog}
     <div
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
-      onClick={handleBackdropClick}
     >
       {toastMessage && (
         <Toast
@@ -193,7 +198,7 @@ export default function CategoryManageModal({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             disabled={pending}
             className="min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer disabled:opacity-40"
           >
@@ -218,16 +223,18 @@ export default function CategoryManageModal({
                 placeholder="เช่น ดอกไม้พลาสติก, กรรไกร, ริบบิ้น..."
                 className="flex-1 w-full min-h-[44px] px-3 bg-white border border-slate-200 rounded-xl text-sm sm:text-sm outline-hidden focus:border-[var(--theme-main,#8b5cf6)]"
               />
-              <select
+              <StatusDropdown
                 value={newCatType}
-                onChange={(e) => setNewCatType(e.target.value)}
+                onChange={(val) => setNewCatType(val)}
                 disabled={pending}
-                className="w-full sm:w-auto min-h-[44px] px-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 outline-hidden"
-              >
-                <option value="consumable">สิ้นเปลือง</option>
-                <option value="reusable">ใช้ซ้ำ</option>
-                <option value="asset">เครื่องมือ</option>
-              </select>
+                options={[
+                  { value: 'consumable', label: 'สิ้นเปลือง' },
+                  { value: 'reusable', label: 'ใช้ซ้ำ' },
+                  { value: 'asset', label: 'เครื่องมือ' }
+                ]}
+                showDot={false}
+                className="w-full sm:w-40"
+              />
               <button
                 type="submit"
                 disabled={pending || !newCatName.trim()}
@@ -369,7 +376,7 @@ export default function CategoryManageModal({
         <div className="flex items-center justify-end p-3 sm:p-4 border-t border-slate-100 bg-slate-50/60 shrink-0">
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             disabled={pending}
             className="min-h-[44px] px-5 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm sm:text-sm font-bold hover:bg-slate-50 cursor-pointer disabled:opacity-50"
           >
@@ -378,6 +385,7 @@ export default function CategoryManageModal({
         </div>
       </div>
     </div>
+    </>
   );
 
   if (typeof document !== 'undefined' && document.body) {

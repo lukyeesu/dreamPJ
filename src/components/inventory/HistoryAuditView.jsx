@@ -21,6 +21,7 @@ import {
   Banknote,
   X
 } from 'lucide-react';
+import StatusDropdown from '../common/StatusDropdown.jsx';
 import { loadWarehouseHistory, loadWarehouseChecklists } from '../../services/warehouseService.js';
 
 /**
@@ -256,31 +257,39 @@ export default function HistoryAuditView({
 
             <div className="flex flex-wrap items-center gap-2">
               {/* Project Filter */}
-              <select
+              <StatusDropdown
                 value={selectedProjectIdFilter}
-                onChange={(e) => setSelectedProjectIdFilter(e.target.value)}
-                className="h-10 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-700 outline-hidden focus:border-[var(--theme-main)]"
-              >
-                <option value="">-- ทุกโปรเจกต์งาน --</option>
-                {activities.map(a => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
+                onChange={(val) => setSelectedProjectIdFilter(val)}
+                placeholder="-- ทุกโปรเจกต์งาน --"
+                showDot={false}
+                size="sm"
+                options={[
+                  { value: '', label: '-- ทุกโปรเจกต์งาน --' },
+                  ...activities.map((a) => ({
+                    value: a.id,
+                    label: a.name
+                  }))
+                ]}
+                className="w-48 sm:w-56"
+              />
 
               {/* Movement Type Filter */}
-              <select
+              <StatusDropdown
                 value={selectedMovementType}
-                onChange={(e) => setSelectedMovementType(e.target.value)}
-                className="h-10 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-700 outline-hidden focus:border-[var(--theme-main)]"
-              >
-                <option value="all">ทุกประเภทธุรกรรม</option>
-                <option value="issue">เบิกพัสดุ/เครื่องมือ (Issue)</option>
-                <option value="return">รับคืน (Return)</option>
-                <option value="recovery">กู้คืนวัสดุ (Recovery)</option>
-                <option value="handover">ส่งต่อเครื่องมือ (Handover)</option>
-                <option value="adjust">ปรับยอดสต็อก (Adjust)</option>
-                {isPrivilegedCash && <option value="cash">เงินสด (Cash)</option>}
-              </select>
+                onChange={(val) => setSelectedMovementType(val)}
+                showDot={false}
+                size="sm"
+                options={[
+                  { value: 'all', label: 'ทุกประเภทธุรกรรม' },
+                  { value: 'issue', label: 'เบิกพัสดุ/เครื่องมือ (Issue)' },
+                  { value: 'return', label: 'รับคืน (Return)' },
+                  { value: 'recovery', label: 'กู้คืนวัสดุ (Recovery)' },
+                  { value: 'handover', label: 'ส่งต่อเครื่องมือ (Handover)' },
+                  { value: 'adjust', label: 'ปรับยอดสต็อก (Adjust)' },
+                  ...(isPrivilegedCash ? [{ value: 'cash', label: 'เงินสด (Cash)' }] : [])
+                ]}
+                className="w-48 sm:w-56"
+              />
 
               {/* Refresh button */}
               <button
@@ -457,18 +466,21 @@ export default function HistoryAuditView({
 
             <div className="flex flex-wrap items-center gap-2">
               {/* Project Selector (including finished/cancelled) */}
-              <select
+              <StatusDropdown
                 value={selectedChecklistProjectId}
-                onChange={(e) => setSelectedChecklistProjectId(e.target.value)}
-                className="h-10 px-3 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 outline-hidden focus:border-[var(--theme-main)]"
-              >
-                <option value="">-- ทุกโปรเจกต์งาน --</option>
-                {activities.map(a => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} ({a.deal_status || 'สถานะงาน'})
-                  </option>
-                ))}
-              </select>
+                onChange={(val) => setSelectedChecklistProjectId(val)}
+                placeholder="-- ทุกโปรเจกต์งาน --"
+                showDot={false}
+                size="sm"
+                options={[
+                  { value: '', label: '-- ทุกโปรเจกต์งาน --' },
+                  ...activities.map((a) => ({
+                    value: a.id,
+                    label: `${a.name} (${a.deal_status || 'สถานะงาน'})`
+                  }))
+                ]}
+                className="w-56 sm:w-64"
+              />
 
               <div className="relative min-w-[200px]">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />

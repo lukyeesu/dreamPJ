@@ -48,7 +48,9 @@ import {
 } from './services/syncService';
 import Toast from './components/common/Toast';
 import ConfirmDialog from './components/common/ConfirmDialog';
+import StatusDropdown from './components/common/StatusDropdown';
 import { useStickyFilter } from './hooks/useStickyFilter';
+import { useModalCloseGuard } from './hooks/useModalCloseGuard';
 
 function Quotations({
   activities = [],
@@ -81,12 +83,14 @@ function Quotations({
 
   // Master Rates Modal
   const [isRatesModalOpen, setIsRatesModalOpen] = useState(false);
+  const [isRatesViewOnly, setIsRatesViewOnly] = useState(true);
   const [editingRates, setEditingRates] = useState([]);
   const [newRateName, setNewRateName] = useState('');
   const [newRatePrice, setNewRatePrice] = useState('');
 
   // Quotation & Costing Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isViewOnly, setIsViewOnly] = useState(false);
   const [editingDocId, setEditingDocId] = useState(null);
   const [quoteNo, setQuoteNo] = useState('');
   const [title, setTitle] = useState('');
@@ -254,20 +258,62 @@ function Quotations({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const {
+    requestClose: requestCloseQuoteModal,
+    isConfirmOpen: isQuoteCloseConfirmOpen,
+    closeConfirmDialog: quoteCloseConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen: isModalOpen,
+    onClose: () => setIsModalOpen(false),
+    shouldConfirm: !isViewOnly,
+    watch: isModalOpen ? [
+      title,
+      clientName,
+      projectCode,
+      note,
+      markupPercent,
+      finalPriceInput,
+      backdropItems,
+      floralItems,
+    ] : null,
+    listenEscape: false,
+  });
+
+  const {
+    requestClose: requestCloseRatesModal,
+    isConfirmOpen: isRatesCloseConfirmOpen,
+    closeConfirmDialog: ratesCloseConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen: isRatesModalOpen,
+    onClose: () => setIsRatesModalOpen(false),
+    shouldConfirm: !isRatesViewOnly,
+    watch: isRatesModalOpen ? [editingRates, newRateName, newRatePrice] : null,
+    listenEscape: false,
+  });
+
   // Keyboard shortcut: close modal on Escape
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
+        if (e.defaultPrevented) return;
+        if (isQuoteCloseConfirmOpen || isRatesCloseConfirmOpen) return;
         if (isRatesModalOpen) {
-          setIsRatesModalOpen(false);
+          requestCloseRatesModal();
         } else if (isModalOpen) {
-          setIsModalOpen(false);
+          requestCloseQuoteModal();
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isModalOpen, isRatesModalOpen]);
+  }, [
+    isModalOpen,
+    isRatesModalOpen,
+    isQuoteCloseConfirmOpen,
+    isRatesCloseConfirmOpen,
+    requestCloseQuoteModal,
+    requestCloseRatesModal,
+  ]);
 
   const [directProjects, setDirectProjects] = useState([]);
 
@@ -523,9 +569,6 @@ function Quotations({
   }, [quotationDocs]);
 
   // Open Create Modal with fresh form
-  const [isViewOnly, setIsViewOnly] = useState(false);
-  const [isRatesViewOnly, setIsRatesViewOnly] = useState(true);
-
   const handleOpenCreateModal = () => {
     const newNo = generateNextQuoteNo();
 
@@ -950,17 +993,20 @@ function Quotations({
           setFilterTab('all');
         }}
       >
-        <div className="relative w-full sm:w-72">
-          <select
+        <div className="w-full sm:w-72">
+          <StatusDropdown
             value={filterTab}
-            onChange={(e) => setFilterTab(e.target.value)}
-            className="w-full h-10 pl-3.5 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 appearance-none cursor-pointer"
-          >
-            <option value="all">สถานะ: ทั้งหมด ({quotationDocs.length})</option>
-            <option value="unlinked">ยังไม่ผูกโปรเจกต์ ({stats.unlinked})</option>
-            <option value="linked">ผูกโปรเจกต์แล้ว ({stats.linked})</option>
-          </select>
-          <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            onChange={(val) => setFilterTab(val)}
+            options={[
+              { value: 'all', label: `สถานะ: ทั้งหมด (${quotationDocs.length})` },
+              { value: 'unlinked', label: `ยังไม่ผูกโปรเจกต์ (${stats.unlinked})` },
+              { value: 'linked', label: `ผูกโปรเจกต์แล้ว (${stats.linked})` }
+            ]}
+            size="sm"
+            showDot={false}
+            className="bg-slate-50 border-slate-200 text-slate-700"
+            ariaLabel="กรองสถานะใบเสนอราคา"
+          />
         </div>
       </HeaderFilterPortal>
 
@@ -1170,12 +1216,12 @@ function Quotations({
       </div>
 
       {/* 3. MODAL เสนอราคาต้นทุน (QUOTATION & COSTING MODAL - ตามพิมพ์เขียว) */}
+      {quoteCloseConfirmDialog}
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
           {/* Backdrop */}
           <div
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
-            onClick={() => setIsModalOpen(false)}
           />
 
           <div
@@ -1206,7 +1252,7 @@ function Quotations({
               </div>
               <button
                 type="button"
-                onClick={() => setIsModalOpen(false)}
+                onClick={requestCloseQuoteModal}
                 className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors active:scale-95 cursor-pointer"
               >
                 <X className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -1503,21 +1549,23 @@ function Quotations({
                               <span>ชนิดวัสดุโครงสร้าง / ป้าย</span>
                               <span className="text-slate-500 font-medium text-xs">(ราคากลาง)</span>
                             </label>
-                            <div className="relative">
-                              <select
-                                value={item.materialName || ''}
-                                onChange={(e) => handleMaterialChange(index, e.target.value)}
-                                className="w-full pl-3 pr-8 py-2 bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors cursor-pointer appearance-none"
-                              >
-                                <option value="">-- เลือกชนิดวัสดุโครงสร้าง --</option>
-                                {materialRates.map(r => (
-                                  <option key={r.id || r.name} value={r.name}>
-                                    {r.name} — ฿{Number(r.default_price_sqm).toLocaleString()} / ตร.ม.
-                                  </option>
-                                ))}
-                              </select>
-                              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                            </div>
+                            <StatusDropdown
+                              value={item.materialName || ''}
+                              onChange={(val) => handleMaterialChange(index, val)}
+                              options={[
+                                { value: '', label: '-- เลือกชนิดวัสดุโครงสร้าง --' },
+                                ...materialRates.map((r) => ({
+                                  value: r.name,
+                                  label: `${r.name} — ฿${Number(r.default_price_sqm).toLocaleString()} / ตร.ม.`
+                                }))
+                              ]}
+                              disabled={isViewOnly}
+                              size="sm"
+                              showDot={false}
+                              placeholder="-- เลือกชนิดวัสดุโครงสร้าง --"
+                              className="bg-slate-50 hover:bg-slate-100/80 border-slate-200 text-slate-800"
+                              ariaLabel="ชนิดวัสดุโครงสร้าง / ป้าย"
+                            />
                           </div>
 
                           <div className="sm:col-span-5">
@@ -2291,7 +2339,7 @@ function Quotations({
               <div className="flex items-center gap-2 sm:gap-3">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={requestCloseQuoteModal}
                   className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
                   {isViewOnly ? 'ปิด' : 'ยกเลิก'}
@@ -2320,8 +2368,9 @@ function Quotations({
 
                 {isViewOnly ? (
                   <button
+                    key="unlock-edit-btn"
                     type="button"
-                    onClick={() => setIsViewOnly(false)}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsViewOnly(false); }}
                     className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
                   >
                     <Edit className="w-4 h-4" />
@@ -2329,6 +2378,7 @@ function Quotations({
                   </button>
                 ) : (
                   <button
+                    key="submit-save-btn"
                     type="submit"
                     disabled={isSaving}
                     className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
@@ -2349,12 +2399,12 @@ function Quotations({
     )}
 
       {/* 4. MODAL ตั้งค่าราคากลางวัสดุ (MATERIAL MASTER PRICE MODAL - ตามพิมพ์เขียว) */}
+      {ratesCloseConfirmDialog}
       {isRatesModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
           {/* Backdrop */}
           <div
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
-            onClick={() => setIsRatesModalOpen(false)}
           />
 
           <div
@@ -2378,7 +2428,7 @@ function Quotations({
               </div>
               <button
                 type="button"
-                onClick={() => setIsRatesModalOpen(false)}
+                onClick={requestCloseRatesModal}
                 className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors active:scale-95 cursor-pointer"
               >
                 <X className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -2455,15 +2505,16 @@ function Quotations({
               <div className="px-5 py-4 sm:px-8 sm:py-5 border-t border-slate-100 bg-white/95 backdrop-blur-xl sticky bottom-0 z-30 flex items-center justify-between gap-3 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setIsRatesModalOpen(false)}
+                  onClick={requestCloseRatesModal}
                   className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
                   {isRatesViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
                 {isRatesViewOnly ? (
                   <button
+                    key="unlock-edit-btn"
                     type="button"
-                    onClick={() => setIsRatesViewOnly(false)}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsRatesViewOnly(false); }}
                     className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
                   >
                     <Edit className="w-4 h-4" />
@@ -2471,6 +2522,7 @@ function Quotations({
                   </button>
                 ) : (
                   <button
+                    key="submit-save-btn"
                     type="submit"
                     className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
                   >

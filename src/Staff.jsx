@@ -31,15 +31,18 @@ import {
   Filter,
   ChevronDown,
   ShieldAlert,
-  UserX
+  UserX,
+  User
 } from 'lucide-react';
 import { loadStaffLocalFirst, saveStaffSync, deleteStaffSync, suspendStaffUserSync, unbanStaffUserSync } from './services/syncService';
 import Toast from './components/common/Toast';
 import ConfirmDialog from './components/common/ConfirmDialog';
 import ModernDateTimePicker from './components/common/ModernDateTimePicker';
+import StatusDropdown from './components/common/StatusDropdown';
 import SuspendStaffModal from './components/modals/SuspendStaffModal';
-import { formatDate } from './utils/formatters';
+import { formatDate, processImageUrl } from './utils/formatters';
 import { useStickyFilter } from './hooks/useStickyFilter';
+import { useModalCloseGuard } from './hooks/useModalCloseGuard';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { staffFormSchema } from './schemas/staffSchema';
@@ -78,6 +81,40 @@ const ROLE_DEFINITIONS = [
     desc: 'ตรวจสอบสลิป ค่าใช้จ่าย สรุปงบกำไรขาดทุน และออกเอกสารใบเสนอราคา'
   }
 ];
+
+function StaffAvatar({
+  src,
+  name,
+  nickname,
+  username,
+  className = 'w-10 h-10 text-sm rounded-full ring-2 ring-slate-100',
+  fallbackClassName = 'bg-slate-900 text-white font-bold'
+}) {
+  const resolvedSrc = processImageUrl(src || '');
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [resolvedSrc]);
+
+  const initial = (nickname || name || username || 'U').charAt(0).toUpperCase();
+
+  return (
+    <div className={`flex items-center justify-center shrink-0 overflow-hidden shadow-sm ${className} ${fallbackClassName}`}>
+      {resolvedSrc && !hasError ? (
+        <img
+          src={resolvedSrc}
+          alt={name || username || 'Staff'}
+          referrerPolicy="no-referrer"
+          className="w-full h-full object-cover"
+          onError={() => setHasError(true)}
+        />
+      ) : (
+        <span>{initial}</span>
+      )}
+    </div>
+  );
+}
 
 function Staff({
   activities = [],
@@ -143,6 +180,7 @@ function Staff({
 
   // Edit / Create Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isViewOnly, setIsViewOnly] = useState(false);
   const [editingStaffId, setEditingStaffId] = useState(null);
   const [editingStaffExtra, setEditingStaffExtra] = useState({
     banned_until: null,
@@ -157,7 +195,7 @@ function Staff({
     setValue,
     watch,
     control,
-    formState: { errors }
+    formState: { errors, isDirty }
   } = useForm({
     resolver: zodResolver(staffFormSchema),
     defaultValues: {
@@ -183,9 +221,16 @@ function Staff({
   const watchedStaffCode = watch('staff_code') || '';
   const watchedPassword = watch('password') || '';
   const watchedConfirmPassword = watch('confirmPassword') || '';
+  const watchedAvatarUrl = watch('avatar_url') || '';
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showAvatarUrlInput, setShowAvatarUrlInput] = useState(false);
+  const [avatarError, setAvatarError] = useState(false);
+
+  useEffect(() => {
+    setAvatarError(false);
+  }, [watchedAvatarUrl]);
   const [isSaving, setIsSaving] = useState(false);
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
   const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, staff: null });
@@ -215,17 +260,31 @@ function Staff({
     }
   }, [isCreateOpen]);
 
+  const {
+    requestClose: requestCloseModal,
+    isConfirmOpen: isModalCloseConfirmOpen,
+    closeConfirmDialog: modalCloseConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen: isModalOpen,
+    onClose: () => setIsModalOpen(false),
+    shouldConfirm: !isViewOnly,
+    dirty: isDirty,
+    listenEscape: false,
+  });
+
   // Keyboard shortcut: close modals on Escape
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        if (isModalOpen) setIsModalOpen(false);
+        if (e.defaultPrevented) return;
+        if (isModalCloseConfirmOpen) return;
         if (isDetailModalOpen) setIsDetailModalOpen(false);
+        else if (isModalOpen) requestCloseModal();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isModalOpen, isDetailModalOpen]);
+  }, [isModalOpen, isDetailModalOpen, isModalCloseConfirmOpen, requestCloseModal]);
 
   // Helper to generate staff code automatically
   const generateSuggestedStaffCode = (roleName) => {
@@ -280,12 +339,12 @@ function Staff({
     });
     setShowPassword(false);
     setShowConfirmPassword(false);
+    setShowAvatarUrlInput(false);
+    setAvatarError(false);
     setIsModalOpen(true);
   };
 
   // Open Edit Modal
-  const [isViewOnly, setIsViewOnly] = useState(false);
-
   const handleOpenEditModal = (staff, startLocked = true) => {
     const staffId = staff.id || staff.staff_code || staff.username;
     setIsViewOnly(Boolean(startLocked));
@@ -309,20 +368,22 @@ function Staff({
       birth_date: staff.birth_date || '',
       address: staff.address || '',
       emergency_contact: staff.emergency_contact || '',
-      avatar_url: staff.avatar_url || staff.image || '',
+      avatar_url: staff.avatar_url || staff.profile_image_url || staff.image || '',
       is_active: staff.is_active !== undefined ? staff.is_active : true
     });
     setShowPassword(false);
     setShowConfirmPassword(false);
+    setShowAvatarUrlInput(false);
+    setAvatarError(false);
     setIsModalOpen(true);
   };
 
   // Change Role and update suggested staff code if user hasn't typed custom code
   const handleRoleChange = (newRole) => {
-    setValue('role', newRole);
+    setValue('role', newRole, { shouldDirty: true, shouldValidate: true });
     const isDefaultFormat = !watchedStaffCode || /^\d{7,8}$/.test(watchedStaffCode);
     if (isDefaultFormat && !editingStaffId) {
-      setValue('staff_code', generateSuggestedStaffCode(newRole));
+      setValue('staff_code', generateSuggestedStaffCode(newRole), { shouldDirty: true, shouldValidate: true });
     }
   };
 
@@ -735,42 +796,38 @@ function Staff({
         }}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          <div className="relative">
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none flex items-center text-slate-400">
-              <Briefcase className="w-3.5 h-3.5 text-indigo-500" />
-            </div>
-            <select
-              value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
-              className="w-full h-10 pl-8 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 cursor-pointer appearance-none"
-              title="กรองตามตำแหน่งงาน"
-            >
-              <option value="all">ตำแหน่งทั้งหมด ({staffList.length})</option>
-              {activeRoleDefinitions.map((r) => {
+          <StatusDropdown
+            size="sm"
+            leftIcon={Briefcase}
+            showDot={false}
+            ariaLabel="กรองตามตำแหน่งงาน"
+            value={roleFilter}
+            onChange={(val) => setRoleFilter(val)}
+            options={[
+              { value: 'all', label: `ตำแหน่งทั้งหมด (${staffList.length})` },
+              ...activeRoleDefinitions.map((r) => {
                 const count = staffList.filter((s) => s.role === r.name).length;
-                return (
-                  <option key={r.name} value={r.name}>
-                    {r.label} ({count})
-                  </option>
-                );
-              })}
-            </select>
-            <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
+                return { value: r.name, label: `${r.label} (${count})` };
+              }),
+            ]}
+            className="w-full h-10 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700"
+            title="กรองตามตำแหน่งงาน"
+          />
 
-          <div className="relative">
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full h-10 pl-3.5 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 cursor-pointer appearance-none"
-              title="กรองตามสถานะงาน"
-            >
-              <option value="all">สถานะทั้งหมด</option>
-              <option value="active">พร้อมงาน ({stats.active})</option>
-              <option value="inactive">พักงาน ({stats.inactive})</option>
-            </select>
-            <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
+          <StatusDropdown
+            size="sm"
+            showDot={false}
+            ariaLabel="กรองตามสถานะงาน"
+            value={statusFilter}
+            onChange={(val) => setStatusFilter(val)}
+            options={[
+              { value: 'all', label: 'สถานะทั้งหมด' },
+              { value: 'active', label: `พร้อมงาน (${stats.active})` },
+              { value: 'inactive', label: `พักงาน (${stats.inactive})` },
+            ]}
+            className="w-full h-10 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700"
+            title="กรองตามสถานะงาน"
+          />
         </div>
       </HeaderFilterPortal>
 
@@ -829,20 +886,13 @@ function Staff({
                       {/* ชื่อ & โปรไฟล์ */}
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-slate-900 text-white font-bold flex items-center justify-center shrink-0 overflow-hidden ring-2 ring-slate-100 text-sm shadow-sm">
-                            {staff.avatar_url ? (
-                              <img
-                                src={staff.avatar_url}
-                                alt={staff.name}
-                                className="w-full h-full object-cover"
-                                onError={(e) => {
-                                  e.target.style.display = 'none';
-                                }}
-                              />
-                            ) : (
-                              (staff.nickname || staff.name || staff.username || 'U').charAt(0).toUpperCase()
-                            )}
-                          </div>
+                          <StaffAvatar
+                            src={staff.avatar_url || staff.profile_image_url || staff.image}
+                            name={staff.name}
+                            nickname={staff.nickname}
+                            username={staff.username}
+                            className="w-10 h-10 text-sm rounded-full ring-2 ring-slate-100"
+                          />
                           <div>
                             <div className="font-bold text-slate-900 flex items-center gap-2">
                               <span>{staff.name || staff.username}</span>
@@ -990,20 +1040,13 @@ function Staff({
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-full bg-slate-900 text-white font-bold flex items-center justify-center shrink-0 overflow-hidden ring-2 ring-slate-100 text-base shadow-sm">
-                      {staff.avatar_url ? (
-                        <img
-                          src={staff.avatar_url}
-                          alt={staff.name}
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            e.target.style.display = 'none';
-                          }}
-                        />
-                      ) : (
-                        (staff.nickname || staff.name || staff.username || 'U').charAt(0).toUpperCase()
-                      )}
-                    </div>
+                    <StaffAvatar
+                      src={staff.avatar_url || staff.profile_image_url || staff.image}
+                      name={staff.name}
+                      nickname={staff.nickname}
+                      username={staff.username}
+                      className="w-12 h-12 text-base rounded-full ring-2 ring-slate-100"
+                    />
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-slate-900 text-sm">{staff.name || staff.username}</span>
@@ -1105,20 +1148,20 @@ function Staff({
       </div>
 
       {/* 5. Create / Edit Staff Modal */}
+      {modalCloseConfirmDialog}
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
           {/* Backdrop */}
           <div
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
-            onClick={() => setIsModalOpen(false)}
           />
 
           <div
-            className="bg-white w-full max-w-2xl sm:rounded-[2.5rem] rounded-2xl shadow-2xl relative z-10 overflow-hidden border border-slate-100 flex flex-col max-h-[90vh] modal-animate-in"
+            className="bg-white w-full max-w-4xl sm:rounded-[2rem] rounded-2xl shadow-2xl relative z-10 overflow-hidden border border-slate-100 flex flex-col max-h-[92vh] modal-animate-in"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header (Sticky) */}
-            <div className="px-5 py-4 sm:px-8 sm:py-6 border-b border-slate-100 flex justify-between items-center bg-white sticky top-0 z-20 shrink-0">
+            <div className="px-5 py-4 sm:px-8 sm:py-5 border-b border-slate-100 flex justify-between items-center bg-white sticky top-0 z-20 shrink-0">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 sm:p-3 bg-indigo-50 text-indigo-600 rounded-xl sm:rounded-2xl shrink-0">
                   <Briefcase className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -1143,7 +1186,7 @@ function Staff({
               </div>
               <button
                 type="button"
-                onClick={() => setIsModalOpen(false)}
+                onClick={requestCloseModal}
                 className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors cursor-pointer active:scale-95"
               >
                 <X className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -1152,124 +1195,439 @@ function Staff({
 
             {/* Modal Form */}
             <form onSubmit={handleSubmit(onSubmitStaff)} className="flex flex-col flex-1 overflow-hidden">
-              <div className="flex-1 overflow-y-auto p-5 sm:p-8 custom-scrollbar overscroll-contain">
+              <div className="flex-1 overflow-y-auto p-5 sm:p-8 space-y-6 custom-scrollbar overscroll-contain">
                 <fieldset
                   disabled={isViewOnly}
                   className="block min-w-0 border-0 p-0 m-0 space-y-6 [&_input:disabled]:bg-slate-100 [&_input:disabled]:text-slate-500 [&_input:disabled]:cursor-not-allowed [&_select:disabled]:bg-slate-100 [&_select:disabled]:text-slate-500 [&_select:disabled]:cursor-not-allowed"
                 >
-                {/* Row 1: Username & Staff Code */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      ชื่อผู้ใช้ (Username) *
-                    </label>
-                    <input
-                      type="text"
-                      {...register('username')}
-                      placeholder="เช่น aom, dream, staff01"
-                      className={`w-full px-3.5 py-2.5 bg-slate-50 border rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 transition ${
-                        errors.username ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
-                      }`}
-                    />
-                    {errors.username && (
-                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.username.message}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
-                      <span>รหัสพนักงาน (Staff Code)</span>
-                      <span className="text-xs text-indigo-600 font-normal">รูปแบบ YY+PP+NNN</span>
-                    </label>
-                    <input
-                      type="text"
-                      {...register('staff_code')}
-                      placeholder="เช่น 2611001"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold font-mono text-indigo-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
-                    />
-                    {errors.staff_code && (
-                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.staff_code.message}</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Row 2: Password & Confirm Password (Eye icon INSIDE frame + Re-check validation) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      รหัสผ่าน (Password) *
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        {...register('password')}
-                        placeholder="กำหนดรหัสผ่าน"
-                        className={`w-full pl-3.5 pr-10 py-2.5 bg-slate-50 border rounded-xl text-xs sm:text-sm font-bold font-mono focus:bg-white focus:outline-none focus:ring-2 transition ${
-                          errors.password ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
-                        }`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-indigo-600 transition rounded-lg hover:bg-slate-100 cursor-pointer"
-                        title={showPassword ? 'ซ่อนรหัสผ่าน' : 'ดูรหัสผ่าน'}
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
+                  {/* Section 1: ข้อมูลพื้นฐาน & บัญชีเข้าสู่ระบบ */}
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 pb-1 border-b border-slate-100">
+                      <div className="w-2 h-2 rounded-full bg-indigo-600" />
+                      <h4 className="text-sm font-bold text-slate-800 tracking-tight">
+                        1. ข้อมูลพื้นฐาน &amp; บัญชีเข้าสู่ระบบ
+                      </h4>
                     </div>
-                    {errors.password && (
-                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.password.message}</p>
-                    )}
-                  </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
-                      <span>ยืนยันรหัสผ่าน (Confirm) *</span>
-                      {watchedConfirmPassword && (
-                        watchedPassword === watchedConfirmPassword ? (
-                          <span className="text-xs text-emerald-600 font-bold flex items-center gap-0.5">
-                            <Check className="w-3 h-3" /> รหัสตรงกัน
-                          </span>
-                        ) : (
-                          <span className="text-xs text-rose-500 font-bold">
-                            รหัสไม่ตรงกัน
-                          </span>
-                        )
-                      )}
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showConfirmPassword ? 'text' : 'password'}
-                        {...register('confirmPassword')}
-                        placeholder="กรอกรหัสผ่านซ้ำอีกรอบ"
-                        className={`w-full pl-3.5 pr-10 py-2.5 bg-slate-50 border rounded-xl text-xs sm:text-sm font-bold font-mono focus:bg-white focus:outline-none focus:ring-2 transition ${
-                          (watchedConfirmPassword && watchedPassword !== watchedConfirmPassword) || errors.confirmPassword
-                            ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500'
-                            : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
-                        }`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-indigo-600 transition rounded-lg hover:bg-slate-100 cursor-pointer"
-                        title={showConfirmPassword ? 'ซ่อนรหัสผ่าน' : 'ดูรหัสผ่าน'}
-                      >
-                        {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
+                    <div className="flex flex-col sm:flex-row gap-5 sm:gap-6 items-center sm:items-start">
+                      {/* Left Avatar Column */}
+                      <div className="flex flex-col items-center gap-2 shrink-0">
+                        <div className="relative">
+                          <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full border-2 border-dashed border-slate-200 bg-slate-50 relative flex items-center justify-center overflow-hidden shadow-inner">
+                            {(() => {
+                              const resolvedSrc = processImageUrl(watchedAvatarUrl);
+                              if (resolvedSrc && !avatarError) {
+                                return (
+                                  <img
+                                    src={resolvedSrc}
+                                    alt="Avatar Preview"
+                                    referrerPolicy="no-referrer"
+                                    className="w-full h-full object-cover"
+                                    onError={() => setAvatarError(true)}
+                                  />
+                                );
+                              }
+                              return <User className="w-10 h-10 text-slate-300" />;
+                            })()}
+                          </div>
+                          {!isViewOnly && (
+                            <button
+                              type="button"
+                              onClick={() => setShowAvatarUrlInput(!showAvatarUrlInput)}
+                              className="absolute bottom-0 right-0 p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-md transition-all active:scale-95 cursor-pointer z-10"
+                              title="เปลี่ยน / ใส่ลิงก์รูปภาพ"
+                            >
+                              <Camera className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <span className="text-xs text-slate-400 font-medium">รูปถ่ายพนักงาน</span>
+                      </div>
+
+                      {/* Right Account Credentials Card */}
+                      <div className="flex-1 w-full bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 sm:p-5 space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+                              <span>รหัสพนักงาน (Staff Code)</span>
+                              <span className="text-xs text-indigo-600 font-normal">รูปแบบ YY+PP+NNN</span>
+                            </label>
+                            <input
+                              type="text"
+                              {...register('staff_code')}
+                              placeholder="เช่น 2611001"
+                              className="w-full h-[46px] px-4 py-3 bg-white border border-slate-200 rounded-xl text-base font-bold font-mono text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+                            />
+                            {errors.staff_code && (
+                              <p className="text-xs text-rose-600 font-bold mt-1">{errors.staff_code.message}</p>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                              ชื่อผู้ใช้ (Username) *
+                            </label>
+                            <input
+                              type="text"
+                              {...register('username')}
+                              placeholder="เช่น aom, dream, staff01"
+                              className={`w-full h-[46px] px-4 py-3 bg-white border rounded-xl text-base font-medium text-slate-800 focus:outline-none focus:ring-2 transition ${
+                                errors.username ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
+                              }`}
+                            />
+                            {errors.username && (
+                              <p className="text-xs text-rose-600 font-bold mt-1">{errors.username.message}</p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                              รหัสผ่าน (Password) *
+                            </label>
+                            <div className="relative">
+                              <input
+                                type={showPassword ? 'text' : 'password'}
+                                {...register('password')}
+                                placeholder="กำหนดรหัสผ่าน"
+                                className={`w-full h-[46px] pl-4 pr-11 py-3 bg-white border rounded-xl text-base font-medium font-mono text-slate-800 focus:outline-none focus:ring-2 transition ${
+                                  errors.password ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
+                                }`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowPassword(!showPassword)}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-indigo-600 transition rounded-lg hover:bg-slate-100 cursor-pointer"
+                                title={showPassword ? 'ซ่อนรหัสผ่าน' : 'ดูรหัสผ่าน'}
+                              >
+                                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              </button>
+                            </div>
+                            {errors.password && (
+                              <p className="text-xs text-rose-600 font-bold mt-1">{errors.password.message}</p>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+                              <span>ยืนยันรหัสผ่าน (Confirm) *</span>
+                              {watchedConfirmPassword && (
+                                watchedPassword === watchedConfirmPassword ? (
+                                  <span className="text-xs text-emerald-600 font-bold flex items-center gap-0.5">
+                                    <Check className="w-3.5 h-3.5" /> รหัสตรงกัน
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-rose-500 font-bold">
+                                    รหัสไม่ตรงกัน
+                                  </span>
+                                )
+                              )}
+                            </label>
+                            <div className="relative">
+                              <input
+                                type={showConfirmPassword ? 'text' : 'password'}
+                                {...register('confirmPassword')}
+                                placeholder="กรอกรหัสผ่านซ้ำอีกรอบ"
+                                className={`w-full h-[46px] pl-4 pr-11 py-3 bg-white border rounded-xl text-base font-medium font-mono text-slate-800 focus:outline-none focus:ring-2 transition ${
+                                  (watchedConfirmPassword && watchedPassword !== watchedConfirmPassword) || errors.confirmPassword
+                                    ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500'
+                                    : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
+                                }`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-indigo-600 transition rounded-lg hover:bg-slate-100 cursor-pointer"
+                                title={showConfirmPassword ? 'ซ่อนรหัสผ่าน' : 'ดูรหัสผ่าน'}
+                              >
+                                {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              </button>
+                            </div>
+                            {errors.confirmPassword && (
+                              <p className="text-xs text-rose-600 font-bold mt-1">{errors.confirmPassword.message}</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    {errors.confirmPassword && (
-                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.confirmPassword.message}</p>
+
+                    {/* Avatar URL Input toggle */}
+                    {(showAvatarUrlInput || errors.avatar_url) && (
+                      <div className="p-4 bg-slate-50/80 border border-slate-200/80 rounded-2xl animate-in fade-in duration-200">
+                        <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                          รูปถ่ายพนักงาน (URL หรือ Drive Link)
+                        </label>
+                        <input
+                          type="text"
+                          {...register('avatar_url')}
+                          placeholder="https://... หรือ ลิงก์รูปภาพพนักงาน"
+                          className="w-full h-[46px] px-4 py-3 bg-white border border-slate-200 rounded-xl text-base font-medium font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+                        />
+                        {errors.avatar_url && (
+                          <p className="text-xs text-rose-600 font-bold mt-1">{errors.avatar_url.message}</p>
+                        )}
+                      </div>
                     )}
                   </div>
-                </div>
 
-                {/* Row 3: Role Selection & Citizen ID */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block text-xs font-bold text-slate-700">
-                        ตำแหน่ง & สิทธิ์การใช้งาน *
+                  {/* Section 2: ข้อมูลส่วนตัว & สิทธิ์การใช้งาน */}
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 pb-1 border-b border-slate-100 pt-2">
+                      <div className="w-2 h-2 rounded-full bg-indigo-600" />
+                      <h4 className="text-sm font-bold text-slate-800 tracking-tight">
+                        2. ข้อมูลส่วนตัว &amp; สิทธิ์การใช้งาน
+                      </h4>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                          ชื่อ-นามสกุลจริง
+                        </label>
+                        <input
+                          type="text"
+                          {...register('name')}
+                          placeholder="เช่น อมรรัตน์ สดใส"
+                          className="w-full h-[46px] px-4 py-3 bg-white border border-slate-200 rounded-xl text-base font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+                        />
+                        {errors.name && (
+                          <p className="text-xs text-rose-600 font-bold mt-1">{errors.name.message}</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                          ชื่อเล่น
+                        </label>
+                        <input
+                          type="text"
+                          {...register('nickname')}
+                          placeholder="เช่น ออม, ดรีม"
+                          className="w-full h-[46px] px-4 py-3 bg-white border border-slate-200 rounded-xl text-base font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+                        />
+                        {errors.nickname && (
+                          <p className="text-xs text-rose-600 font-bold mt-1">{errors.nickname.message}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                          ตำแหน่ง &amp; สิทธิ์การใช้งาน *
+                        </label>
+                        <StatusDropdown
+                          value={watchedRole}
+                          disabled={isViewOnly}
+                          options={activeRoleDefinitions.map(r => ({
+                            value: r.name,
+                            label: `${r.label} (${r.code})`,
+                            color: 'bg-white text-slate-800 border-slate-200'
+                          }))}
+                          showDot={false}
+                          onChange={(val) => handleRoleChange(val)}
+                          ariaLabel="ตำแหน่ง &amp; สิทธิ์การใช้งาน"
+                          className="h-[46px] !text-base"
+                        />
+                        {errors.role && (
+                          <p className="text-xs text-rose-600 font-bold mt-1">{errors.role.message}</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <Calendar className="w-4 h-4 text-indigo-500" />
+                            <span>วันเดือนปีเกิด (พ.ศ.)</span>
+                          </span>
+                          <span className="text-xs text-slate-500 font-medium">ปฏิทินไทย</span>
+                        </label>
+                        <Controller
+                          control={control}
+                          name="birth_date"
+                          render={({ field }) => (
+                            <ModernDateTimePicker
+                              value={field.value}
+                              onChange={field.onChange}
+                              disabled={isViewOnly}
+                              placeholder="เลือกวันเดือนปีเกิด"
+                              hasTime={false}
+                              className="h-[46px]"
+                            />
+                          )}
+                        />
+                        {errors.birth_date && (
+                          <p className="text-xs text-rose-600 font-bold mt-1">{errors.birth_date.message}</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+                          <span>เลขประจำตัวประชาชน</span>
+                          <span className="text-xs text-slate-500 font-medium">13 หลัก</span>
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={17}
+                          {...register('citizen_id')}
+                          placeholder="x-xxxx-xxxxx-xx-x"
+                          className="w-full h-[46px] px-4 py-3 bg-white border border-slate-200 rounded-xl text-base font-bold font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+                        />
+                        {errors.citizen_id && (
+                          <p className="text-xs text-rose-600 font-bold mt-1">{errors.citizen_id.message}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Role explanation alert */}
+                    <div className="p-3.5 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs sm:text-sm text-indigo-900 flex items-start gap-2.5">
+                      <span className="text-base leading-none mt-0.5">💡</span>
+                      <div>
+                        <b>สิทธิ์ของตำแหน่ง {getRoleInfo(watchedRole).label}:</b> {getRoleInfo(watchedRole).desc}
+                        <div className="text-xs text-indigo-600 mt-1">
+                          (สามารถตั้งค่าสิทธิ์ว่าแต่ละตำแหน่งเปิดหน้าจอใดได้บ้าง ที่หน้า <b>ตั้งค่าระบบ &gt; สิทธิ์และบทบาท</b>)
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 3: ข้อมูลติดต่อ & ที่อยู่ */}
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 pb-1 border-b border-slate-100 pt-2">
+                      <div className="w-2 h-2 rounded-full bg-indigo-600" />
+                      <h4 className="text-sm font-bold text-slate-800 tracking-tight">
+                        3. ข้อมูลติดต่อ &amp; ที่อยู่
+                      </h4>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                          เบอร์โทรศัพท์ติดต่อ
+                        </label>
+                        <input
+                          type="tel"
+                          {...register('phone')}
+                          placeholder="เช่น 081-234-5678"
+                          className={`w-full h-[46px] px-4 py-3 bg-white border rounded-xl text-base font-medium text-slate-800 focus:outline-none focus:ring-2 transition ${
+                            errors.phone ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
+                          }`}
+                        />
+                        {errors.phone && (
+                          <p className="text-xs text-rose-600 font-bold mt-1">{errors.phone.message}</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                          อีเมล
+                        </label>
+                        <input
+                          type="email"
+                          {...register('email')}
+                          placeholder="เช่น staff@flower2u.com"
+                          className={`w-full h-[46px] px-4 py-3 bg-white border rounded-xl text-base font-medium text-slate-800 focus:outline-none focus:ring-2 transition ${
+                            errors.email ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
+                          }`}
+                        />
+                        {errors.email && (
+                          <p className="text-xs text-rose-600 font-bold mt-1">{errors.email.message}</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                          ผู้ติดต่อฉุกเฉิน (ชื่อ &amp; เบอร์โทร)
+                        </label>
+                        <input
+                          type="text"
+                          {...register('emergency_contact')}
+                          placeholder="เช่น คุณแม่ 089-999-9999"
+                          className="w-full h-[46px] px-4 py-3 bg-white border border-slate-200 rounded-xl text-base font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+                        />
+                        {errors.emergency_contact && (
+                          <p className="text-xs text-rose-600 font-bold mt-1">{errors.emergency_contact.message}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                        ที่อยู่ปัจจุบัน / ที่อยู่ตามบัตร
                       </label>
+                      <input
+                        type="text"
+                        {...register('address')}
+                        placeholder="เช่น 123/45 แขวง... เขต... กทม."
+                        className="w-full h-[46px] px-4 py-3 bg-white border border-slate-200 rounded-xl text-base font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+                      />
+                      {errors.address && (
+                        <p className="text-xs text-rose-600 font-bold mt-1">{errors.address.message}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Section 4: สถานะบัญชี & ความปลอดภัย */}
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 pb-1 border-b border-slate-100 pt-2">
+                      <div className="w-2 h-2 rounded-full bg-indigo-600" />
+                      <h4 className="text-sm font-bold text-slate-800 tracking-tight">
+                        4. สถานะบัญชี &amp; ความปลอดภัย
+                      </h4>
+                    </div>
+
+                    {/* Suspension Banner if Staff is Banned */}
+                    {editingStaffId && (editingStaffExtra.is_banned_permanent || (editingStaffExtra.banned_until && new Date(editingStaffExtra.banned_until) > new Date())) && (
+                      <div className="p-4 bg-rose-50/90 border border-rose-200 rounded-2xl text-xs sm:text-sm text-rose-800 flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2.5">
+                          <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                          <div>
+                            <div className="font-bold text-rose-900 text-sm">
+                              {editingStaffExtra.is_banned_permanent ? 'บัญชีพนักงานนี้ถูกระงับการใช้งานถาวร' : 'บัญชีพนักงานนี้ถูกระงับการใช้งานชั่วคราว'}
+                            </div>
+                            {editingStaffExtra.banned_until && !editingStaffExtra.is_banned_permanent && (
+                              <div className="text-xs text-rose-700 mt-1">
+                                สิ้นสุดการระงับ: {new Date(editingStaffExtra.banned_until).toLocaleString('th-TH')}
+                              </div>
+                            )}
+                            {editingStaffExtra.ban_reason && (
+                              <div className="text-xs text-rose-600 mt-1">
+                                เหตุผล: {editingStaffExtra.ban_reason}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const target = staffList.find(s => s.id === editingStaffId || s.username === editingStaffId || s.staff_code === editingStaffId);
+                            if (target) handleOpenSuspendModal(target);
+                          }}
+                          className="px-3.5 py-1.5 bg-white hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl font-bold text-xs shrink-0 transition cursor-pointer shadow-xs"
+                        >
+                          จัดการ / ปลดระงับ
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-slate-50/80 border border-slate-200/80 rounded-2xl">
+                      <label className="flex items-center gap-3 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          {...register('is_active')}
+                          className="w-5 h-5 text-indigo-600 rounded-lg focus:ring-indigo-500 cursor-pointer"
+                        />
+                        <div>
+                          <span className="text-sm font-bold text-slate-800 block">
+                            เปิดใช้งานสถานะพนักงาน (Active)
+                          </span>
+                          <span className="text-xs text-slate-500 block">
+                            พนักงานสามารถเข้าสู่ระบบและพร้อมรับมอบหมายงานตามหน้าที่
+                          </span>
+                        </div>
+                      </label>
+
                       {editingStaffId && (
                         <button
                           type="button"
@@ -1277,14 +1635,14 @@ function Staff({
                             const target = staffList.find(s => s.id === editingStaffId || s.username === editingStaffId || s.staff_code === editingStaffId);
                             if (target) handleOpenSuspendModal(target);
                           }}
-                          className={`text-xs font-bold px-2 py-0.5 rounded-lg flex items-center gap-1 transition cursor-pointer shadow-2xs ${
+                          className={`whitespace-nowrap px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition cursor-pointer shadow-xs self-start sm:self-auto ${
                             editingStaffExtra.is_banned_permanent || (editingStaffExtra.banned_until && new Date(editingStaffExtra.banned_until) > new Date())
-                              ? 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
-                              : 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100'
+                              ? 'bg-rose-100 text-rose-800 border border-rose-200 hover:bg-rose-200'
+                              : 'bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-200'
                           }`}
                           title="คลิกเพื่อตั้งเวลาแบน / เตะออกจากระบบ"
                         >
-                          <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
+                          <ShieldAlert className="w-4 h-4 text-rose-600" />
                           <span>
                             {editingStaffExtra.is_banned_permanent || (editingStaffExtra.banned_until && new Date(editingStaffExtra.banned_until) > new Date())
                               ? 'จัดการการระงับผู้ใช้'
@@ -1293,248 +1651,7 @@ function Staff({
                         </button>
                       )}
                     </div>
-                    <select
-                      {...register('role', { onChange: (e) => handleRoleChange(e.target.value) })}
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition cursor-pointer"
-                    >
-                      {activeRoleDefinitions.map(r => (
-                        <option key={r.name} value={r.name}>
-                          {r.label} ({r.code})
-                        </option>
-                      ))}
-                    </select>
-                    {errors.role && (
-                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.role.message}</p>
-                    )}
                   </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
-                      <span>เลขประจำตัวประชาชน</span>
-                      <span className="text-xs text-slate-500 font-medium">13 หลัก</span>
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={17}
-                      {...register('citizen_id')}
-                      placeholder="x-xxxx-xxxxx-xx-x"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold font-mono text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
-                    />
-                    {errors.citizen_id && (
-                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.citizen_id.message}</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Suspension Banner if Staff is Banned */}
-                {editingStaffId && (editingStaffExtra.is_banned_permanent || (editingStaffExtra.banned_until && new Date(editingStaffExtra.banned_until) > new Date())) && (
-                  <div className="p-3 bg-rose-50/90 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start justify-between gap-2">
-                    <div className="flex items-start gap-2">
-                      <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                      <div>
-                        <div className="font-bold text-rose-900">
-                          {editingStaffExtra.is_banned_permanent ? 'บัญชีพนักงานนี้ถูกระงับการใช้งานถาวร' : 'บัญชีพนักงานนี้ถูกระงับการใช้งานชั่วคราว'}
-                        </div>
-                        {editingStaffExtra.banned_until && !editingStaffExtra.is_banned_permanent && (
-                          <div className="text-xs text-rose-700 mt-0.5">
-                            สิ้นสุดการระงับ: {new Date(editingStaffExtra.banned_until).toLocaleString('th-TH')}
-                          </div>
-                        )}
-                        {editingStaffExtra.ban_reason && (
-                          <div className="text-xs text-rose-600 mt-0.5">
-                            เหตุผล: {editingStaffExtra.ban_reason}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const target = staffList.find(s => s.id === editingStaffId || s.username === editingStaffId || s.staff_code === editingStaffId);
-                        if (target) handleOpenSuspendModal(target);
-                      }}
-                      className="px-2.5 py-1 bg-white hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-lg font-bold text-xs shrink-0 transition cursor-pointer"
-                    >
-                      จัดการ / ปลดระงับ
-                    </button>
-                  </div>
-                )}
-
-                {/* Role explanation alert */}
-                <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs text-indigo-800 flex items-start gap-2">
-                  <span className="text-sm">💡</span>
-                  <div>
-                    <b>สิทธิ์ของตำแหน่ง {getRoleInfo(watchedRole).label}:</b> {getRoleInfo(watchedRole).desc}
-                    <div className="text-xs text-indigo-600 mt-0.5">
-                      (สามารถตั้งค่าสิทธิ์ว่าแต่ละตำแหน่งเปิดหน้าจอใดได้บ้าง ที่หน้า <b>ตั้งค่าระบบ &gt; สิทธิ์และบทบาท</b>)
-                    </div>
-                  </div>
-                </div>
-
-                {/* Row 4: Birth Date & Phone */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-                        <span>วันเดือนปีเกิด (พ.ศ.)</span>
-                      </span>
-                      <span className="text-xs text-slate-500 font-medium">ปฏิทินไทย</span>
-                    </label>
-                    <Controller
-                      control={control}
-                      name="birth_date"
-                      render={({ field }) => (
-                        <ModernDateTimePicker
-                          value={field.value}
-                          onChange={field.onChange}
-                          disabled={isViewOnly}
-                          placeholder="เลือกวันเดือนปีเกิด"
-                          hasTime={false}
-                        />
-                      )}
-                    />
-                    {errors.birth_date && (
-                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.birth_date.message}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      เบอร์โทรศัพท์ติดต่อ
-                    </label>
-                    <input
-                      type="tel"
-                      {...register('phone')}
-                      placeholder="เช่น 081-234-5678"
-                      className={`w-full px-3.5 py-2.5 bg-slate-50 border rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 transition ${
-                        errors.phone ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
-                      }`}
-                    />
-                    {errors.phone && (
-                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.phone.message}</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Row 5: Full Name & Nickname */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      ชื่อ-นามสกุลจริง
-                    </label>
-                    <input
-                      type="text"
-                      {...register('name')}
-                      placeholder="เช่น อมรรัตน์ สดใส"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
-                    />
-                    {errors.name && (
-                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.name.message}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      ชื่อเล่น
-                    </label>
-                    <input
-                      type="text"
-                      {...register('nickname')}
-                      placeholder="เช่น ออม, ดรีม"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
-                    />
-                    {errors.nickname && (
-                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.nickname.message}</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Row 6: Email & Emergency Contact */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      อีเมล
-                    </label>
-                    <input
-                      type="email"
-                      {...register('email')}
-                      placeholder="เช่น staff@flower2u.com"
-                      className={`w-full px-3.5 py-2.5 bg-slate-50 border rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 transition ${
-                        errors.email ? 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500' : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500'
-                      }`}
-                    />
-                    {errors.email && (
-                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.email.message}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      ผู้ติดต่อฉุกเฉิน (ชื่อ &amp; เบอร์โทร)
-                    </label>
-                    <input
-                      type="text"
-                      {...register('emergency_contact')}
-                      placeholder="เช่น คุณแม่ 089-999-9999"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
-                    />
-                    {errors.emergency_contact && (
-                      <p className="text-xs text-rose-600 font-bold mt-1">{errors.emergency_contact.message}</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Row 7: Address */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    ที่อยู่ปัจจุบัน / ที่อยู่ตามบัตร
-                  </label>
-                  <input
-                    type="text"
-                    {...register('address')}
-                    placeholder="เช่น 123/45 แขวง... เขต... กทม."
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
-                  />
-                  {errors.address && (
-                    <p className="text-xs text-rose-600 font-bold mt-1">{errors.address.message}</p>
-                  )}
-                </div>
-
-                {/* Row 8: Avatar URL */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    รูปถ่ายพนักงาน (URL หรือ Drive Link)
-                  </label>
-                  <input
-                    type="text"
-                    {...register('avatar_url')}
-                    placeholder="https://lh3.googleusercontent.com/... หรือ ลิงก์รูปภาพ"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
-                  />
-                  {errors.avatar_url && (
-                    <p className="text-xs text-rose-600 font-bold mt-1">{errors.avatar_url.message}</p>
-                  )}
-                </div>
-
-                {/* Row 9: Active Status Checkbox */}
-                <div className="pt-2 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      {...register('is_active')}
-                      className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
-                    />
-                    <div>
-                      <span className="text-xs font-bold text-slate-800 block">
-                        เปิดใช้งานสถานะพนักงาน (Active)
-                      </span>
-                      <span className="text-xs text-slate-500 block">
-                        พนักงานสามารถเข้าสู่ระบบและพร้อมรับมอบหมายงานตามหน้าที่
-                      </span>
-                    </div>
-                  </label>
-                </div>
                 </fieldset>
               </div>
 
@@ -1542,15 +1659,20 @@ function Staff({
               <div className="px-5 py-4 sm:px-8 sm:py-5 border-t border-slate-100 bg-white/95 backdrop-blur-xl sticky bottom-0 z-30 flex items-center justify-between gap-3 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
+                  onClick={requestCloseModal}
+                  className="py-3 px-6 sm:px-8 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
                   {isViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
                 {isViewOnly ? (
                   <button
+                    key="staff-edit-unlock-btn"
                     type="button"
-                    onClick={() => setIsViewOnly(false)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setIsViewOnly(false);
+                    }}
                     className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
                   >
                     <Edit className="w-4 h-4" />
@@ -1558,6 +1680,7 @@ function Staff({
                   </button>
                 ) : (
                   <button
+                    key="staff-save-submit-btn"
                     type="submit"
                     disabled={isSaving}
                     className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
@@ -1592,20 +1715,14 @@ function Staff({
             {/* Header (Sticky) */}
             <div className="px-5 py-4 sm:px-8 sm:py-6 border-b border-slate-100 flex justify-between items-center bg-white sticky top-0 z-20 shrink-0">
               <div className="flex items-center gap-3.5">
-                <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-700 font-black flex items-center justify-center text-lg sm:text-xl shrink-0 overflow-hidden shadow-sm">
-                  {selectedStaff.avatar_url ? (
-                    <img
-                      src={selectedStaff.avatar_url}
-                      alt={selectedStaff.name}
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        e.target.style.display = 'none';
-                      }}
-                    />
-                  ) : (
-                    (selectedStaff.nickname || selectedStaff.name || selectedStaff.username || 'U').charAt(0).toUpperCase()
-                  )}
-                </div>
+                <StaffAvatar
+                  src={selectedStaff.avatar_url || selectedStaff.profile_image_url || selectedStaff.image}
+                  name={selectedStaff.name}
+                  nickname={selectedStaff.nickname}
+                  username={selectedStaff.username}
+                  className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl border border-indigo-100 text-lg sm:text-xl"
+                  fallbackClassName="bg-indigo-50 text-indigo-700 font-black"
+                />
                 <div>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                     <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">

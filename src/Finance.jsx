@@ -58,6 +58,8 @@ import {
 import ModernDateTimePicker from './components/common/ModernDateTimePicker';
 import Toast from './components/common/Toast';
 import ConfirmDialog from './components/common/ConfirmDialog';
+import StatusDropdown from './components/common/StatusDropdown';
+import { useModalCloseGuard } from './hooks/useModalCloseGuard';
 
 // --- Helper Functions for Formatting ---
 const formatCurrency = (amount) => {
@@ -381,11 +383,19 @@ const escapeHtml = (str) => {
     .replace(/'/g, '&#39;');
 };
 
+const FALLBACK_PAYMENT_STATUSES = [
+  { value: 'unpaid', label: 'รอชำระเงิน', color: 'bg-amber-50 text-amber-700 border-amber-200', dotColor: 'bg-amber-500' },
+  { value: 'deposit', label: 'ชำระมัดจำแล้ว', color: 'bg-sky-50 text-sky-700 border-sky-200', dotColor: 'bg-sky-500' },
+  { value: 'paid', label: 'ชำระครบถ้วนแล้ว', color: 'bg-emerald-50 text-emerald-700 border-emerald-200', dotColor: 'bg-emerald-500' },
+  { value: 'refunded', label: 'คืนเงิน / ยกเลิก', color: 'bg-rose-50 text-rose-700 border-rose-200', dotColor: 'bg-rose-500' },
+];
+
 function Finance({
   activities = [],
   inventoryItems = [],
   dealStatuses = [],
   transportStatuses = [],
+  paymentStatuses = [],
   shopInfo = {},
   onOpenProjectModal,
   onSaveActivity,
@@ -398,6 +408,67 @@ function Finance({
   setFilterDateRange: propSetFilterDateRange,
   isActive = true
 }) {
+  const effectivePaymentStatuses = useMemo(() => {
+    return Array.isArray(paymentStatuses) && paymentStatuses.length > 0
+      ? paymentStatuses
+      : FALLBACK_PAYMENT_STATUSES;
+  }, [paymentStatuses]);
+
+  const getPaymentStatusMeta = (val) => {
+    const targetVal = val || 'unpaid';
+    const normalizedVal = targetVal === 'cancelled' ? 'refunded' : targetVal;
+    const found = effectivePaymentStatuses.find(
+      (s) => s && (s.value === targetVal || s.value === normalizedVal || s.id === targetVal)
+    );
+    if (found) {
+      let dotColor = found.dotColor || found.dot;
+      if (!dotColor && found.color) {
+        const dotMap = {
+          emerald: 'bg-emerald-500',
+          green: 'bg-green-500',
+          teal: 'bg-teal-500',
+          blue: 'bg-blue-500',
+          sky: 'bg-sky-500',
+          indigo: 'bg-indigo-500',
+          violet: 'bg-violet-500',
+          purple: 'bg-purple-500',
+          amber: 'bg-amber-500',
+          yellow: 'bg-yellow-500',
+          orange: 'bg-orange-500',
+          rose: 'bg-rose-500',
+          red: 'bg-red-500',
+          pink: 'bg-pink-500',
+          cyan: 'bg-cyan-500',
+          lime: 'bg-lime-500',
+          slate: 'bg-slate-400',
+          gray: 'bg-gray-400',
+        };
+        const match = found.color.match(/(?:text|bg)-([a-z]+)-(?:500|600|700)/);
+        dotColor = (match && dotMap[match[1]]) || 'bg-slate-400';
+      }
+      return {
+        value: found.value || targetVal,
+        label: found.label || targetVal,
+        color: found.color || 'bg-slate-50 text-slate-700 border-slate-200',
+        dotColor: dotColor || 'bg-slate-400'
+      };
+    }
+    if (targetVal === 'cancelled') {
+      return {
+        value: 'cancelled',
+        label: 'ยกเลิก',
+        color: 'bg-rose-50 text-rose-700 border-rose-200',
+        dotColor: 'bg-rose-500'
+      };
+    }
+    return {
+      value: targetVal,
+      label: targetVal === 'unpaid' ? 'รอชำระเงิน' : targetVal,
+      color: 'bg-amber-50 text-amber-700 border-amber-200',
+      dotColor: 'bg-amber-500'
+    };
+  };
+
   // --- View Mode State ---
   // 'feed' = แถวรายการรายรับ-รายจ่าย แก้ไข/ยกเลิกได้สด (Transaction Feed View - Default)
   // 'sheet' = ตารางกำไรขาดทุนแบบสมุดบัญชีสำหรับพิมพ์ A4 (Accounting Sheet View)
@@ -408,6 +479,7 @@ function Finance({
   const [feedTypeFilter, setFeedTypeFilter] = useState('all'); // 'all' | 'income' | 'expense' | 'support'
   const [isAddTxModalOpen, setIsAddTxModalOpen] = useState(false);
   const [isEditTxModalOpen, setIsEditTxModalOpen] = useState(false);
+  const [isEditTxViewOnly, setIsEditTxViewOnly] = useState(true);
   const [editingTx, setEditingTx] = useState(null);
   const [editFormData, setEditFormData] = useState({ detail: '', category: '', amount: 0, is_voided: false });
   const [newTxFormData, setNewTxFormData] = useState({
@@ -543,18 +615,52 @@ function Finance({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  const {
+    requestClose: requestCloseEditTxModal,
+    isConfirmOpen: isEditTxCloseConfirmOpen,
+    closeConfirmDialog: editTxCloseConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen: isEditTxModalOpen,
+    onClose: () => setIsEditTxModalOpen(false),
+    shouldConfirm: !isEditTxViewOnly,
+    watch: isEditTxModalOpen ? editFormData : null,
+    listenEscape: false,
+  });
+
+  const {
+    requestClose: requestCloseAddTxModal,
+    isConfirmOpen: isAddTxCloseConfirmOpen,
+    closeConfirmDialog: addTxCloseConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen: isAddTxModalOpen,
+    onClose: () => setIsAddTxModalOpen(false),
+    shouldConfirm: true,
+    watch: isAddTxModalOpen ? newTxFormData : null,
+    listenEscape: false,
+  });
+
   // Keyboard shortcut: close modals on Escape
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
+        if (e.defaultPrevented) return;
+        if (isAddTxCloseConfirmOpen || isEditTxCloseConfirmOpen) return;
         if (previewSlipImage) setPreviewSlipImage(null);
-        else if (isAddTxModalOpen) setIsAddTxModalOpen(false);
-        else if (isEditTxModalOpen) setIsEditTxModalOpen(false);
+        else if (isAddTxModalOpen) requestCloseAddTxModal();
+        else if (isEditTxModalOpen) requestCloseEditTxModal();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [previewSlipImage, isAddTxModalOpen, isEditTxModalOpen]);
+  }, [
+    previewSlipImage,
+    isAddTxModalOpen,
+    isEditTxModalOpen,
+    isAddTxCloseConfirmOpen,
+    isEditTxCloseConfirmOpen,
+    requestCloseAddTxModal,
+    requestCloseEditTxModal,
+  ]);
 
   // Listen to Top Header "+ เพิ่มรายรับ/จ่าย" button event
   useEffect(() => {
@@ -706,8 +812,9 @@ function Finance({
 
       // 2. Payment Status Filter
       if (paymentStatusFilter !== 'all') {
-        const itemPaymentStatus = item.paymentStatus || (item.dealStatus === 'completed' ? 'paid' : 'unpaid');
-        if (itemPaymentStatus !== paymentStatusFilter) return false;
+        const rawPaymentStatus = item.paymentStatus || (item.dealStatus === 'completed' ? 'paid' : 'unpaid');
+        const normalizedPaymentStatus = rawPaymentStatus === 'cancelled' ? 'refunded' : rawPaymentStatus;
+        if (rawPaymentStatus !== paymentStatusFilter && normalizedPaymentStatus !== paymentStatusFilter) return false;
       }
 
       // 3. Date Filter (matches Analytics / App.jsx logic)
@@ -980,8 +1087,6 @@ function Finance({
   }, [feedTransactions, feedSearchQuery, feedTypeFilter]);
 
   // Handlers for Transaction Feed Actions
-  const [isEditTxViewOnly, setIsEditTxViewOnly] = useState(true);
-
   const handleOpenEditTx = (tx) => {
     setEditingTx(tx);
     setEditFormData({
@@ -2253,10 +2358,7 @@ function Finance({
       const eTotal = calcE > 0 ? calcE : (parseFloat(item.totalExpenses || item.total_expenses) || 0);
 
       const profit = qTotal - eTotal;
-      const status = item.paymentStatus === 'paid' ? 'ชำระครบแล้ว'
-        : item.paymentStatus === 'deposit' ? 'มัดจำแล้ว'
-        : item.paymentStatus === 'refunded' ? 'คืนเงิน/ยกเลิก'
-        : 'รอชำระเงิน';
+      const status = getPaymentStatusMeta(item._paymentStatus || item.paymentStatus).label;
 
       return [
         `"${item.id || ''}"`,
@@ -2613,23 +2715,22 @@ function Finance({
             />
           </div>
 
-          <div className="relative bg-slate-50 border border-slate-200/80 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-              <Wallet className="w-3.5 h-3.5" />
-            </div>
-            <select
-              value={paymentStatusFilter}
-              onChange={(e) => setPaymentStatusFilter(e.target.value)}
-              className="w-full h-full pl-8 pr-7 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-bold appearance-none cursor-pointer rounded-xl"
-            >
-              <option value="all">สถานะการชำระ: ทั้งหมด</option>
-              <option value="paid">ชำระครบแล้ว</option>
-              <option value="deposit">มัดจำแล้ว</option>
-              <option value="unpaid">รอชำระเงิน</option>
-              <option value="refunded">คืนเงิน/ยกเลิก</option>
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
+          <StatusDropdown
+            value={paymentStatusFilter}
+            onChange={(val) => setPaymentStatusFilter(val)}
+            options={[
+              { value: 'all', label: 'ทุกสถานะชำระเงิน' },
+              ...effectivePaymentStatuses.map((st) => ({
+                ...st,
+                value: st.value || st.id
+              }))
+            ]}
+            leftIcon={Wallet}
+            size="sm"
+            showDot={true}
+            className="bg-slate-50 border-slate-200/80 hover:border-slate-300 text-slate-700"
+            ariaLabel="สถานะการชำระเงิน"
+          />
 
           <button
             type="button"
@@ -2811,36 +2912,21 @@ function Finance({
 
                                 {/* 7. สถานะ */}
                                 <td className="px-4 py-3.5 align-top text-center">
-                                  <span
-                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${
-                                      entry.paymentStatus === 'paid'
-                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                        : entry.paymentStatus === 'deposit'
-                                        ? 'bg-sky-50 text-sky-700 border-sky-200'
-                                        : entry.paymentStatus === 'cancelled'
-                                        ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                        : 'bg-amber-50 text-amber-700 border-amber-200'
-                                    }`}
-                                  >
-                                    <span
-                                      className={`w-1.5 h-1.5 rounded-full ${
-                                        entry.paymentStatus === 'paid'
-                                          ? 'bg-emerald-500'
-                                          : entry.paymentStatus === 'deposit'
-                                          ? 'bg-sky-500'
-                                          : entry.paymentStatus === 'cancelled'
-                                          ? 'bg-rose-500'
-                                          : 'bg-amber-500'
-                                      }`}
-                                    />
-                                    {entry.paymentStatus === 'paid'
-                                      ? 'ชำระแล้ว'
-                                      : entry.paymentStatus === 'deposit'
-                                      ? 'ชำระมัดจำ'
-                                      : entry.paymentStatus === 'cancelled'
-                                      ? 'ยกเลิก'
-                                      : 'รอชำระเงิน'}
-                                  </span>
+                                  {(() => {
+                                    const meta = getPaymentStatusMeta(entry.paymentStatus);
+                                    const isDepositWithAmount = (entry.paymentStatus === 'deposit' || meta.value === 'deposit') && item.depositAmount > 0;
+                                    const displayText = isDepositWithAmount
+                                      ? `มัดจำ ฿${formatCurrency(item.depositAmount)}`
+                                      : meta.label;
+                                    return (
+                                      <span
+                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${meta.color}`}
+                                      >
+                                        <span className={`w-1.5 h-1.5 rounded-full ${meta.dotColor}`} />
+                                        {displayText}
+                                      </span>
+                                    );
+                                  })()}
                                 </td>
 
                                 {/* 8. ดำเนินการ */}
@@ -2937,25 +3023,21 @@ function Finance({
                         </span>
                       </div>
 
-                      <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border ${
-                          item._paymentStatus === 'paid'
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                            : item._paymentStatus === 'deposit'
-                            ? 'bg-sky-50 text-sky-700 border-sky-200'
-                            : item._paymentStatus === 'cancelled'
-                            ? 'bg-rose-50 text-rose-700 border-rose-200'
-                            : 'bg-amber-50 text-amber-700 border-amber-200'
-                        }`}
-                      >
-                        {item._paymentStatus === 'paid'
-                          ? 'ชำระแล้ว'
-                          : item._paymentStatus === 'deposit'
-                          ? 'มัดจำ'
-                          : item._paymentStatus === 'cancelled'
-                          ? 'ยกเลิก'
-                          : 'รอชำระ'}
-                      </span>
+                      {(() => {
+                        const meta = getPaymentStatusMeta(item._paymentStatus);
+                        const isDepositWithAmount = (item._paymentStatus === 'deposit' || meta.value === 'deposit') && item.depositAmount > 0;
+                        const displayText = isDepositWithAmount
+                          ? `มัดจำ ฿${formatCurrency(item.depositAmount)}`
+                          : meta.label;
+                        return (
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${meta.color}`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${meta.dotColor}`} />
+                            {displayText}
+                          </span>
+                        );
+                      })()}
                     </div>
 
                     {/* Project & Category */}
@@ -3087,12 +3169,12 @@ function Finance({
       )}
 
       {/* Edit Transaction Modal */}
+      {editTxCloseConfirmDialog}
       {isEditTxModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
           {/* Backdrop */}
           <div
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
-            onClick={() => setIsEditTxModalOpen(false)}
           />
 
           <div
@@ -3123,7 +3205,7 @@ function Finance({
               </div>
               <button
                 type="button"
-                onClick={() => setIsEditTxModalOpen(false)}
+                onClick={requestCloseEditTxModal}
                 className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors active:scale-95 cursor-pointer"
               >
                 <X className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -3189,15 +3271,16 @@ function Finance({
               <div className="px-5 py-4 sm:px-8 sm:py-5 border-t border-slate-100 bg-white/95 backdrop-blur-xl sticky bottom-0 z-30 flex items-center justify-between gap-3 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setIsEditTxModalOpen(false)}
+                  onClick={requestCloseEditTxModal}
                   className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
                   {isEditTxViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
                 {isEditTxViewOnly ? (
                   <button
+                    key="unlock-edit-btn"
                     type="button"
-                    onClick={() => setIsEditTxViewOnly(false)}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsEditTxViewOnly(false); }}
                     className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
                   >
                     <Edit className="w-4 h-4" />
@@ -3205,6 +3288,7 @@ function Finance({
                   </button>
                 ) : (
                   <button
+                    key="submit-save-btn"
                     type="submit"
                     disabled={isTxSaving}
                     className="py-3 px-7 sm:px-8 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-emerald-200 hover:shadow-emerald-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
@@ -3224,12 +3308,12 @@ function Finance({
       )}
 
       {/* Add Transaction Modal */}
+      {addTxCloseConfirmDialog}
       {isAddTxModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
           {/* Backdrop */}
           <div
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
-            onClick={() => setIsAddTxModalOpen(false)}
           />
 
           <div
@@ -3261,7 +3345,7 @@ function Finance({
               </div>
               <button
                 type="button"
-                onClick={() => setIsAddTxModalOpen(false)}
+                onClick={requestCloseAddTxModal}
                 className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors active:scale-95 cursor-pointer"
                 title="ปิดหน้าต่าง"
               >
@@ -3373,16 +3457,20 @@ function Finance({
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">ช่องทางการชำระเงิน</label>
-                    <select
+                    <StatusDropdown
                       value={newTxFormData.channel}
-                      onChange={(e) => setNewTxFormData(prev => ({ ...prev, channel: e.target.value }))}
-                      className="w-full px-4 py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors cursor-pointer"
-                    >
-                      <option value="โอนเงิน">โอนเงิน (Mobile Banking)</option>
-                      <option value="เงินสด">เงินสด (Cash)</option>
-                      <option value="บัตรเครดิต">บัตรเครดิต (Credit Card)</option>
-                      <option value="พร้อมเพย์">พร้อมเพย์ (PromptPay)</option>
-                    </select>
+                      onChange={(val) => setNewTxFormData((prev) => ({ ...prev, channel: val }))}
+                      options={[
+                        { value: 'โอนเงิน', label: 'โอนเงิน (Mobile Banking)' },
+                        { value: 'เงินสด', label: 'เงินสด (Cash)' },
+                        { value: 'บัตรเครดิต', label: 'บัตรเครดิต (Credit Card)' },
+                        { value: 'พร้อมเพย์', label: 'พร้อมเพย์ (PromptPay)' }
+                      ]}
+                      size="md"
+                      showDot={false}
+                      className="bg-slate-50/70 focus:bg-white rounded-2xl border-slate-200 text-slate-800"
+                      ariaLabel="ช่องทางการชำระเงิน"
+                    />
                   </div>
                 </div>
 
@@ -3714,7 +3802,7 @@ function Finance({
               <div className="px-5 py-4 sm:px-8 sm:py-5 border-t border-slate-100 bg-white/95 backdrop-blur-xl sticky bottom-0 z-30 flex items-center justify-between gap-3 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setIsAddTxModalOpen(false)}
+                  onClick={requestCloseAddTxModal}
                   className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-all active:scale-95 cursor-pointer"
                 >
                   ยกเลิก
@@ -4282,16 +4370,18 @@ function Finance({
 
                         <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
                           {/* Payment Status Pill */}
-                          <span className={`px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-full text-xs lg:text-sm font-bold border whitespace-nowrap ${
-                            paymentStatus === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200/70' :
-                            paymentStatus === 'deposit' ? 'bg-sky-50 text-sky-700 border-sky-200/70' :
-                            paymentStatus === 'refunded' ? 'bg-rose-50 text-rose-700 border-rose-200/70' :
-                            'bg-amber-50 text-amber-700 border-amber-200/70'
-                          }`}>
-                            {paymentStatus === 'paid' ? 'ชำระครบแล้ว' :
-                             paymentStatus === 'deposit' ? `มัดจำ ฿${formatCurrency(item.depositAmount)}` :
-                             paymentStatus === 'refunded' ? 'คืนเงิน/ยกเลิก' : 'รอชำระเงิน'}
-                          </span>
+                          {(() => {
+                            const meta = getPaymentStatusMeta(paymentStatus);
+                            const isDepositWithAmount = (paymentStatus === 'deposit' || meta.value === 'deposit') && item.depositAmount > 0;
+                            const displayText = isDepositWithAmount
+                              ? `มัดจำ ฿${formatCurrency(item.depositAmount)}`
+                              : meta.label;
+                            return (
+                              <span className={`px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-full text-xs lg:text-sm font-bold border whitespace-nowrap ${meta.color}`}>
+                                {displayText}
+                              </span>
+                            );
+                          })()}
 
                           {/* Quick Edit Button */}
                           {onOpenProjectModal && (

@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import StatusDropdown from '../common/StatusDropdown';
 import { 
   X, 
   Search, 
@@ -18,19 +19,19 @@ export default function VenueDirectoryModal({
   venues = [], 
   onSelectVenue 
 }) {
-  if (!isOpen) return null;
-
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedZone, setSelectedZone] = useState('all');
 
   // Keyboard shortcut: close modal on Escape
-  React.useEffect(() => {
+  useEffect(() => {
+    if (!isOpen) return;
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape') onClose();
+      if (e.defaultPrevented) return;
+      if (e.key === 'Escape') onClose?.();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [isOpen, onClose]);
 
   // Extract unique zones
   const zones = useMemo(() => {
@@ -40,6 +41,11 @@ export default function VenueDirectoryModal({
     });
     return Array.from(set).sort();
   }, [venues]);
+
+  const zoneOptions = useMemo(() => [
+    { value: 'all', label: `ทุกโซน (${venues.length})` },
+    ...zones.map(z => ({ value: z, label: z }))
+  ], [venues.length, zones]);
 
   // Filtered venues
   const filteredVenues = useMemo(() => {
@@ -55,6 +61,8 @@ export default function VenueDirectoryModal({
       return matchSearch && matchZone;
     });
   }, [venues, searchQuery, selectedZone]);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
@@ -121,17 +129,15 @@ export default function VenueDirectoryModal({
                 </button>
               )}
             </div>
-            <div className="shrink-0">
-              <select
+            <div className="shrink-0 w-full sm:w-48">
+              <StatusDropdown
                 value={selectedZone}
-                onChange={(e) => setSelectedZone(e.target.value)}
-                className="w-full sm:w-auto px-4 py-2.5 bg-slate-50/70 border border-slate-200 text-slate-800 font-bold rounded-xl sm:rounded-2xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer"
-              >
-                <option value="all">ทุกโซน ({venues.length})</option>
-                {zones.map(z => (
-                  <option key={z} value={z}>{z}</option>
-                ))}
-              </select>
+                onChange={setSelectedZone}
+                options={zoneOptions}
+                showDot={false}
+                size="sm"
+                ariaLabel="เลือกโซนสถานที่"
+              />
             </div>
           </div>
         </div>

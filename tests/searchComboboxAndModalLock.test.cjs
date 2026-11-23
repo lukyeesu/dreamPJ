@@ -212,3 +212,99 @@ test('Saved UserProfileModal starts locked (view-only) until user clicks แก�
   assert.equal(fieldset.disabled, false, 'Clicking แก้ไข unlocks fieldset');
   assert.ok(ui.getByRole('button', { name: /บันทึกข้อมูลโปรไฟล์/ }));
 });
+
+test('DbCombobox portals dropdown to document.body (never clipped) and App.jsx maps Quotation to projectCategories and Expenses to expenseCategories', async () => {
+  const DbCombobox = await loadProductionComponent('src/components/common/DbCombobox.jsx');
+
+  function ClippedHarness() {
+    const [val, setVal] = React.useState('');
+    return React.createElement(
+      'div',
+      { 'data-testid': 'clipped-parent', style: { overflow: 'hidden', height: '36px' } },
+      React.createElement(DbCombobox, {
+        options: ['Backdrop', 'ช่อถือ', 'ช่อขาตั้ง'],
+        value: val,
+        onChange: setVal,
+        placeholder: 'ระบุหมวดหมู่...'
+      })
+    );
+  }
+
+  const ui = render(React.createElement(ClippedHarness));
+  const input = ui.getByPlaceholderText('ระบุหมวดหมู่...');
+  await act(async () => {
+    fireEvent.focus(input);
+  });
+
+  const listbox = ui.getByRole('listbox');
+  assert.equal(listbox.parentElement, document.body, 'DbCombobox listbox must portal to document.body so overflow-hidden never clips it');
+  assert.ok(listbox.textContent.includes('Backdrop'));
+  assert.ok(listbox.textContent.includes('ช่อถือ'));
+
+  await act(async () => {
+    fireEvent.click(within(listbox).getByText('ช่อถือ'));
+  });
+  assert.equal(input.value, 'ช่อถือ');
+  assert.equal(ui.queryByRole('listbox'), null);
+
+  const appSrc = fs.readFileSync(path.join(process.cwd(), 'src/App.jsx'), 'utf8');
+  assert.match(
+    appSrc,
+    /<DbCombobox[\s\S]{0,120}options=\{projectCategories\}[\s\S]{0,120}placeholder="ระบุหมวดหมู่\.\.\."/,
+    'Quotation category combobox must pull from projectCategories (หมวดหมู่งาน)'
+  );
+  assert.match(
+    appSrc,
+    /<DbCombobox[\s\S]{0,120}options=\{expenseCategories\}[\s\S]{0,120}placeholder="หมวดหมู่\.\.\."/,
+    'Expense category combobox must pull from expenseCategories (หมวดหมู่ค่าใช้จ่าย)'
+  );
+});
+
+test('StatusDropdown portals cleanly with zero flying, supports settings-driven Deal/Payment/Transport statuses, and banknote selector excludes coins', async () => {
+  const StatusDropdown = await loadProductionComponent('src/components/common/StatusDropdown.jsx');
+  const options = [
+    { value: 'unpaid', label: 'รอชำระเงิน (Unpaid)', color: 'bg-amber-50 text-amber-700 border-amber-200' },
+    { value: 'paid', label: 'ชำระครบถ้วนแล้ว (Paid)', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+    { value: 'custom_cod', label: 'เก็บเงินปลายทาง', color: 'bg-violet-50 text-violet-700 border-violet-200' }
+  ];
+
+  function StatusHarness() {
+    const [val, setVal] = React.useState('unpaid');
+    return React.createElement(StatusDropdown, {
+      value: val,
+      onChange: setVal,
+      options,
+      ariaLabel: 'สถานะการชำระเงิน'
+    });
+  }
+
+  const ui = render(React.createElement(StatusHarness));
+  const trigger = ui.getByRole('button', { name: 'สถานะการชำระเงิน' });
+  assert.ok(trigger.textContent.includes('รอชำระเงิน (Unpaid)'));
+
+  await act(async () => {
+    fireEvent.click(trigger);
+  });
+
+  const listbox = ui.getByRole('listbox');
+  assert.equal(listbox.parentElement, document.body, 'StatusDropdown must portal to document.body');
+  assert.ok(listbox.textContent.includes('เก็บเงินปลายทาง'));
+
+  await act(async () => {
+    fireEvent.click(within(listbox).getByText('เก็บเงินปลายทาง'));
+  });
+  assert.ok(trigger.textContent.includes('เก็บเงินปลายทาง'));
+  assert.equal(ui.queryByRole('listbox'), null);
+
+  // Verify App.jsx uses StatusDropdown for Deal, Payment, Transport, Category, and Banknotes (no coins!)
+  const appSrc = fs.readFileSync(path.join(process.cwd(), 'src/App.jsx'), 'utf8');
+  assert.match(appSrc, /ariaLabel="สถานะ \(ดีล\)"/, 'Deal status must use StatusDropdown');
+  assert.match(appSrc, /ariaLabel="สถานะการชำระเงิน"/, 'Payment status must use StatusDropdown');
+  assert.match(appSrc, /ariaLabel="สถานะงาน \(ขนส่ง\)"/, 'Transport status must use StatusDropdown');
+  assert.match(appSrc, /ariaLabel="ประเภทแบงค์"/, 'Banknote selector must use StatusDropdown');
+  assert.equal(appSrc.includes('เหรียญ'), false, 'Coin options must be removed from banknote dropdown');
+
+  // Verify Settings.jsx includes Payment Status manager
+  const settingsSrc = fs.readFileSync(path.join(process.cwd(), 'src/Settings.jsx'), 'utf8');
+  assert.ok(settingsSrc.includes('สถานะการชำระเงิน (Payment Status)'), 'Settings must expose Payment Status configuration');
+});

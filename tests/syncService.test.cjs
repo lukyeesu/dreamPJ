@@ -24,8 +24,8 @@ async function harness(initial = [], respond = () => ({ data: [], error: null, c
     auth: { getSession: async () => ({ data: { session: { user: { id: 'test-user' } } } }) },
     from(table) {
       const q = { table, op: 'select', filters: [] };
-      for (const method of ['select','gte','lte','lt','gt','eq','in','order','range','limit','maybeSingle','upsert','insert','delete']) {
-        q[method] = (...args) => { q[method + 'Args'] = args; if (['insert','delete','upsert'].includes(method)) q.op = method; if (['eq','in','gte','lte','lt'].includes(method)) q.filters.push([method, ...args]); return q; };
+      for (const method of ['select','gte','lte','lt','gt','eq','ilike','in','order','range','limit','maybeSingle','upsert','insert','update','delete']) {
+        q[method] = (...args) => { q[method + 'Args'] = args; if (['insert','update','delete','upsert'].includes(method)) q.op = method; if (['eq','ilike','in','gte','lte','lt'].includes(method)) q.filters.push([method, ...args]); return q; };
       }
       q.then = (ok, fail) => { requests.push(q); return Promise.resolve().then(() => respond(q)).then(ok, fail); };
       return q;
@@ -271,4 +271,189 @@ test('App keeps the form open and reports an error when project saving fails', a
   assert.equal(closed, 0); assert.equal(updates, 0);
   assert(notices.some(([message, type]) => type === 'error' && message.includes('write failed')));
   assert(!notices.some(([, type]) => type === 'success'));
+});
+
+test('extractGoogleDriveFolderId parses full Drive URLs and preserves raw IDs', async () => {
+  const h = await harness();
+  assert.equal(h.api.extractGoogleDriveFolderId('1AbCdEf_123-xyz'), '1AbCdEf_123-xyz');
+  assert.equal(h.api.extractGoogleDriveFolderId('https://drive.google.com/drive/folders/1AbCdEf_123-xyz?usp=sharing'), '1AbCdEf_123-xyz');
+  assert.equal(h.api.extractGoogleDriveFolderId('https://drive.google.com/drive/u/0/folders/1AbCdEf_123-xyz'), '1AbCdEf_123-xyz');
+  assert.equal(h.api.extractGoogleDriveFolderId('https://drive.google.com/open?id=1AbCdEf_123-xyz'), '1AbCdEf_123-xyz');
+  assert.equal(h.api.extractGoogleDriveFolderId('   '), '');
+});
+
+test('saveSettingsToSupabase persists drive_folders JSONB and normalizes Drive URLs', async () => {
+  let savedPayload = null;
+  const h = await harness([], q => {
+    if (q.table === 'shop_settings' && q.op === 'select') return { data: { id: 'shop-1' }, error: null };
+    if (q.table === 'shop_settings' && q.op === 'update') {
+      savedPayload = q.updateArgs[0];
+      return { data: null, error: null };
+    }
+    return { data: [], error: null };
+  });
+
+  await h.api.saveSettingsToSupabase({
+    drive_folders: [
+      { id: 'f_ref', name: 'รูปอ้างอิง', type: 'reference', folderId: 'https://drive.google.com/drive/folders/REF_123?usp=sharing' },
+      { id: 'f_assets', name: 'Assets', type: 'assets', folderId: '' },
+      { id: 'f_slips', name: 'สลิป', type: 'slips', folderId: 'SLIP_456' },
+      { id: 'f_inventory', name: 'รูปสินค้าในคลัง', type: 'inventory', folderId: 'https://drive.google.com/drive/u/0/folders/INV_789' },
+      { id: 'f_custom', name: 'เอกสาร', type: 'custom', folderId: 'CUSTOM_999' }
+    ]
+  });
+
+  assert(savedPayload, 'expected shop_settings update payload');
+  assert.equal(savedPayload.reference_folder_id, 'REF_123');
+  assert.equal(savedPayload.assets_folder_id, '');
+  assert.equal(savedPayload.slips_folder_id, 'SLIP_456');
+  assert.equal(savedPayload.drive_folders.length, 5);
+  assert.equal(savedPayload.drive_folders.find(f => f.type === 'inventory').folderId, 'INV_789');
+  assert.equal(savedPayload.drive_folders.find(f => f.type === 'custom').folderId, 'CUSTOM_999');
+});
+
+test('saveSettingsToSupabase throws when Supabase update returns an error', async () => {
+  const h = await harness([], q => {
+    if (q.table === 'shop_settings' && q.op === 'select') return { data: { id: 'shop-1' }, error: null };
+    if (q.table === 'shop_settings' && q.op === 'update') return { data: null, error: { message: 'permission denied' } };
+    return { data: [], error: null };
+  });
+
+  await assert.rejects(
+    h.api.saveSettingsToSupabase({ drive_folders: [{ id: 'f_inventory', name: 'รูปสินค้าในคลัง', type: 'inventory', folderId: 'INV_789' }] }),
+    /permission denied/
+  );
+});
+
+test('loadSettingsFromSupabase returns null instead of empty defaults when shop_settings query fails', async () => {
+  const h = await harness([], q => {
+    if (q.table === 'shop_settings') return { data: null, error: { message: 'network error' } };
+    return { data: [], error: null };
+  });
+
+  const result = await h.api.loadSettingsFromSupabase();
+  assert.equal(result, null);
+});
+
+test('saveSettingsToSupabase persists system options arrays (categories and statuses)', async () => {
+  let savedPayload = null;
+  const h = await harness([], q => {
+    if (q.table === 'shop_settings' && q.op === 'select') return { data: { id: 'shop-1' }, error: null };
+    if (q.table === 'shop_settings' && q.op === 'update') {
+      savedPayload = q.updateArgs[0];
+      return { data: null, error: null };
+    }
+    return { data: [], error: null };
+  });
+
+  await h.api.saveSettingsToSupabase({
+    project_categories: ['ช่อดอกไม้', 'ซุ้มงานอีเวนต์'],
+    expense_categories: ['ค่าดอกไม้', 'ค่าขนส่ง'],
+    deal_statuses: [{ value: 'custom_1', label: 'รอโอนมัดจำ', color: 'bg-amber-50' }],
+    transport_statuses: [{ value: 'custom_2', label: 'กำลังจัดส่ง', type: 'active', color: 'bg-blue-50' }]
+  });
+
+  assert(savedPayload, 'expected shop_settings update payload');
+  assert.deepEqual(savedPayload.project_categories, ['ช่อดอกไม้', 'ซุ้มงานอีเวนต์']);
+  assert.deepEqual(savedPayload.expense_categories, ['ค่าดอกไม้', 'ค่าขนส่ง']);
+  assert.deepEqual(savedPayload.deal_statuses, [{ value: 'custom_1', label: 'รอโอนมัดจำ', color: 'bg-amber-50' }]);
+  assert.deepEqual(savedPayload.transport_statuses, [{ value: 'custom_2', label: 'กำลังจัดส่ง', type: 'active', color: 'bg-blue-50' }]);
+});
+
+test('App getFolderIdByType routes dedicated profiles/artists folders and falls back to assets', () => {
+  const src = sourceNodes('src/App.jsx');
+  const fnNode = src.vars.get('getFolderIdByType');
+  assert(fnNode, 'expected getFolderIdByType in App.jsx');
+
+  const withDedicated = evaluate(src.code(fnNode), {
+    driveFolders: [
+      { type: 'reference', folderId: 'REF_ID' },
+      { type: 'slips', folderId: 'SLIP_ID' },
+      { type: 'assets', folderId: 'ASSETS_ID' },
+      { type: 'profiles', folderId: 'PROFILE_ID' },
+      { type: 'artists', folderId: 'ARTIST_ID' }
+    ],
+    driveFolderId: 'FALLBACK_REF',
+    assetsDriveFolderId: 'FALLBACK_ASSETS'
+  });
+  assert.equal(withDedicated('reference'), 'REF_ID');
+  assert.equal(withDedicated('slips'), 'SLIP_ID');
+  assert.equal(withDedicated('profiles'), 'PROFILE_ID');
+  assert.equal(withDedicated('artists'), 'ARTIST_ID');
+  assert.equal(withDedicated('assets'), 'ASSETS_ID');
+
+  const withFallback = evaluate(src.code(fnNode), {
+    driveFolders: [{ type: 'assets', folderId: 'ASSETS_ID' }],
+    driveFolderId: 'FALLBACK_REF',
+    assetsDriveFolderId: 'FALLBACK_ASSETS'
+  });
+  assert.equal(withFallback('profiles'), 'ASSETS_ID');
+  assert.equal(withFallback('artists'), 'ASSETS_ID');
+  assert.equal(withFallback('inventory'), 'ASSETS_ID');
+});
+
+test('saveSettingsToSupabase persists payment_statuses JSONB and loadSettingsFromSupabase returns paymentStatuses', async () => {
+  let savedPayload = null;
+  const h = await harness([], q => {
+    if (q.table === 'shop_settings' && q.op === 'select') return { data: { id: 'shop-1', payment_statuses: [{ value: 'paid' }] }, error: null };
+    if (q.table === 'shop_settings' && q.op === 'update') {
+      savedPayload = q.updateArgs[0];
+      return { data: null, error: null };
+    }
+    return { data: [], error: null };
+  });
+
+  await h.api.saveSettingsToSupabase({ payment_statuses: [{ value: 'unpaid' }] });
+  assert(savedPayload);
+  assert.deepEqual(savedPayload.payment_statuses, [{ value: 'unpaid' }]);
+
+  const loaded = await h.api.loadSettingsFromSupabase();
+  assert.deepEqual(loaded.paymentStatuses, [{ value: 'paid' }]);
+});
+
+test('loadSettingsFromSupabase falls back cleanly to legacy columns when shop_settings.payment_statuses column does not exist yet (code 42703)', async () => {
+  let selects = 0;
+  const h = await harness([], q => {
+    if (q.table === 'shop_settings' && q.op === 'select') {
+      selects++;
+      if (selects === 1) return { data: null, error: { code: '42703', message: 'column payment_statuses does not exist' } };
+      return { data: { id: 'shop-1' }, error: null };
+    }
+    return { data: [], error: null };
+  });
+  const loaded = await h.api.loadSettingsFromSupabase();
+  assert.equal(selects, 2);
+  assert(loaded);
+  assert.equal(loaded.paymentStatuses, null);
+});
+
+test('saveSettingsToSupabase returns { saved: true, localOnlyPaymentStatuses: true } without throwing when payment_statuses column is missing in Supabase', async () => {
+  const h = await harness([], q => {
+    if (q.table === 'shop_settings' && q.op === 'select') return { data: { id: 'shop-1' }, error: null };
+    if (q.table === 'shop_settings' && q.op === 'update') {
+      if (q.updateArgs[0].payment_statuses) return { data: null, error: { code: '42703', message: 'column payment_statuses does not exist' } };
+      return { data: null, error: null };
+    }
+    return { data: [], error: null };
+  });
+
+  const res = await h.api.saveSettingsToSupabase({
+    payment_statuses: [{ value: 'unpaid' }],
+    shop_info: { shopName: 'Test' },
+    app_credentials: [{ username: 'admin', name: 'Admin User', phone: '0812345678', image: 'https://example.com/a.jpg' }]
+  });
+  assert.equal(res.success, true);
+  assert.equal(res.saved, true);
+  assert.equal(res.localOnlyPaymentStatuses, true);
+  const staffUpdate = h.requests.find(q => q.table === 'staff_users' && q.op === 'update');
+  assert(staffUpdate, 'expected app_credentials staff_users update even when payment_statuses falls back');
+  assert.equal(staffUpdate.updateArgs[0].full_name, 'Admin User');
+});
+
+test('isMissingPaymentStatusesColumnError ignores 42703/PGRST204 errors for unrelated columns', async () => {
+  const h = await harness();
+  assert.equal(h.api.isMissingPaymentStatusesColumnError({ code: '42703', message: 'column shop_settings.payment_statuses does not exist' }), true);
+  assert.equal(h.api.isMissingPaymentStatusesColumnError({ code: 'PGRST204', message: "Could not find the 'payment_statuses' column of 'shop_settings' in the schema cache" }), true);
+  assert.equal(h.api.isMissingPaymentStatusesColumnError({ code: '42703', message: 'column shop_settings.drive_folders does not exist' }), false);
+  assert.equal(h.api.isMissingPaymentStatusesColumnError({ code: 'PGRST204', message: "Could not find the 'other_col' column of 'shop_settings' in the schema cache" }), false);
 });

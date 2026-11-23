@@ -66,7 +66,8 @@ export const QUOTATION_COLUMNS = 'id,project_id,category,detail,quantity,unit_pr
 export const SUPPORT_COLUMNS = 'id,project_id,denomination,quantity,price,item_date';
 export const EXPENSE_COLUMNS = 'id,project_id,category,detail,quantity,unit_price,price,item_date';
 export const LOCATION_COLUMNS = 'id,name,zone,gate_info,parking_height_limit,dock_contact_phone,default_map_link,loading_dock_map_link,delivery_tips,is_active';
-export const SHOP_SETTINGS_COLUMNS = 'id,shop_name,phone,email,address,line_id,facebook,instagram,tiktok,twitter,wechat,telegram,logo_url,theme_color,theme_mode,custom_color_value,drive_folders,reference_folder_id,assets_folder_id,slips_folder_id,line_bot_token,telegram_bot_token,telegram_chat_id,project_categories,expense_categories,deal_statuses,transport_statuses,updated_at';
+export const SHOP_SETTINGS_LEGACY_COLUMNS = 'id,shop_name,phone,email,address,line_id,facebook,instagram,tiktok,twitter,wechat,telegram,logo_url,theme_color,theme_mode,custom_color_value,drive_folders,reference_folder_id,assets_folder_id,slips_folder_id,line_bot_token,telegram_bot_token,telegram_chat_id,project_categories,expense_categories,deal_statuses,transport_statuses,updated_at';
+export const SHOP_SETTINGS_COLUMNS = 'id,shop_name,phone,email,address,line_id,facebook,instagram,tiktok,twitter,wechat,telegram,logo_url,theme_color,theme_mode,custom_color_value,drive_folders,reference_folder_id,assets_folder_id,slips_folder_id,line_bot_token,telegram_bot_token,telegram_chat_id,project_categories,expense_categories,deal_statuses,transport_statuses,payment_statuses,updated_at';
 export const STAFF_COLUMNS = 'id,username,full_name,nickname,phone,email,citizen_id,birth_date,address,emergency_contact,role_id,is_active,profile_image_url,roles(id,name,label,code,allowed_pages)';
 export const ROLE_COLUMNS = 'id,name,code,label,description,allowed_pages,can_edit_pricing,can_delete_project,can_borrow_tools,can_manage_users,is_system_role';
 export const CUSTOMER_COLUMNS = 'id,name,phone,line_id,social_account,email,tax_id,billing_address,vip_tier,primary_artist_id,created_at';
@@ -78,6 +79,13 @@ export const QUOTATION_DOC_COLUMNS = 'id,quote_no,title,client_name,project_code
 export const MATERIAL_RATE_COLUMNS = 'id,name,default_price_sqm,is_active,updated_at';
 export const ARTIST_COLUMNS = 'id,name,agency,fandom_name,fandom_color,birth_date,debut_date,bio,social_links,favorite_flowers,avatar_url,notes,created_at';
 
+export const DEFAULT_PAYMENT_STATUSES = [
+  { value: 'unpaid', label: 'รอชำระเงิน (Unpaid)', color: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { value: 'deposit', label: 'ชำระมัดจำแล้ว (Partial / Deposit)', color: 'bg-blue-50 text-blue-700 border-blue-200' },
+  { value: 'paid', label: 'ชำระครบถ้วนแล้ว (Paid)', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { value: 'refunded', label: 'คืนเงิน / ยกเลิก (Refunded)', color: 'bg-rose-50 text-rose-700 border-rose-200' }
+];
+
 export const DEFAULT_MATERIAL_RATES = [
   { id: 'mat-fb-3mm', name: 'ฟิวเจอร์บอร์ด 3 มม. พิมพ์สติ๊กเกอร์', default_price_sqm: 350, is_active: true },
   { id: 'mat-fb-5mm', name: 'ฟิวเจอร์บอร์ด 5 มม. พร้อมไดคัท', default_price_sqm: 450, is_active: true },
@@ -85,6 +93,19 @@ export const DEFAULT_MATERIAL_RATES = [
   { id: 'mat-foamboard-5mm', name: 'โฟมบอร์ด 5 มม. เคลือบด้าน', default_price_sqm: 550, is_active: true },
   { id: 'mat-plaswood-5mm', name: 'พลาสวูด 5 มม. แข็งพิเศษ + ไดคัท', default_price_sqm: 750, is_active: true }
 ];
+
+export const isMissingPaymentStatusesColumnError = (error) => {
+  if (!error) return false;
+  const msg = `${error.message || ''} ${error.details || ''} ${error.hint || ''}`.toLowerCase();
+  if (error.code === '42703' || error.code === 'PGRST204') {
+    return !msg.trim() || msg.includes('payment_statuses');
+  }
+  return msg.includes('payment_statuses') && (
+    msg.includes('does not exist') ||
+    msg.includes('schema cache') ||
+    msg.includes('could not find')
+  );
+};
 
 export const isValidUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 
@@ -811,15 +832,34 @@ export async function syncDeletedRecords(onProjectsDeleted) {
   }
 }
 
+// แปลงลิงก์ Google Drive Folder หรือ Folder ID ให้เหลือเฉพาะ Folder ID ที่สะอาด
+export function extractGoogleDriveFolderId(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  const folderMatch = raw.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (folderMatch) return folderMatch[1];
+  const idMatch = raw.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idMatch) return idMatch[1];
+  return raw;
+}
+
 // 5. โหลดการตั้งค่าร้านและพนักงานจาก Supabase
 export async function loadSettingsFromSupabase() {
   const client = getActiveClient();
   try {
-    const [shopRes, staffRes, rolesRes] = await Promise.all([
+    let [shopRes, staffRes, rolesRes] = await Promise.all([
       client.from('shop_settings').select(SHOP_SETTINGS_COLUMNS).limit(1).maybeSingle(),
       client.from('staff_users').select(STAFF_COLUMNS),
       client.from('roles').select(ROLE_COLUMNS)
     ]);
+
+    if (shopRes.error && isMissingPaymentStatusesColumnError(shopRes.error)) {
+      shopRes = await client.from('shop_settings').select(SHOP_SETTINGS_LEGACY_COLUMNS).limit(1).maybeSingle();
+    }
+
+    if (shopRes.error) {
+      throw shopRes.error;
+    }
 
     const s = shopRes.data || {};
     const shopInfo = {
@@ -876,6 +916,7 @@ export async function loadSettingsFromSupabase() {
       expenseCategories: s.expense_categories || null,
       dealStatuses: s.deal_statuses || null,
       transportStatuses: s.transport_statuses || null,
+      paymentStatuses: Array.isArray(s.payment_statuses) && s.payment_statuses.length > 0 ? s.payment_statuses : null,
       appCredentials,
       roles: rolesRes.data || []
     };
@@ -1104,25 +1145,52 @@ export async function saveSettingsToSupabase(partialData) {
       if (s.customColorValue !== undefined) updatePayload.custom_color_value = s.customColorValue;
     }
 
-    if (partialData.drive_folder_id !== undefined) updatePayload.reference_folder_id = partialData.drive_folder_id;
-    if (partialData.assets_drive_folder_id !== undefined) updatePayload.assets_folder_id = partialData.assets_drive_folder_id;
+    if (partialData.drive_folder_id !== undefined) updatePayload.reference_folder_id = extractGoogleDriveFolderId(partialData.drive_folder_id);
+    if (partialData.assets_drive_folder_id !== undefined) updatePayload.assets_folder_id = extractGoogleDriveFolderId(partialData.assets_drive_folder_id);
     if (partialData.drive_folders && Array.isArray(partialData.drive_folders)) {
-      const ref = partialData.drive_folders.find(f => f.type === 'reference');
-      const ass = partialData.drive_folders.find(f => f.type === 'assets');
-      const slp = partialData.drive_folders.find(f => f.type === 'slips');
-      if (ref?.folderId) updatePayload.reference_folder_id = ref.folderId;
-      if (ass?.folderId) updatePayload.assets_folder_id = ass.folderId;
-      if (slp?.folderId) updatePayload.slips_folder_id = slp.folderId;
+      const normalizedFolders = partialData.drive_folders.map(f => ({
+        ...f,
+        folderId: extractGoogleDriveFolderId(f?.folderId)
+      }));
+      updatePayload.drive_folders = normalizedFolders;
+      const ref = normalizedFolders.find(f => f.type === 'reference');
+      const ass = normalizedFolders.find(f => f.type === 'assets');
+      const slp = normalizedFolders.find(f => f.type === 'slips');
+      if (ref) updatePayload.reference_folder_id = ref.folderId;
+      if (ass) updatePayload.assets_folder_id = ass.folderId;
+      if (slp) updatePayload.slips_folder_id = slp.folderId;
     }
     if (partialData.line_bot_token !== undefined) updatePayload.line_bot_token = partialData.line_bot_token;
     if (partialData.telegram_bot_token !== undefined) updatePayload.telegram_bot_token = partialData.telegram_bot_token;
     if (partialData.telegram_chat_id !== undefined) updatePayload.telegram_chat_id = String(partialData.telegram_chat_id);
+    if (Array.isArray(partialData.project_categories)) updatePayload.project_categories = partialData.project_categories;
+    if (Array.isArray(partialData.expense_categories)) updatePayload.expense_categories = partialData.expense_categories;
+    if (Array.isArray(partialData.deal_statuses)) updatePayload.deal_statuses = partialData.deal_statuses;
+    if (Array.isArray(partialData.transport_statuses)) updatePayload.transport_statuses = partialData.transport_statuses;
+    if (Array.isArray(partialData.payment_statuses)) updatePayload.payment_statuses = partialData.payment_statuses;
+
+    let localOnlyPaymentStatuses = false;
 
     if (Object.keys(updatePayload).length > 0) {
-      if (existing?.id) {
-        await client.from('shop_settings').update(updatePayload).eq('id', existing.id);
-      } else {
-        await client.from('shop_settings').insert([updatePayload]);
+      let writeRes = existing?.id
+        ? await client.from('shop_settings').update(updatePayload).eq('id', existing.id)
+        : await client.from('shop_settings').insert([updatePayload]);
+
+      if (writeRes?.error && updatePayload.payment_statuses !== undefined && isMissingPaymentStatusesColumnError(writeRes.error)) {
+        delete updatePayload.payment_statuses;
+        localOnlyPaymentStatuses = true;
+        if (Object.keys(updatePayload).length > 0) {
+          writeRes = existing?.id
+            ? await client.from('shop_settings').update(updatePayload).eq('id', existing.id)
+            : await client.from('shop_settings').insert([updatePayload]);
+          if (writeRes?.error) throw new Error(writeRes.error.message || 'ไม่สามารถบันทึกการตั้งค่าลงฐานข้อมูลได้');
+        } else {
+          writeRes = null;
+        }
+      }
+
+      if (writeRes?.error) {
+        throw new Error(writeRes.error.message || 'ไม่สามารถบันทึกการตั้งค่าลงฐานข้อมูลได้');
       }
     }
 
@@ -1143,7 +1211,11 @@ export async function saveSettingsToSupabase(partialData) {
       }
     }
 
-    return { success: true };
+    return {
+      success: true,
+      saved: true,
+      ...(localOnlyPaymentStatuses ? { localOnlyPaymentStatuses: true } : {})
+    };
   } catch (err) {
     console.error('Error saving settings to Supabase:', err);
     throw err;

@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Database, Loader2, Search, X } from 'lucide-react';
 import { db } from '../../services/db';
 import { getActiveClient } from '../../services/supabaseClient';
@@ -208,11 +209,13 @@ export default function DbCombobox({
   const listboxId = `${id || generatedId}-listbox`;
   const rootRef = useRef(null);
   const inputRef = useRef(null);
+  const dropdownRef = useRef(null);
 
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [dbItems, setDbItems] = useState([]);
   const [isLoadingRemote, setIsLoadingRemote] = useState(false);
+  const [dropdownStyle, setDropdownStyle] = useState(null);
 
   const tableCfg = dbTable ? TABLE_CONFIG[dbTable] || null : null;
   const stringValue = value === null || value === undefined ? '' : String(value);
@@ -355,28 +358,103 @@ export default function DbCombobox({
     return scored.slice(0, maxResults).map((s) => s.item);
   }, [mergedOptions, stringValue, maxResults]);
 
+  // Compute floating portal position synchronously so dropdown never flashes or flies in
+  const computeDropdownStyle = useCallback(() => {
+    if (!inputRef.current || typeof window === 'undefined') return null;
+    const rect = inputRef.current.getBoundingClientRect();
+    const viewportW = window.innerWidth || 1024;
+    const viewportH = window.innerHeight || 768;
+
+    // Anchor scrolled completely out of the viewport (real browser only)
+    if (rect.width > 0 && rect.height > 0 && (rect.bottom < 0 || rect.top > viewportH)) {
+      return { outOfView: true };
+    }
+
+    const width = Math.min(Math.max(rect.width, 200), Math.max(200, viewportW - 16));
+    const left = Math.min(Math.max(8, rect.left), Math.max(8, viewportW - width - 8));
+    const spaceBelow = viewportH - rect.bottom;
+    const spaceAbove = rect.top;
+    const openUpward = rect.height > 0 && spaceBelow < 220 && spaceAbove > spaceBelow;
+
+    if (openUpward) {
+      return {
+        position: 'fixed',
+        left,
+        bottom: viewportH - rect.top + 6,
+        width,
+        maxHeight: Math.min(240, Math.max(120, spaceAbove - 16)),
+        zIndex: 300
+      };
+    }
+
+    return {
+      position: 'fixed',
+      left,
+      top: rect.bottom + 6,
+      width,
+      maxHeight: Math.min(240, Math.max(120, spaceBelow - 16)),
+      zIndex: 300
+    };
+  }, []);
+
+  const openDropdown = useCallback(() => {
+    if (disabled) return;
+    const pos = computeDropdownStyle();
+    if (pos?.outOfView) return;
+    if (pos) setDropdownStyle(pos);
+    setIsOpen(true);
+  }, [disabled, computeDropdownStyle]);
+
+  const closeDropdown = useCallback(() => {
+    setIsOpen(false);
+    setActiveIndex(-1);
+    setDropdownStyle(null);
+  }, []);
+
+  const updateDropdownPosition = useCallback(() => {
+    const pos = computeDropdownStyle();
+    if (!pos) return;
+    if (pos.outOfView) {
+      closeDropdown();
+      return;
+    }
+    setDropdownStyle(pos);
+  }, [computeDropdownStyle, closeDropdown]);
+
+  useLayoutEffect(() => {
+    if (!isOpen || disabled) return undefined;
+    updateDropdownPosition();
+    if (typeof window === 'undefined') return undefined;
+    window.addEventListener('scroll', updateDropdownPosition, true);
+    window.addEventListener('resize', updateDropdownPosition);
+    return () => {
+      window.removeEventListener('scroll', updateDropdownPosition, true);
+      window.removeEventListener('resize', updateDropdownPosition);
+    };
+  }, [isOpen, disabled, updateDropdownPosition]);
+
   // Outside click listener
   useEffect(() => {
     if (!isOpen || typeof document === 'undefined') return undefined;
     const handlePointerDown = (e) => {
-      if (rootRef.current && !rootRef.current.contains(e.target)) {
-        setIsOpen(false);
-        setActiveIndex(-1);
+      const clickedInsideRoot = rootRef.current && rootRef.current.contains(e.target);
+      const clickedInsideDropdown = dropdownRef.current && dropdownRef.current.contains(e.target);
+      if (!clickedInsideRoot && !clickedInsideDropdown) {
+        closeDropdown();
       }
     };
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [isOpen]);
+  }, [isOpen, closeDropdown]);
 
   const commitOption = useCallback(
     (opt) => {
       if (!opt || disabled) return;
       onChange?.(opt.value);
       onSelectOption?.(opt);
-      setIsOpen(false);
-      setActiveIndex(-1);
+      closeDropdown();
     },
-    [disabled, onChange, onSelectOption]
+    [disabled, onChange, onSelectOption, closeDropdown]
   );
 
   const handleClear = (e) => {
@@ -386,7 +464,7 @@ export default function DbCombobox({
     onChange?.('');
     onSelectOption?.(null);
     setActiveIndex(-1);
-    setIsOpen(true);
+    openDropdown();
     inputRef.current?.focus();
   };
 
@@ -395,7 +473,7 @@ export default function DbCombobox({
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (!isOpen) {
-        setIsOpen(true);
+        openDropdown();
         setActiveIndex(0);
       } else {
         setActiveIndex((prev) => (filteredOptions.length ? (prev + 1) % filteredOptions.length : -1));
@@ -411,8 +489,7 @@ export default function DbCombobox({
     } else if (e.key === 'Escape' && isOpen) {
       e.preventDefault();
       e.stopPropagation();
-      setIsOpen(false);
-      setActiveIndex(-1);
+      closeDropdown();
     }
   };
 
@@ -447,15 +524,15 @@ export default function DbCombobox({
         placeholder={placeholder}
         autoComplete="off"
         onFocus={() => {
-          if (!disabled) setIsOpen(true);
+          openDropdown();
         }}
         onClick={() => {
-          if (!disabled) setIsOpen(true);
+          openDropdown();
         }}
         onChange={(e) => {
           if (disabled) return;
           onChange?.(e.target.value);
-          setIsOpen(true);
+          openDropdown();
           setActiveIndex(-1);
         }}
         onKeyDown={handleKeyDown}
@@ -480,11 +557,12 @@ export default function DbCombobox({
         disabled={disabled}
         onClick={() => {
           if (disabled) return;
-          setIsOpen((prev) => {
-            const next = !prev;
-            if (next) inputRef.current?.focus();
-            return next;
-          });
+          if (isOpen) {
+            closeDropdown();
+          } else {
+            openDropdown();
+            inputRef.current?.focus();
+          }
         }}
         aria-label="เปิดรายการตัวเลือก"
         className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-lg text-slate-400 hover:text-slate-700 disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer"
@@ -499,72 +577,93 @@ export default function DbCombobox({
         )}
       </button>
 
-      {isOpen && !disabled && (
-        <div
-          id={listboxId}
-          role="listbox"
-          className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200/90 rounded-2xl shadow-xl z-[80] overflow-hidden animate-in fade-in zoom-in-95 duration-100"
-        >
-          {dbTable && (
-            <div className="px-3 py-1.5 bg-slate-50/90 border-b border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-              <span className="inline-flex items-center gap-1.5 font-semibold">
-                <Database aria-hidden="true" className="w-3 h-3 text-indigo-500" />
-                <span>ค้นหาจากฐานข้อมูล ({filteredOptions.length})</span>
-              </span>
-              {isLoadingRemote && <span className="text-indigo-600 font-medium">กำลังค้นหา...</span>}
-            </div>
-          )}
+      {isOpen && !disabled && (() => {
+        const activeStyle = dropdownStyle || computeDropdownStyle();
+        if (!activeStyle || activeStyle.outOfView) return null;
 
-          <div className="max-h-56 overflow-y-auto overscroll-contain divide-y divide-slate-100/80">
-            {filteredOptions.length > 0 ? (
-              filteredOptions.map((opt, idx) => {
-                const isSelected = opt.value.toLowerCase() === stringValue.trim().toLowerCase();
-                const isHighlighted = idx === activeIndex;
-                return (
-                  <button
-                    key={`${opt.id}-${idx}`}
-                    type="button"
-                    role="option"
-                    aria-selected={isSelected}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => commitOption(opt)}
-                    onMouseEnter={() => setActiveIndex(idx)}
-                    className={`w-full px-3.5 py-2.5 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                      isHighlighted
-                        ? 'bg-indigo-50/90 text-indigo-950'
-                        : isSelected
-                          ? 'bg-slate-50 text-slate-900'
-                          : 'hover:bg-slate-50 text-slate-800'
-                    }`}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-sm font-semibold truncate">{opt.label}</span>
-                        {opt.badge && (
-                          <span className="px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] font-bold shrink-0">
-                            {opt.badge}
-                          </span>
-                        )}
-                      </div>
-                      {opt.sublabel && (
-                        <p className="text-[11px] text-slate-500 truncate mt-0.5">{opt.sublabel}</p>
-                      )}
-                    </div>
-                    {isSelected && (
-                      <Check aria-hidden="true" className="w-4 h-4 text-indigo-600 shrink-0" />
-                    )}
-                  </button>
-                );
-              })
-            ) : (
-              <div className="px-3.5 py-3 text-xs text-slate-500 flex items-center gap-2">
-                <Search aria-hidden="true" className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                <span>{emptyText}</span>
+        const listboxNode = (
+          <div
+            ref={dropdownRef}
+            id={listboxId}
+            role="listbox"
+            style={{
+              position: activeStyle.position,
+              left: activeStyle.left,
+              top: activeStyle.top,
+              bottom: activeStyle.bottom,
+              width: activeStyle.width,
+              zIndex: activeStyle.zIndex
+            }}
+            className="bg-white border border-slate-200/90 rounded-2xl shadow-xl overflow-hidden"
+          >
+            {dbTable && (
+              <div className="px-3 py-1.5 bg-slate-50/90 border-b border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                <span className="inline-flex items-center gap-1.5 font-semibold">
+                  <Database aria-hidden="true" className="w-3 h-3 text-indigo-500" />
+                  <span>ค้นหาจากฐานข้อมูล ({filteredOptions.length})</span>
+                </span>
+                {isLoadingRemote && <span className="text-indigo-600 font-medium">กำลังค้นหา...</span>}
               </div>
             )}
+
+            <div
+              style={activeStyle.maxHeight ? { maxHeight: activeStyle.maxHeight } : undefined}
+              className="max-h-56 overflow-y-auto overscroll-contain divide-y divide-slate-100/80"
+            >
+              {filteredOptions.length > 0 ? (
+                filteredOptions.map((opt, idx) => {
+                  const isSelected = opt.value.toLowerCase() === stringValue.trim().toLowerCase();
+                  const isHighlighted = idx === activeIndex;
+                  return (
+                    <button
+                      key={`${opt.id}-${idx}`}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => commitOption(opt)}
+                      onMouseEnter={() => setActiveIndex(idx)}
+                      className={`w-full px-3.5 py-2.5 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                        isHighlighted
+                          ? 'bg-indigo-50/90 text-indigo-950'
+                          : isSelected
+                            ? 'bg-slate-50 text-slate-900'
+                            : 'hover:bg-slate-50 text-slate-800'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-sm font-semibold truncate">{opt.label}</span>
+                          {opt.badge && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] font-bold shrink-0">
+                              {opt.badge}
+                            </span>
+                          )}
+                        </div>
+                        {opt.sublabel && (
+                          <p className="text-[11px] text-slate-500 truncate mt-0.5">{opt.sublabel}</p>
+                        )}
+                      </div>
+                      {isSelected && (
+                        <Check aria-hidden="true" className="w-4 h-4 text-indigo-600 shrink-0" />
+                      )}
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="px-3.5 py-3 text-xs text-slate-500 flex items-center gap-2">
+                  <Search aria-hidden="true" className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span>{emptyText}</span>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+
+        return typeof document !== 'undefined' && document.body
+          ? createPortal(listboxNode, document.body)
+          : listboxNode;
+      })()}
     </div>
   );
 }

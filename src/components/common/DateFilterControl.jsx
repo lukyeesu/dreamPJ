@@ -1,48 +1,53 @@
 import React from 'react';
-import { CalendarDays, ChevronDown } from 'lucide-react';
+import { CalendarDays } from 'lucide-react';
 import ModernDateTimePicker from './ModernDateTimePicker';
+import StatusDropdown from './StatusDropdown';
 
 export const DateFilterControl = ({ mode, setMode, date, setDate, range, setRange }) => {
+  const handleModeChange = (selectedMode) => {
+    setMode(selectedMode);
+
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+
+    if (selectedMode === 'date') {
+      setDate(`${yyyy}-${mm}-${dd}`);
+    } else if (selectedMode === 'month') {
+      setDate(`${yyyy}-${mm}`);
+    } else if (selectedMode === 'year') {
+      setDate(`${yyyy}`);
+    } else if (selectedMode === 'week') {
+      setDate(`${yyyy}-${mm}-${dd}`);
+    } else {
+      setDate('');
+    }
+    setRange({ start: '', end: '' });
+  };
+
+  const modeOptions = [
+    { value: 'all', label: mode === 'all' ? 'วันที่: ทั้งหมด' : 'ทั้งหมด' },
+    { value: 'date', label: 'วันที่' },
+    { value: 'week', label: 'รายสัปดาห์' },
+    { value: 'month', label: 'เดือน' },
+    { value: 'year', label: 'ปี' },
+    { value: 'range', label: 'ช่วงเวลา' },
+  ];
+
   return (
     <div className="flex bg-white border border-slate-200 rounded-xl sm:rounded-2xl overflow-hidden h-full shadow-xs hover:border-indigo-300 transition-colors w-full md:w-auto">
-      <div className={`relative ${mode === 'all' ? 'w-full' : 'w-[110px] sm:w-[125px] border-r border-slate-100'} bg-slate-50 shrink-0 h-full flex items-center`}>
-        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-          <CalendarDays className="w-4 h-4" />
-        </div>
-        <select
+      <div className={`${mode === 'all' ? 'w-full' : 'w-[115px] sm:w-[130px] border-r border-slate-100'} bg-slate-50 shrink-0 h-full flex items-center`}>
+        <StatusDropdown
           value={mode}
-          onChange={(e) => {
-            const selectedMode = e.target.value;
-            setMode(selectedMode);
-
-            const today = new Date();
-            const yyyy = today.getFullYear();
-            const mm = String(today.getMonth() + 1).padStart(2, '0');
-            const dd = String(today.getDate()).padStart(2, '0');
-
-            if (selectedMode === 'date') {
-              setDate(`${yyyy}-${mm}-${dd}`);
-            } else if (selectedMode === 'month') {
-              setDate(`${yyyy}-${mm}`);
-            } else if (selectedMode === 'year') {
-              setDate(`${yyyy}`);
-            } else if (selectedMode === 'week') {
-              setDate(`${yyyy}-${mm}-${dd}`);
-            } else {
-              setDate('');
-            }
-            setRange({ start: '', end: '' });
-          }}
-          className="w-full h-full pl-9 pr-6 bg-transparent outline-none text-slate-700 text-xs font-bold appearance-none cursor-pointer flex items-center"
-        >
-          <option value="all">{mode === 'all' ? 'วันที่: ทั้งหมด' : 'ทั้งหมด'}</option>
-          <option value="date">วันที่</option>
-          <option value="week">รายสัปดาห์</option>
-          <option value="month">เดือน</option>
-          <option value="year">ปี</option>
-          <option value="range">ช่วงเวลา</option>
-        </select>
-        <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          onChange={handleModeChange}
+          options={modeOptions}
+          placeholder="เลือกรูปแบบวันที่..."
+          size="sm"
+          showDot={false}
+          leftIcon={CalendarDays}
+          className="border-0 bg-transparent rounded-none h-full py-0 shadow-none hover:border-0"
+        />
       </div>
 
       {mode !== 'all' && (

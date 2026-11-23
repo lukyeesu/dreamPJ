@@ -34,7 +34,9 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { saveLocationSync } from './services/syncService';
 import Toast from './components/common/Toast';
+import StatusDropdown from './components/common/StatusDropdown';
 import { useStickyFilter } from './hooks/useStickyFilter';
+import { useModalCloseGuard } from './hooks/useModalCloseGuard';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { locationFormSchema } from './schemas/locationSchema';
@@ -409,7 +411,7 @@ function Locations({
     register,
     handleSubmit,
     reset,
-    formState: { errors }
+    formState: { errors, isDirty }
   } = useForm({
     resolver: zodResolver(locationFormSchema),
     defaultValues: {
@@ -438,16 +440,50 @@ function Locations({
     }
   }, [isCreateOpen]);
 
+  const {
+    requestClose: requestCloseCreateModal,
+    isConfirmOpen: isCreateCloseConfirmOpen,
+    closeConfirmDialog: createCloseConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen: isCreateModalOpen,
+    onClose: () => setIsCreateModalOpen(false),
+    shouldConfirm: !isVenueViewOnly,
+    dirty: isDirty,
+    listenEscape: false,
+  });
+
+  const {
+    requestClose: requestCloseHubModal,
+    isConfirmOpen: isHubCloseConfirmOpen,
+    closeConfirmDialog: hubCloseConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen: isEditHubModalOpen,
+    onClose: () => setIsEditHubModalOpen(false),
+    shouldConfirm: !isHubViewOnly,
+    watch: isEditHubModalOpen ? hubForm : null,
+    listenEscape: false,
+  });
+
   // Keyboard shortcut: close modal on Escape
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && isCreateModalOpen) {
-        setIsCreateModalOpen(false);
+      if (e.key === 'Escape') {
+        if (e.defaultPrevented) return;
+        if (isCreateCloseConfirmOpen || isHubCloseConfirmOpen) return;
+        if (isEditHubModalOpen) requestCloseHubModal();
+        else if (isCreateModalOpen) requestCloseCreateModal();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isCreateModalOpen]);
+  }, [
+    isCreateModalOpen,
+    isEditHubModalOpen,
+    isCreateCloseConfirmOpen,
+    isHubCloseConfirmOpen,
+    requestCloseCreateModal,
+    requestCloseHubModal,
+  ]);
 
   // Extract unique zones
   const zones = useMemo(() => {
@@ -1097,18 +1133,20 @@ function Locations({
           setSelectedZone('all');
         }}
       >
-        <div className="relative w-full sm:w-72">
-          <select
+        <div className="w-full sm:w-72">
+          <StatusDropdown
             value={selectedZone}
-            onChange={(e) => setSelectedZone(e.target.value)}
-            className="w-full h-10 pl-3.5 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 appearance-none cursor-pointer"
-          >
-            <option value="all">ทุกโซนพื้นที่ ({venues.length})</option>
-            {zones.map((z) => (
-              <option key={z} value={z}>{z}</option>
-            ))}
-          </select>
-          <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            onChange={setSelectedZone}
+            options={[
+              { value: 'all', label: `ทุกโซนพื้นที่ (${venues.length})` },
+              ...zones.map((z) => ({ value: z, label: z })),
+            ]}
+            placeholder="ทุกโซนพื้นที่"
+            size="sm"
+            showDot={false}
+            className="bg-slate-50 border-slate-200 hover:border-slate-300 text-slate-700"
+            ariaLabel="เลือกโซนพื้นที่"
+          />
         </div>
       </HeaderFilterPortal>
 
@@ -1402,12 +1440,12 @@ function Locations({
       </div>
 
       {/* Create / Edit Venue Modal */}
+      {createCloseConfirmDialog}
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
           {/* Backdrop */}
           <div
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
-            onClick={() => setIsCreateModalOpen(false)}
           />
 
           <div
@@ -1438,7 +1476,7 @@ function Locations({
               </div>
               <button
                 type="button"
-                onClick={() => setIsCreateModalOpen(false)}
+                onClick={requestCloseCreateModal}
                 className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors active:scale-95 cursor-pointer"
               >
                 <X className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -1545,15 +1583,16 @@ function Locations({
               <div className="px-5 py-4 sm:px-8 sm:py-5 border-t border-slate-100 bg-white/95 backdrop-blur-xl sticky bottom-0 z-30 flex items-center justify-between gap-3 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setIsCreateModalOpen(false)}
+                  onClick={requestCloseCreateModal}
                   className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
                   {isVenueViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
                 {isVenueViewOnly ? (
                   <button
+                    key="unlock-edit-btn"
                     type="button"
-                    onClick={() => setIsVenueViewOnly(false)}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsVenueViewOnly(false); }}
                     className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
                   >
                     <Edit className="w-4 h-4" />
@@ -1561,6 +1600,7 @@ function Locations({
                   </button>
                 ) : (
                   <button
+                    key="submit-save-btn"
                     type="submit"
                     disabled={isSaving}
                     className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
@@ -1580,11 +1620,11 @@ function Locations({
       )}
 
       {/* Edit Hub Location Modal (จุดเริ่มต้นขนส่ง / โกดัง) */}
+      {hubCloseConfirmDialog}
       {isEditHubModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
           <div
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
-            onClick={() => setIsEditHubModalOpen(false)}
           />
 
           <div
@@ -1608,7 +1648,7 @@ function Locations({
               </div>
               <button
                 type="button"
-                onClick={() => setIsEditHubModalOpen(false)}
+                onClick={requestCloseHubModal}
                 className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -1731,15 +1771,16 @@ function Locations({
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsEditHubModalOpen(false)}
+                    onClick={requestCloseHubModal}
                     className="py-2.5 px-5 rounded-xl text-slate-600 bg-slate-100 hover:bg-slate-200 font-bold text-xs transition cursor-pointer"
                   >
                     {isHubViewOnly ? 'ปิด' : 'ยกเลิก'}
                   </button>
                   {isHubViewOnly ? (
                     <button
+                      key="unlock-edit-btn"
                       type="button"
-                      onClick={() => setIsHubViewOnly(false)}
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsHubViewOnly(false); }}
                       className="py-2.5 px-6 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
                     >
                       <Edit className="w-4 h-4" />
@@ -1747,6 +1788,7 @@ function Locations({
                     </button>
                   ) : (
                     <button
+                      key="submit-save-btn"
                       type="submit"
                       className="py-2.5 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"
                     >

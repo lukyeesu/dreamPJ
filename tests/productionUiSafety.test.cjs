@@ -401,11 +401,21 @@ test('Plan C — Production UI Safety & Contract Verification Suite', async (sui
     assert.equal(loadedProjectId, 'P-1001', 'Initial project must be loaded');
 
     // Switch project
-    const select = document.body.querySelector('select[aria-label="เลือกโปรเจกต์"]');
-    assert.ok(select, 'Project selector select element must exist');
+    const selectTrigger = document.body.querySelector('button[aria-label="เลือกโปรเจกต์"]');
+    assert.ok(selectTrigger, 'Project selector dropdown trigger must exist');
 
     await act(async () => {
-      fireEvent.change(select, { target: { value: 'P-1002' } });
+      fireEvent.click(selectTrigger);
+      await flushPromises();
+    });
+
+    const p1002Option = Array.from(document.body.querySelectorAll('[role="option"]')).find((el) =>
+      el.textContent.includes('P-1002')
+    );
+    assert.ok(p1002Option, 'P-1002 option must appear in project dropdown');
+
+    await act(async () => {
+      fireEvent.click(p1002Option);
       await flushPromises();
     });
 
@@ -847,7 +857,8 @@ test('Plan C — Production UI Safety & Contract Verification Suite', async (sui
     });
 
     // Select a person in modal
-    const pickerTrigger = document.body.querySelector('#person-picker') || document.body.querySelector('button[aria-haspopup="listbox"]');
+    const modalForm = titleInput.closest('form') || document.body;
+    const pickerTrigger = modalForm.querySelector('#person-picker') || modalForm.querySelector('button[aria-haspopup="listbox"]');
     assert.ok(pickerTrigger);
     await act(async () => {
       fireEvent.click(pickerTrigger);
@@ -1083,11 +1094,21 @@ test('Plan C — Production UI Safety & Contract Verification Suite', async (sui
     });
 
     // Switch to P-FAST
-    const select = document.body.querySelector('select[aria-label="เลือกโปรเจกต์"]');
-    assert.ok(select);
+    const selectTrigger = document.body.querySelector('button[aria-label="เลือกโปรเจกต์"]');
+    assert.ok(selectTrigger);
 
     await act(async () => {
-      fireEvent.change(select, { target: { value: 'P-FAST' } });
+      fireEvent.click(selectTrigger);
+      await flushPromises();
+    });
+
+    const fastOption = Array.from(document.body.querySelectorAll('[role="option"]')).find((el) =>
+      el.textContent.includes('P-FAST')
+    );
+    assert.ok(fastOption, 'P-FAST option must appear in project dropdown');
+
+    await act(async () => {
+      fireEvent.click(fastOption);
       await flushPromises();
     });
 

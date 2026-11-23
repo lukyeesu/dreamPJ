@@ -8,6 +8,7 @@ ADD COLUMN IF NOT EXISTS project_categories JSONB DEFAULT '[]'::jsonb,
 ADD COLUMN IF NOT EXISTS expense_categories JSONB DEFAULT '[]'::jsonb,
 ADD COLUMN IF NOT EXISTS deal_statuses JSONB DEFAULT '[]'::jsonb,
 ADD COLUMN IF NOT EXISTS transport_statuses JSONB DEFAULT '[]'::jsonb,
+ADD COLUMN IF NOT EXISTS payment_statuses JSONB DEFAULT '[]'::jsonb,
 ADD COLUMN IF NOT EXISTS drive_folders JSONB DEFAULT '[]'::jsonb;
 
 ALTER TABLE public.staff_users 

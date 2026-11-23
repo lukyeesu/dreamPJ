@@ -73,16 +73,15 @@
 
 ---
 
-### 13. Multi-Agent Orchestration Policy (Carbon Lead + Carbon/Hydrogen Subagents)
-- **บทบาทหัวหน้างาน (Lead Orchestrator — Carbon Medium/High)**:
-  - วิเคราะห์โจทย์ แตกงานเป็นส่วนย่อยที่ไม่แก้ไขไฟล์ชนกัน กระจายงานให้ Subagents รันพร้อมกันแบบขนาน (`invoke_subagent` หรือ `run_workflow` `parallel(...)`) แล้วทำหน้าที่ตรวจทานโค้ด (`git diff`), รันชุดทดสอบ (`npm test`, `npm run build`), และตรวจสอบหน้าจอจริงก่อนส่งมอบทุกครั้ง
-- **เกณฑ์การเลือกโมเดลลูกทีม (Subagent Model Routing)**:
-  1. **งานตรรกะซับซ้อน / โค้ดละเอียดสูง ➔ ใช้ `Carbon` (`Model: "pro"` หรือ `"inherit"` หรือ CLI `agy --model "Gemini 4 Carbon (Medium|High)" -p ...`)**:
-     - ระบบฐานข้อมูล, SQL/RPC, การคำนวณเงิน/ภาษี/สต๊อก, Security/RBAC, แก้บั๊กยาก/Race Condition, และสถาปัตยกรรมหลัก
-  2. **งานปรับแต่ง UX/UI หรือแก้โครงสร้างเล็กน้อย ➔ ใช้ `Hydrogen` (`Model: "flash"` หรือ CLI `agy --model "Gemini 4 Hydrogen (Medium|High)" -p ...`)**:
-     - จัดหน้าตา UI, Tailwind CSS, Responsive Layout, ปรับปุ่ม/ข้อความ/ไอคอน, แยก Component ย่อย เพื่อความเร็วสูงสุดในการเขียนโค้ดขนานกัน
-  3. **การประเมินระดับความลึก (`Medium` vs `High`)**:
-     - หัวหน้างานประเมินความซับซ้อนของแต่ละงานย่อย หากเป็นงานทั่วไปที่ขอบเขตชัดเจนให้ใช้ระดับ `Medium` แต่หากมีเงื่อนไขซ้อนหลายจุดหรือกระทบหลายโมดูลให้ยกระดับเป็น `High` (หรือส่งผ่าน CLI `agy --model "Gemini 4 <Carbon|Hydrogen> (<Medium|High>)" -p "..."` เมื่อต้องการล็อกระดับความลึกแบบเจาะจง)
+### 13. Multi-Agent Orchestration Policy (Gemini 4 Only — No Gemini 3)
+- **ห้ามใช้ Gemini 3 เด็ดขาด**:
+  - ใน `invoke_subagent` ห้ามส่ง `Model: "flash"` (ซึ่งแมปไป Gemini 3.8 Flash) หรือ `Model: "pro"` (ซึ่งแมปไป Gemini 3.1 Pro) หรือ `Model: "flash_lite"` เป็นอันขาด เพราะ Gemini 3 เปลือง Token และมักแก้เกินคำสั่ง
+  - **ต้องใช้ `Model: "inherit"` เสมอ** เพื่อให้ Subagent ทุกตัวรันบน **Gemini 4** เหมือนตัวหลัก (หรือระบุ `--model "Gemini 4 Carbon (High)"` / `"Gemini 4 Carbon (Medium)"` / `"Gemini 4 Hydrogen (Medium)"` เฉพาะตอนเรียกผ่าน CLI `agy`)
+- **บทบาทหัวหน้างาน (Lead Orchestrator — Gemini 4 Carbon)**:
+  - วิเคราะห์โจทย์ แตกงานเป็นส่วนย่อยที่ไม่แก้ไขไฟล์ชนกัน กระจายงานให้ Subagents รันพร้อมกันแบบขนาน (`invoke_subagent` ด้วย `Model: "inherit"`) แล้วทำหน้าที่ตรวจทานโค้ด (`git diff`), รันชุดทดสอบ (`npm test`, `npm run build`), และตรวจสอบหน้าจอจริงก่อนส่งมอบทุกครั้ง
+- **การเลือกระดับความลึกเมื่อเรียกผ่าน CLI (`Medium` vs `High`)**:
+  - งานตรวจหาบั๊ก / ฐานข้อมูล / การคำนวณเงิน / Race Condition / งานกระทบหลายโมดูล ➔ `Gemini 4 Carbon (High)` หรือ `Model: "inherit"`
+  - งานย่อยที่ขอบเขตชัดเจน ➔ `Gemini 4 Carbon (Medium)` หรือ `Model: "inherit"`
 
 
 

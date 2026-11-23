@@ -33,6 +33,7 @@ import {
   calculateDenominationTotalValue
 } from '../../utils/warehouse.js';
 import Toast from '../common/Toast.jsx';
+import StatusDropdown from '../common/StatusDropdown.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import PersonPicker from './PersonPicker.jsx';
 import { useWarehouseCommandKey } from '../../hooks/useWarehouseCommandKey.js';
@@ -1519,20 +1520,21 @@ export default function CashVaultView({
               <label className="block text-sm font-bold text-slate-700 mb-1">
                 โปรเจกต์งาน: <span className="text-rose-600">*</span>
               </label>
-              <select
+              <StatusDropdown
                 value={reserveProjectId}
-                onChange={(e) => setReserveProjectId(e.target.value)}
-                required
+                onChange={(val) => setReserveProjectId(val)}
                 disabled={isSubmitting}
-                className="w-full min-h-[44px] px-3 bg-white border border-slate-200 rounded-xl text-sm sm:text-sm text-slate-800 outline-hidden focus:border-[var(--theme-main,#8b5cf6)]"
-              >
-                <option value="">-- เลือกโปรเจกต์งาน --</option>
-                {activities.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name || a.title || a.id}
-                  </option>
-                ))}
-              </select>
+                placeholder="-- เลือกโปรเจกต์งาน --"
+                showDot={false}
+                options={[
+                  { value: '', label: '-- เลือกโปรเจกต์งาน --' },
+                  ...activities.map((a) => ({
+                    value: a.id,
+                    label: a.name || a.title || a.id
+                  }))
+                ]}
+                className="w-full"
+              />
             </div>
 
             <div>
@@ -1624,20 +1626,21 @@ export default function CashVaultView({
               <label className="block text-sm font-bold text-slate-700 mb-1">
                 โปรเจกต์งาน: <span className="text-rose-600">*</span>
               </label>
-              <select
+              <StatusDropdown
                 value={releaseProjectId}
-                onChange={(e) => setReleaseProjectId(e.target.value)}
-                required
+                onChange={(val) => setReleaseProjectId(val)}
                 disabled={isSubmitting}
-                className="w-full min-h-[44px] px-3 bg-white border border-slate-200 rounded-xl text-sm sm:text-sm text-slate-800 outline-hidden focus:border-[var(--theme-main,#8b5cf6)]"
-              >
-                <option value="">-- เลือกโปรเจกต์งาน --</option>
-                {activities.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name || a.title || a.id}
-                  </option>
-                ))}
-              </select>
+                placeholder="-- เลือกโปรเจกต์งาน --"
+                showDot={false}
+                options={[
+                  { value: '', label: '-- เลือกโปรเจกต์งาน --' },
+                  ...activities.map((a) => ({
+                    value: a.id,
+                    label: a.name || a.title || a.id
+                  }))
+                ]}
+                className="w-full"
+              />
             </div>
 
             <div>
@@ -1798,20 +1801,21 @@ export default function CashVaultView({
               <label className="block text-sm font-bold text-slate-700 mb-1">
                 โปรเจกต์งาน: <span className="text-rose-600">*</span>
               </label>
-              <select
+              <StatusDropdown
                 value={batchProjectId}
-                onChange={(e) => setBatchProjectId(e.target.value)}
-                required
+                onChange={(val) => setBatchProjectId(val)}
                 disabled={isSubmitting}
-                className="w-full min-h-[44px] px-3 bg-white border border-slate-200 rounded-xl text-sm sm:text-sm text-slate-800 outline-hidden focus:border-[var(--theme-main,#8b5cf6)]"
-              >
-                <option value="">-- เลือกโปรเจกต์งาน --</option>
-                {activities.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name || a.title || a.id}
-                  </option>
-                ))}
-              </select>
+                placeholder="-- เลือกโปรเจกต์งาน --"
+                showDot={false}
+                options={[
+                  { value: '', label: '-- เลือกโปรเจกต์งาน --' },
+                  ...activities.map((a) => ({
+                    value: a.id,
+                    label: a.name || a.title || a.id
+                  }))
+                ]}
+                className="w-full"
+              />
             </div>
 
             <div>
@@ -2172,20 +2176,21 @@ export default function CashVaultView({
               <label className="block text-sm font-bold text-slate-700 mb-1">
                 โปรเจกต์งานที่ส่งมอบ: <span className="text-rose-600">*</span>
               </label>
-              <select
+              <StatusDropdown
                 value={deliverProjectId}
-                onChange={(e) => setDeliverProjectId(e.target.value)}
+                onChange={(val) => setDeliverProjectId(val)}
                 disabled={isSubmitting}
-                className="w-full min-h-[44px] px-3 bg-white border border-slate-200 rounded-xl text-sm sm:text-sm outline-hidden focus:border-[var(--theme-main,#8b5cf6)]"
-                required
-              >
-                <option value="">-- เลือกโปรเจกต์ --</option>
-                {activities.map((act) => (
-                  <option key={act.id} value={act.id}>
-                    {act.id} {act.name || act.title ? `— ${act.name || act.title}` : ''}
-                  </option>
-                ))}
-              </select>
+                placeholder="-- เลือกโปรเจกต์ --"
+                showDot={false}
+                options={[
+                  { value: '', label: '-- เลือกโปรเจกต์ --' },
+                  ...activities.map((act) => ({
+                    value: act.id,
+                    label: `${act.id}${act.name || act.title ? ` — ${act.name || act.title}` : ''}`
+                  }))
+                ]}
+                className="w-full"
+              />
             </div>
 
             <div>

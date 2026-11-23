@@ -33,6 +33,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import * as productionService from '../../services/productionService.js';
+import StatusDropdown from '../common/StatusDropdown.jsx';
 import { useWarehouseCommandKey } from '../../hooks/useWarehouseCommandKey.js';
 import PersonPicker from './PersonPicker.jsx';
 import ModernDateTimePicker from '../common/ModernDateTimePicker.jsx';
@@ -788,28 +789,29 @@ export default function ProductionHubView({
 
           <div className="flex flex-wrap items-center gap-2">
             {/* Project Selector */}
-            <select
-              aria-label="เลือกโปรเจกต์"
+            <StatusDropdown
+              ariaLabel="เลือกโปรเจกต์"
               value={selectedProjectId}
-              onChange={(e) => {
-                setSelectedProjectId(e.target.value);
+              onChange={(val) => {
+                setSelectedProjectId(val);
                 setPageOffset(0);
                 setBoardData(null); // Clear old board on project change
               }}
-              className="text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-bold min-h-[44px] outline-hidden focus:border-[var(--theme-main,#8b5cf6)] cursor-pointer"
-            >
-              {activities.length > 0 ? (
-                activities.map((act) => (
-                  <option key={act.id} value={act.id}>
-                    {act.id} {act.name || act.title ? `— ${act.name || act.title}` : ''}
-                  </option>
-                ))
-              ) : selectedProjectId ? (
-                <option value={selectedProjectId}>{selectedProjectId}</option>
-              ) : (
-                <option value="">-- เลือกโปรเจกต์ --</option>
-              )}
-            </select>
+              placeholder="-- เลือกโปรเจกต์ --"
+              showDot={false}
+              size="sm"
+              options={
+                activities.length > 0
+                  ? activities.map((act) => ({
+                      value: act.id,
+                      label: `${act.id}${act.name || act.title ? ` — ${act.name || act.title}` : ''}`
+                    }))
+                  : selectedProjectId
+                  ? [{ value: selectedProjectId, label: selectedProjectId }]
+                  : [{ value: '', label: '-- เลือกโปรเจกต์ --' }]
+              }
+              className="w-56 sm:w-64"
+            />
 
             <button
               type="button"

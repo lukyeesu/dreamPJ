@@ -55,7 +55,9 @@ import {
 import Toast from './components/common/Toast';
 import ConfirmDialog from './components/common/ConfirmDialog';
 import ModernDateTimePicker from './components/common/ModernDateTimePicker';
-import { saveStaffSync, broadcastPermissionsUpdated } from './services/syncService';
+import StatusDropdown from './components/common/StatusDropdown';
+import { useModalCloseGuard } from './hooks/useModalCloseGuard';
+import { saveStaffSync, broadcastPermissionsUpdated, extractGoogleDriveFolderId } from './services/syncService';
 import { getActiveClient } from './services/supabaseClient';
 import db from './services/db';
 import { applyThemeVariables, broadcastShopInfoSync } from './utils/themeManager';
@@ -229,6 +231,16 @@ const SETTINGS_CATEGORIES = [
   { id: 'integrations', label: 'การเชื่อมต่อ & บอท', icon: Bot, desc: 'Google Drive, LINE Bot, Telegram' },
   { id: 'options', label: 'ตัวเลือกระบบ', icon: Sliders, desc: 'หมวดหมู่งาน หมวดหมู่ค่าใช้จ่าย และสถานะงาน' },
   { id: 'database', label: 'ฐานข้อมูล & ซิงค์', icon: Database, desc: 'สถานะ Supabase แคชในเครื่อง และการสำรอง' }
+];
+
+const DRIVE_FOLDER_TYPES = [
+  { value: 'reference', label: 'รูปภาพอ้างอิง / รูปงาน' },
+  { value: 'slips', label: 'สลิปโอนเงินลูกค้า' },
+  { value: 'inventory', label: 'รูปสินค้าในคลัง' },
+  { value: 'profiles', label: 'รูปโปรไฟล์พนักงาน' },
+  { value: 'artists', label: 'รูปโปรไฟล์ศิลปิน' },
+  { value: 'assets', label: 'โลโก้ร้าน / ไฟล์ตกแต่ง (Assets)' },
+  { value: 'custom', label: 'อื่นๆ (ยังไม่ผูกช่องทางอัปโหลด)' }
 ];
 
 const ListManager = ({ title, items = [], onAdd, onDelete, placeholder, icon: Icon, onSave }) => {
@@ -415,21 +427,15 @@ const SortableListManager = ({
         />
         
         <div className="flex flex-col sm:flex-row gap-2">
-          <div className="relative flex-1 min-w-[140px]">
-            <select
+          <div className="flex-1 min-w-[140px]">
+            <StatusDropdown
               value={selectedColor}
-              onChange={(e) => setSelectedColor(e.target.value)}
-              className="w-full pl-8 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400 transition-all cursor-pointer"
-            >
-              {colorPresets.map(preset => (
-                <option key={preset.name} value={preset.value}>
-                  {preset.name}
-                </option>
-              ))}
-            </select>
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
-              <span className={`w-3 h-3 rounded-full block ${colorPresets.find(p => p.value === selectedColor)?.dot || 'bg-slate-400'}`} />
-            </div>
+              onChange={setSelectedColor}
+              options={colorPresets.map(p => ({ value: p.value, label: p.name, color: p.value, dotColor: p.dot }))}
+              showDot={true}
+              size="sm"
+              ariaLabel="เลือกชุดสี"
+            />
           </div>
 
           <div className="flex gap-2">
@@ -562,6 +568,8 @@ function Settings({
   setDealStatuses,
   transportStatuses = [],
   setTransportStatuses,
+  paymentStatuses = [],
+  setPaymentStatuses,
   handleLogout,
   processImageUrl = (url) => url,
   defaultCategory = 'permissions',
@@ -697,6 +705,16 @@ function Settings({
     can_delete_project: false,
     can_borrow_tools: true,
     can_manage_users: false
+  });
+  const {
+    requestClose: requestCloseAddRoleModal,
+    closeConfirmDialog: addRoleCloseConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen: isAddRoleModalOpen,
+    onClose: () => setIsAddRoleModalOpen(false),
+    shouldConfirm: true,
+    watch: isAddRoleModalOpen ? newRoleForm : null,
+    listenEscape: true,
   });
   const [deleteRoleConfirm, setDeleteRoleConfirm] = useState({ isOpen: false, roleKey: null, roleLabel: '' });
 
@@ -1201,11 +1219,11 @@ function Settings({
               </div>
 
               {/* Modal: Add New Role */}
+              {addRoleCloseConfirmDialog}
               {isAddRoleModalOpen && (
                 <div className="fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-4">
                   <div
                     className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
-                    onClick={() => setIsAddRoleModalOpen(false)}
                   />
                   <div className="bg-white w-full max-w-lg rounded-2xl sm:rounded-[2rem] shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[90vh] relative z-10 modal-animate-in">
                     <div className="px-5 py-4 border-b border-slate-100 bg-white sticky top-0 z-20 flex items-center justify-between">
@@ -1220,7 +1238,7 @@ function Settings({
                       </div>
                       <button
                         type="button"
-                        onClick={() => setIsAddRoleModalOpen(false)}
+                        onClick={requestCloseAddRoleModal}
                         className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
                       >
                         <X className="w-5 h-5" />
@@ -1372,7 +1390,7 @@ function Settings({
                       <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50/50 flex items-center justify-end gap-2.5">
                         <button
                           type="button"
-                          onClick={() => setIsAddRoleModalOpen(false)}
+                          onClick={requestCloseAddRoleModal}
                           className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200 transition cursor-pointer"
                         >
                           ยกเลิก
@@ -1797,7 +1815,7 @@ function Settings({
                     type="button"
                     onClick={() => {
                       const newFolder = { id: `folder_${Date.now()}`, name: 'โฟลเดอร์ใหม่', type: 'custom', folderId: '' };
-                      setDriveFolders([...driveFolders, newFolder]);
+                      setDriveFolders([...displayedDriveFolders, newFolder]);
                     }}
                     className="px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-xl text-xs font-bold border border-blue-100 transition flex items-center gap-1 cursor-pointer"
                   >
@@ -1807,12 +1825,12 @@ function Settings({
                 </div>
 
                 <p className="text-xs text-slate-500">
-                  ระบุ Folder ID สำหรับไฟล์แต่ละประเภท รูปสินค้าในคลังใช้โฟลเดอร์เฉพาะได้ หากเว้นว่างจะใช้โฟลเดอร์ Assets เดิม
+                  เลือกประเภทไฟล์และวางลิงก์หรือ Folder ID สำหรับแต่ละช่องทาง (หากไม่ได้แยกโฟลเดอร์สำหรับรูปสินค้า โปรไฟล์พนักงาน หรือศิลปิน ระบบจะใช้โฟลเดอร์ Assets แทนให้อัตโนมัติ)
                 </p>
 
                 <div className="space-y-3">
                   {displayedDriveFolders.map((f, idx) => (
-                    <div key={f.id || idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div key={f.id || idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
                         <Folder className="w-4 h-4 text-amber-500 shrink-0" />
                         <input
@@ -1828,30 +1846,61 @@ function Settings({
                         />
                       </div>
 
-                      <div className="flex items-center gap-2 w-full sm:w-auto">
-                        <input
-                          type="text"
-                          value={f.folderId || ''}
-                          onChange={(e) => {
-                            const updated = [...displayedDriveFolders];
-                            updated[idx] = {...f, folderId: e.target.value.trim()};
-                            setDriveFolders(updated);
-                          }}
-                          placeholder="Drive Folder ID"
-                          className="flex-1 min-w-0 min-h-[44px] sm:w-56 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-1 focus:ring-[var(--theme-main)]"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const updated = displayedDriveFolders.filter((_, i) => i !== idx);
-                            setDriveFolders(updated);
-                          }}
-                          disabled={f.type === 'inventory'}
-                          aria-label={`ลบโฟลเดอร์ ${f.name}`}
-                          className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-50 transition cursor-pointer disabled:opacity-30"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto">
+                        <div className="w-full sm:w-52">
+                          <StatusDropdown
+                            ariaLabel={`ประเภทไฟล์ของโฟลเดอร์ ${f.name || idx + 1}`}
+                            value={f.type || 'custom'}
+                            onChange={(nextType) => {
+                              const matchedOpt = DRIVE_FOLDER_TYPES.find(opt => opt.value === nextType);
+                              const shouldAutoName = !f.name?.trim() || f.name.trim() === 'โฟลเดอร์ใหม่';
+                              const updated = [...displayedDriveFolders];
+                              updated[idx] = {
+                                ...f,
+                                type: nextType,
+                                name: shouldAutoName && matchedOpt && nextType !== 'custom' ? matchedOpt.label : f.name
+                              };
+                              setDriveFolders(updated);
+                            }}
+                            options={DRIVE_FOLDER_TYPES}
+                            showDot={false}
+                            size="sm"
+                          />
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-1 sm:flex-initial">
+                          <input
+                            type="text"
+                            value={f.folderId || ''}
+                            onChange={(e) => {
+                              const updated = [...displayedDriveFolders];
+                              updated[idx] = {...f, folderId: e.target.value.trim()};
+                              setDriveFolders(updated);
+                            }}
+                            onBlur={(e) => {
+                              const normalized = extractGoogleDriveFolderId(e.target.value);
+                              if (normalized !== (f.folderId || '')) {
+                                const updated = [...displayedDriveFolders];
+                                updated[idx] = {...f, folderId: normalized};
+                                setDriveFolders(updated);
+                              }
+                            }}
+                            placeholder="วางลิงก์ Google Drive หรือ Folder ID"
+                            className="flex-1 min-w-0 min-h-[44px] sm:w-56 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-1 focus:ring-[var(--theme-main)]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = displayedDriveFolders.filter((_, i) => i !== idx);
+                              setDriveFolders(updated);
+                            }}
+                            disabled={f.type === 'inventory' && displayedDriveFolders.filter(item => item.type === 'inventory').length === 1}
+                            aria-label={`ลบโฟลเดอร์ ${f.name}`}
+                            className="p-2 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-rose-50 transition cursor-pointer disabled:opacity-30 shrink-0"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1860,7 +1909,14 @@ function Settings({
                 <div className="flex justify-end pt-2">
                   <button
                     type="button"
-                    onClick={() => saveSystemSettings('drive_folders', displayedDriveFolders)}
+                    onClick={() => {
+                      const normalizedFolders = displayedDriveFolders.map(folder => ({
+                        ...folder,
+                        folderId: extractGoogleDriveFolderId(folder?.folderId)
+                      }));
+                      setDriveFolders(normalizedFolders);
+                      saveSystemSettings('drive_folders', normalizedFolders);
+                    }}
                     disabled={isSaving}
                     className="px-5 py-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-violet-200/50 transition flex items-center gap-2 cursor-pointer"
                   >
@@ -1990,6 +2046,16 @@ function Settings({
                   icon={Truck}
                   onSave={(newItems) => saveSystemSettings('transport_statuses', newItems)}
                   type="transport"
+                />
+
+                <SortableListManager
+                  title="สถานะการชำระเงิน (Payment Status)"
+                  items={paymentStatuses}
+                  onUpdate={setPaymentStatuses}
+                  placeholder="เพิ่มสถานะการชำระเงิน..."
+                  icon={CreditCard}
+                  onSave={(newItems) => saveSystemSettings('payment_statuses', newItems)}
+                  type="payment"
                 />
               </div>
             </div>

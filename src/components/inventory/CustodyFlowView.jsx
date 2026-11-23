@@ -25,6 +25,7 @@ import {
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import ModernDateTimePicker from '../common/ModernDateTimePicker.jsx';
 import Toast from '../common/Toast.jsx';
+import StatusDropdown from '../common/StatusDropdown.jsx';
 import PersonPicker from './PersonPicker.jsx';
 import { useWarehouseCommandKey } from '../../hooks/useWarehouseCommandKey.js';
 
@@ -726,25 +727,27 @@ export default function CustodyFlowView({
               <label className="block text-sm font-bold text-slate-700 mb-1">
                 รายการเบิกต้นทาง (เลือกเพื่อคำนวณยอดคืนสะสม):
               </label>
-              <select
+              <StatusDropdown
                 value={selectedIssueLineId}
-                onChange={(e) => {
-                  setSelectedIssueLineId(e.target.value);
-                  const line = sourceIssueLines.find(l => String(l.id) === e.target.value);
+                onChange={(val) => {
+                  setSelectedIssueLineId(val);
+                  const line = sourceIssueLines.find((l) => String(l.id) === String(val));
                   if (line) {
                     setMaterialQty(line.remaining_qty || 1);
                     setDirectGoodQty(line.remaining_qty || 1);
                   }
                 }}
-                className="w-full min-h-[44px] px-3 bg-white border border-slate-200 rounded-xl text-sm sm:text-sm text-slate-800 outline-hidden focus:border-[var(--theme-main,#8b5cf6)]"
-              >
-                <option value="">-- เลือกรายการเบิกต้นทาง --</option>
-                {sourceIssueLines.map((line) => (
-                  <option key={line.id} value={line.id}>
-                    {line.item_name} {line.color ? `(สี${line.color})` : ''} - เบิกไป {line.issued_qty} (คงเหลือคืนได้ {line.remaining_qty || line.issued_qty} {line.unit})
-                  </option>
-                ))}
-              </select>
+                placeholder="-- เลือกรายการเบิกต้นทาง --"
+                showDot={false}
+                options={[
+                  { value: '', label: '-- เลือกรายการเบิกต้นทาง --' },
+                  ...sourceIssueLines.map((line) => ({
+                    value: line.id,
+                    label: `${line.item_name}${line.color ? ` (สี${line.color})` : ''} - เบิกไป ${line.issued_qty} (คงเหลือคืนได้ ${line.remaining_qty || line.issued_qty} ${line.unit})`
+                  }))
+                ]}
+                className="w-full"
+              />
             </div>
 
             {selectedIssueLine && (

@@ -23,9 +23,11 @@ import {
 } from 'lucide-react';
 import { saveCustomerSync } from './services/syncService';
 import Toast from './components/common/Toast';
+import StatusDropdown from './components/common/StatusDropdown';
 import HeaderFilterPortal from './components/common/HeaderFilterPortal';
 import { useStickyFilter } from './hooks/useStickyFilter';
-import { useForm } from 'react-hook-form';
+import { useModalCloseGuard } from './hooks/useModalCloseGuard';
+import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { customerFormSchema } from './schemas/customerSchema';
 
@@ -44,6 +46,7 @@ function Customers({
   const [selectedTier, setSelectedTier] = useState('all');
   const [sortBy, setSortBy] = useState('spend'); // 'spend' | 'orders' | 'name'
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isViewOnly, setIsViewOnly] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -58,7 +61,8 @@ function Customers({
     register,
     handleSubmit,
     reset,
-    formState: { errors }
+    control,
+    formState: { errors, isDirty }
   } = useForm({
     resolver: zodResolver(customerFormSchema),
     defaultValues: {
@@ -81,16 +85,16 @@ function Customers({
     }
   }, [isCreateOpen]);
 
-  // Keyboard shortcut: close modal on Escape
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && isModalOpen) {
-        setIsModalOpen(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isModalOpen]);
+  const {
+    requestClose: requestCloseModal,
+    closeConfirmDialog: modalCloseConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen: isModalOpen,
+    onClose: () => setIsModalOpen(false),
+    shouldConfirm: !isViewOnly,
+    dirty: isDirty,
+    listenEscape: true,
+  });
 
   // Aggregate customer intelligence across customers table, server summary stats, and activities
   const customerDirectory = useMemo(() => {
@@ -240,8 +244,6 @@ function Customers({
   }, [customerDirectory]);
 
   // Open Add/Edit Modal
-  const [isViewOnly, setIsViewOnly] = useState(false);
-
   const handleOpenModal = (customer = null) => {
     if (customer) {
       setIsViewOnly(true);
@@ -391,32 +393,40 @@ function Customers({
         }}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          <div className="relative">
-            <select
+          <div>
+            <StatusDropdown
               value={selectedTier}
-              onChange={(e) => setSelectedTier(e.target.value)}
-              className="w-full h-10 pl-3.5 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 appearance-none cursor-pointer"
-            >
-              <option value="all">ระดับ: ทั้งหมด ({customerDirectory.length})</option>
-              <option value="vip_fandom">Fandom VIP</option>
-              <option value="gold">VIP Gold</option>
-              <option value="silver">VIP Silver</option>
-              <option value="general">ลูกค้าทั่วไป</option>
-            </select>
-            <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              onChange={setSelectedTier}
+              options={[
+                { value: 'all', label: `ระดับ: ทั้งหมด (${customerDirectory.length})` },
+                { value: 'vip_fandom', label: 'Fandom VIP' },
+                { value: 'gold', label: 'VIP Gold' },
+                { value: 'silver', label: 'VIP Silver' },
+                { value: 'general', label: 'ลูกค้าทั่วไป' },
+              ]}
+              placeholder="เลือกระดับสมาชิก"
+              size="sm"
+              showDot={false}
+              className="bg-slate-50 border-slate-200 hover:border-slate-300 text-slate-700"
+              ariaLabel="เลือกระดับสมาชิก"
+            />
           </div>
 
-          <div className="relative">
-            <select
+          <div>
+            <StatusDropdown
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="w-full h-10 pl-3.5 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-700 appearance-none cursor-pointer"
-            >
-              <option value="spend">เรียง: ยอดใช้จ่าย</option>
-              <option value="orders">เรียง: จำนวนงาน</option>
-              <option value="name">เรียง: ชื่อ ก-ฮ / A-Z</option>
-            </select>
-            <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              onChange={setSortBy}
+              options={[
+                { value: 'spend', label: 'เรียง: ยอดใช้จ่าย' },
+                { value: 'orders', label: 'เรียง: จำนวนงาน' },
+                { value: 'name', label: 'เรียง: ชื่อ ก-ฮ / A-Z' },
+              ]}
+              placeholder="เรียงลำดับ"
+              size="sm"
+              showDot={false}
+              className="bg-slate-50 border-slate-200 hover:border-slate-300 text-slate-700"
+              ariaLabel="เรียงลำดับ"
+            />
           </div>
         </div>
       </HeaderFilterPortal>
@@ -620,12 +630,12 @@ function Customers({
       </div>
 
       {/* Customer Add/Edit Modal */}
+      {modalCloseConfirmDialog}
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
           {/* Backdrop */}
           <div
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
-            onClick={() => setIsModalOpen(false)}
           />
 
           <div
@@ -656,7 +666,7 @@ function Customers({
               </div>
               <button
                 type="button"
-                onClick={() => setIsModalOpen(false)}
+                onClick={requestCloseModal}
                 className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors active:scale-95 cursor-pointer"
               >
                 <X className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -734,15 +744,27 @@ function Customers({
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">ระดับ VIP สมาชิก</label>
-                  <select
-                    {...register('vip_tier')}
-                    className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 bg-slate-50/70 focus:bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                  >
-                    <option value="general">ลูกค้าทั่วไป (General)</option>
-                    <option value="silver">VIP Silver</option>
-                    <option value="gold">VIP Gold</option>
-                    <option value="vip_fandom">Fandom VIP (แฟนด้อมคนสำคัญ)</option>
-                  </select>
+                  <Controller
+                    name="vip_tier"
+                    control={control}
+                    render={({ field }) => (
+                      <StatusDropdown
+                        value={field.value}
+                        onChange={(val) => field.onChange(val)}
+                        options={[
+                          { value: 'general', label: 'ลูกค้าทั่วไป (General)' },
+                          { value: 'silver', label: 'VIP Silver' },
+                          { value: 'gold', label: 'VIP Gold' },
+                          { value: 'vip_fandom', label: 'Fandom VIP (แฟนด้อมคนสำคัญ)' },
+                        ]}
+                        disabled={isViewOnly}
+                        size="md"
+                        showDot={false}
+                        className="bg-slate-50/70 focus:bg-white border-slate-200 text-slate-800"
+                        ariaLabel="ระดับ VIP สมาชิก"
+                      />
+                    )}
+                  />
                 </div>
 
                 <div>
@@ -761,15 +783,16 @@ function Customers({
               <div className="px-5 py-4 sm:px-8 sm:py-5 border-t border-slate-100 bg-white/95 backdrop-blur-xl sticky bottom-0 z-30 flex items-center justify-between gap-3 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={requestCloseModal}
                   className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
                 >
                   {isViewOnly ? 'ปิด' : 'ยกเลิก'}
                 </button>
                 {isViewOnly ? (
                   <button
+                    key="unlock-edit-btn"
                     type="button"
-                    onClick={() => setIsViewOnly(false)}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsViewOnly(false); }}
                     className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
                   >
                     <Edit className="w-4 h-4" />
@@ -777,6 +800,7 @@ function Customers({
                   </button>
                 ) : (
                   <button
+                    key="submit-save-btn"
                     type="submit"
                     disabled={isSaving}
                     className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"

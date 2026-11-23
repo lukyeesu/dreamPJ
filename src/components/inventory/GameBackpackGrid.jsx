@@ -19,6 +19,7 @@ import {
   ChevronUp
 } from 'lucide-react';
 import InventoryItemImage from './InventoryItemImage.jsx';
+import StatusDropdown from '../common/StatusDropdown.jsx';
 import HeaderFilterPortal from '../common/HeaderFilterPortal.jsx';
 import { useWarehouseCommandKey } from '../../hooks/useWarehouseCommandKey.js';
 import {
@@ -1353,21 +1354,24 @@ export default function GameBackpackGrid({
                   </button>
                 </div>
                 {cashSourceMode === 'project_support' && (
-                  <select
+                  <StatusDropdown
                     value={cashProjectId}
-                    onChange={(e) => setCashProjectId(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800"
-                  >
-                    <option value="">เลือกโปรเจกต์ที่จองธนบัตร...</option>
-                    {(activities || [])
-                      .filter((a) => a?.id && a.id !== 'SHOP-STOCK')
-                      .slice(0, 30)
-                      .map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.id} · {a.name || a.customer}
-                        </option>
-                      ))}
-                  </select>
+                    onChange={(val) => setCashProjectId(val)}
+                    placeholder="เลือกโปรเจกต์ที่จองธนบัตร..."
+                    showDot={false}
+                    size="sm"
+                    options={[
+                      { value: '', label: 'เลือกโปรเจกต์ที่จองธนบัตร...' },
+                      ...(activities || [])
+                        .filter((a) => a?.id && a.id !== 'SHOP-STOCK')
+                        .slice(0, 30)
+                        .map((a) => ({
+                          value: a.id,
+                          label: `${a.id} · ${a.name || a.customer}`
+                        }))
+                    ]}
+                    className="w-full"
+                  />
                 )}
               </div>
             )}

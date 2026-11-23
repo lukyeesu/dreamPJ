@@ -50,6 +50,14 @@ function loadJsxComponent(filePath, mockModules = {}) {
       const source = loadJsxComponent(path.join(root, 'src/hooks/useWarehouseCommandKey.js'), mockModules);
       return { useWarehouseCommandKey: source };
     }
+    if (specifier.includes('useModalCloseGuard')) {
+      const source = loadJsxComponent(path.join(root, 'src/hooks/useModalCloseGuard.jsx'), mockModules);
+      return { __esModule: true, default: source, useModalCloseGuard: source };
+    }
+    if (specifier.includes('StatusDropdown')) {
+      const source = loadJsxComponent(path.join(root, 'src/components/common/StatusDropdown.jsx'), mockModules);
+      return { __esModule: true, default: source, StatusDropdown: source };
+    }
     if (specifier === 'react-dom/server') {
       return ReactDOMServer;
     }
@@ -866,9 +874,11 @@ test('Inventory UI Suite — Plan C Component Rendering & State Validation', asy
     assert(studioHtml.includes('พิมพ์ฉลาก (1 ดวง)'), 'Right slot must render primary print action');
 
     const appSource = fs.readFileSync(path.join(root, 'src/App.jsx'), 'utf8');
-    assert(appSource.includes('id="app-header-center-search-slot"'), 'Wide PC must expose centered Spotlight search slot');
-    assert(appSource.includes('id="app-header-mobile-search-trigger-slot"'), 'Mobile must expose minimal search icon slot');
+    const mobileSearchIdx = appSource.indexOf('id="app-header-mobile-search-trigger-slot"');
+    const centerSearchIdx = appSource.indexOf('id="app-header-center-search-slot"');
+    assert(centerSearchIdx !== -1, 'Wide PC must expose centered Spotlight search slot');
+    assert(mobileSearchIdx !== -1 && mobileSearchIdx < centerSearchIdx, 'Mobile search trigger slot must be placed in Zone 1 (before center search slot)');
     assert(appSource.includes('aria-label="คำสั่งเพิ่มเติม"'), 'Pages with >3 actions must expose Overflow Menu trigger');
-    assert(appSource.includes('aria-label="เมนูนำทางด่วน"'), 'Mobile left slot must expose Smart Quick-Jump Nav trigger');
+    assert(!appSource.includes('aria-label="เมนูนำทางด่วน"'), 'Redundant mobile hamburger Quick-Jump menu must be removed');
   });
 });

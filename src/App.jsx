@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import PersistentPage from './components/common/PersistentPage';
 import HeaderFilterPortal from './components/common/HeaderFilterPortal';
 import DbCombobox from './components/common/DbCombobox';
+import StatusDropdown from './components/common/StatusDropdown';
+import { useModalCloseGuard } from './hooks/useModalCloseGuard';
 import { resolveInventoryImageFolder } from './services/inventoryImageService.js';
 import {
   Home,
@@ -28,7 +30,6 @@ import {
   ChevronLeft,
   ArrowLeft,
   PanelLeft,
-  SquarePlus,
   ArrowUpRight,
   Folder,
   Plus,
@@ -138,6 +139,7 @@ import {
   subscribeToRealtimeSettings,
   loadSettingsFromSupabase,
   saveSettingsToSupabase,
+  extractGoogleDriveFolderId,
   loadLocationsLocalFirst,
   saveLocationSync,
   loadCustomersLocalFirst,
@@ -151,8 +153,17 @@ import {
   subscribeToStaffRealtime,
   syncDeletedRecords,
   resetProjectLoadCache,
-  DEFAULT_STAFF_MEMBERS
+  DEFAULT_STAFF_MEMBERS,
+  DEFAULT_PAYMENT_STATUSES
 } from './services/syncService';
+
+const BANKNOTE_DENOMINATION_OPTIONS = [
+  { value: 1000, label: 'แบงค์ 1,000', color: 'bg-amber-50 text-amber-800 border-amber-200', dotColor: 'bg-amber-600' },
+  { value: 500, label: 'แบงค์ 500', color: 'bg-purple-50 text-purple-700 border-purple-200', dotColor: 'bg-purple-500' },
+  { value: 100, label: 'แบงค์ 100', color: 'bg-rose-50 text-rose-700 border-rose-200', dotColor: 'bg-rose-500' },
+  { value: 50, label: 'แบงค์ 50', color: 'bg-blue-50 text-blue-700 border-blue-200', dotColor: 'bg-blue-500' },
+  { value: 20, label: 'แบงค์ 20', color: 'bg-emerald-50 text-emerald-700 border-emerald-200', dotColor: 'bg-emerald-500' }
+];
 import { db, clearAllLocalDatabase } from './services/db';
 import { loadWarehouseStock } from './services/warehouseService';
 import {
@@ -538,6 +549,10 @@ const App = () => {
     if (found) return found.folderId.trim();
     if (type === 'reference') return driveFolderId;
     if (type === 'assets') return assetsDriveFolderId;
+    if (type === 'profiles' || type === 'artists' || type === 'inventory') {
+      const assetsFolder = driveFolders.find(f => f.type === 'assets' && f.folderId && f.folderId.trim() !== '');
+      return assetsFolder ? assetsFolder.folderId.trim() : (assetsDriveFolderId || '');
+    }
     return driveFolderId || '';
   }; 
   
@@ -562,6 +577,10 @@ const App = () => {
   const [expenseCategories, setExpenseCategories] = useState(() => loadFromCache('expense_categories', []));
   const [dealStatuses, setDealStatuses] = useState(() => loadFromCache('deal_statuses', []));
   const [transportStatuses, setTransportStatuses] = useState(() => loadFromCache('transport_statuses', []));
+  const [paymentStatuses, setPaymentStatuses] = useState(() => {
+    const cached = loadFromCache('payment_statuses', DEFAULT_PAYMENT_STATUSES);
+    return Array.isArray(cached) && cached.length > 0 ? cached : DEFAULT_PAYMENT_STATUSES;
+  });
 
   // Upload States
   const [isUploadingProfile, setIsUploadingProfile] = useState(false);
@@ -791,7 +810,6 @@ const App = () => {
   const [isCreateVenueOpen, setIsCreateVenueOpen] = useState(false);
   const [isCreateQuotationOpen, setIsCreateQuotationOpen] = useState(false);
   const [isCreateStaffOpen, setIsCreateStaffOpen] = useState(false);
-  const [isQuickNavOpen, setIsQuickNavOpen] = useState(false);
   const [isHeaderOverflowOpen, setIsHeaderOverflowOpen] = useState(false);
   const [headerFilterMeta, setHeaderFilterMeta] = useState({
     hasFilters: false,
@@ -831,7 +849,6 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    setIsQuickNavOpen(false);
     setIsHeaderOverflowOpen(false);
     if (activeTab === 'Settings') {
       setHeaderFilterMeta({ hasFilters: false, isFilterOpen: false, activeFilterCount: 0, isDirty: false });
@@ -839,16 +856,15 @@ const App = () => {
   }, [activeTab]);
 
   useEffect(() => {
-    if (!isQuickNavOpen && !isHeaderOverflowOpen) return undefined;
+    if (!isHeaderOverflowOpen) return undefined;
     const handleEsc = (e) => {
       if (e.key === 'Escape') {
-        setIsQuickNavOpen(false);
         setIsHeaderOverflowOpen(false);
       }
     };
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
-  }, [isQuickNavOpen, isHeaderOverflowOpen]);
+  }, [isHeaderOverflowOpen]);
   // Active drag states for modal & file dropzones
   const [isDraggingRef, setIsDraggingRef] = useState(false);
   const [isDraggingSlip, setIsDraggingSlip] = useState(false);
@@ -1309,6 +1325,9 @@ const App = () => {
             if (data.transportStatuses && Array.isArray(data.transportStatuses)) {
                 updateIfChanged(setTransportStatuses, data.transportStatuses, 'nexus_transport_statuses');
             }
+            if (data.paymentStatuses && Array.isArray(data.paymentStatuses) && data.paymentStatuses.length > 0) {
+                updateIfChanged(setPaymentStatuses, data.paymentStatuses, 'nexus_payment_statuses');
+            }
 
             if (data.appCredentials && Array.isArray(data.appCredentials) && data.appCredentials.length > 0) {
                 updateIfChanged(setAuthorizedUsers, data.appCredentials, 'nexus_authorized_users');
@@ -1750,7 +1769,7 @@ const App = () => {
       }
 
       try {
-          await saveSettingsToSupabase(partialData);
+          const saveResult = await saveSettingsToSupabase(partialData);
           
           // Update Local State & Cache
           if (partialData.app_credentials) {
@@ -1773,16 +1792,31 @@ const App = () => {
               setTransportStatuses(partialData.transport_statuses);
               localStorage.setItem('nexus_transport_statuses', JSON.stringify(partialData.transport_statuses));
           }
+          if (partialData.payment_statuses) {
+              setPaymentStatuses(partialData.payment_statuses);
+              localStorage.setItem('nexus_payment_statuses', JSON.stringify(partialData.payment_statuses));
+              if (saveResult?.localOnlyPaymentStatuses && !options.silent) {
+                  showToast('บันทึกสถานะการชำระเงินในเครื่องแล้ว (รัน SQL add_settings_columns.sql เพื่อซิงค์คลาวด์)', 'warning');
+              }
+          }
 
           if (partialData.drive_folders) {
-              setDriveFolders(partialData.drive_folders);
-              localStorage.setItem('nexus_drive_folders', JSON.stringify(partialData.drive_folders));
+              const normalizedFolders = partialData.drive_folders.map(f => ({
+                  ...f,
+                  folderId: extractGoogleDriveFolderId(f?.folderId)
+              }));
+              setDriveFolders(normalizedFolders);
+              localStorage.setItem('nexus_drive_folders', JSON.stringify(normalizedFolders));
+              const ref = normalizedFolders.find(f => f.type === 'reference');
+              const ass = normalizedFolders.find(f => f.type === 'assets');
+              if (ref) setDriveFolderId(ref.folderId);
+              if (ass) setAssetsDriveFolderId(ass.folderId);
           }
-          if (partialData.drive_folder_id) {
-              setDriveFolderId(partialData.drive_folder_id);
+          if (partialData.drive_folder_id !== undefined) {
+              setDriveFolderId(extractGoogleDriveFolderId(partialData.drive_folder_id));
           }
-          if (partialData.assets_drive_folder_id) { 
-              setAssetsDriveFolderId(partialData.assets_drive_folder_id);
+          if (partialData.assets_drive_folder_id !== undefined) { 
+              setAssetsDriveFolderId(extractGoogleDriveFolderId(partialData.assets_drive_folder_id));
           }
           if (partialData.line_bot_token !== undefined) {
               setLineBotToken(partialData.line_bot_token);
@@ -1803,7 +1837,7 @@ const App = () => {
               // ซิงค์ไปยังแท็บอื่น / หน้าจออื่นบนเบราว์เซอร์เดียวกันทันที (Multi-Window / Multi-Screen Sync)
               broadcastShopInfoSync(partialData.shop_info);
           }
-          if (!options.silent) {
+          if (!options.silent && !saveResult?.localOnlyPaymentStatuses) {
               showToast("บันทึกการตั้งค่าเรียบร้อยแล้ว", "success");
           }
       } catch (error) {
@@ -2013,7 +2047,6 @@ const App = () => {
       setCustomerSummaryStats({});
       setArtistSummaryStats({});
       setInventoryItems([]);
-      setAssetLoans([]);
       setDeliveryLocations([]);
       setServerAnalytics(null);
       setServerStats(null);
@@ -2048,6 +2081,12 @@ const App = () => {
 
   const getTransportStatusInfo = (value) => {
     return transportStatuses.find(s => s.value === value) || { label: value, color: 'bg-slate-100 text-slate-500' };
+  };
+
+  const getPaymentStatusInfo = (value) => {
+    return paymentStatuses.find(s => s.value === value)
+      || DEFAULT_PAYMENT_STATUSES.find(s => s.value === value)
+      || { label: value || 'รอชำระเงิน', color: 'bg-amber-50 text-amber-700 border-amber-200' };
   };
 
   const handleSort = (key) => {
@@ -2140,9 +2179,10 @@ const App = () => {
   const handleProfileImageUpload = async (file) => {
       if (!file) return;
       
-      if (!assetsDriveFolderId || typeof assetsDriveFolderId !== 'string' || assetsDriveFolderId.trim() === '') {
+      const targetProfileFolderId = getFolderIdByType('profiles');
+      if (!targetProfileFolderId) {
           if (GOOGLE_SCRIPT_URL) {
-             showToast("กรุณาระบุ Assets Folder ID ในตั้งค่าก่อนอัปโหลดรูปโปรไฟล์", "error");
+             showToast("กรุณาระบุโฟลเดอร์รูปโปรไฟล์พนักงาน หรือ Assets Folder ID ในตั้งค่าก่อนอัปโหลด", "error");
              return;
           }
       }
@@ -2179,7 +2219,7 @@ const App = () => {
                           fileData: base64Data, 
                           mimeType: mimeType,
                           fileName: fileName,
-                          folderId: assetsDriveFolderId.trim()
+                          folderId: targetProfileFolderId
                       }
                   })
               });
@@ -2284,9 +2324,10 @@ const App = () => {
   const handleLogoUpload = async (file) => {
       if (!file) return;
       
-      if (!assetsDriveFolderId || typeof assetsDriveFolderId !== 'string' || assetsDriveFolderId.trim() === '') {
+      const targetLogoFolderId = getFolderIdByType('assets');
+      if (!targetLogoFolderId) {
           if (GOOGLE_SCRIPT_URL) {
-             showToast("กรุณาระบุ Assets Folder ID ในตั้งค่าก่อนอัปโหลดโลโก้", "error");
+             showToast("กรุณาระบุโฟลเดอร์โลโก้ร้าน / Assets Folder ID ในตั้งค่าก่อนอัปโหลดโลโก้", "error");
              return;
           }
       }
@@ -2323,7 +2364,7 @@ const App = () => {
                           fileData: base64Data, 
                           mimeType: mimeType,
                           fileName: fileName,
-                          folderId: assetsDriveFolderId.trim() 
+                          folderId: targetLogoFolderId 
                       }
                   })
               });
@@ -2686,15 +2727,37 @@ const App = () => {
         }
       }
 
+      const getDealTypeLocal = (val) => dealStatuses.find(s => s.value === val)?.type || 'pending';
+      const getTransportTypeLocal = (val) => transportStatuses.find(s => s.value === val)?.type || 'pending';
+
       const matchesCategory = filter.category === 'all' || item.category === filter.category;
-      const matchesStatus = filter.status === 'all' || item.dealStatus === filter.status;
+
+      let matchesStatus = true;
+      if (filter.status === '__kpi_completed__') {
+        const dType = getDealTypeLocal(item.dealStatus);
+        const tType = getTransportTypeLocal(item.transportStatus);
+        matchesStatus = tType === 'completed' && (dType === 'active' || dType === 'completed');
+      } else if (filter.status === '__kpi_active__') {
+        const dType = getDealTypeLocal(item.dealStatus);
+        const tType = getTransportTypeLocal(item.transportStatus);
+        matchesStatus = dType === 'active' && tType !== 'completed' && tType !== 'cancelled';
+      } else if (filter.status === '__kpi_issues__') {
+        const dType = getDealTypeLocal(item.dealStatus);
+        const tType = getTransportTypeLocal(item.transportStatus);
+        matchesStatus = dType === 'cancelled' || tType === 'cancelled';
+      } else {
+        matchesStatus = filter.status === 'all' || item.dealStatus === filter.status;
+      }
       
       let matchesTransport = true;
       if (filter.transport === 'active_only') {
-          matchesTransport = 
-            item.transportStatus !== 'delivered' && 
-            item.transportStatus !== 'completed' && 
-            item.transportStatus !== 'issue' && 
+          const tType = getTransportTypeLocal(item.transportStatus);
+          matchesTransport =
+            tType !== 'completed' &&
+            tType !== 'cancelled' &&
+            item.transportStatus !== 'delivered' &&
+            item.transportStatus !== 'completed' &&
+            item.transportStatus !== 'issue' &&
             item.transportStatus !== 'cancelled';
       } else {
           matchesTransport = filter.transport === 'all' || item.transportStatus === filter.transport;
@@ -2737,9 +2800,22 @@ const App = () => {
   };
 
   // Dedicated activity streams per tab
-  const plansActivities = useMemo(() => filterAndSortActivities(allActivities, plansFilter), [allActivities, plansFilter]);
-  const financeActivities = useMemo(() => filterAndSortActivities(allActivities, financeFilter), [allActivities, financeFilter]);
-  const analyticsActivities = useMemo(() => filterAndSortActivities(allActivities, analyticsFilter), [allActivities, analyticsFilter]);
+  const plansScopeActivities = useMemo(
+    () => filterAndSortActivities(allActivities, { ...plansFilter, status: 'all', transport: 'all' }),
+    [allActivities, plansFilter, dealStatuses, transportStatuses]
+  );
+  const plansActivities = useMemo(
+    () => filterAndSortActivities(allActivities, plansFilter),
+    [allActivities, plansFilter, dealStatuses, transportStatuses]
+  );
+  const financeActivities = useMemo(
+    () => filterAndSortActivities(allActivities, financeFilter),
+    [allActivities, financeFilter, dealStatuses, transportStatuses]
+  );
+  const analyticsActivities = useMemo(
+    () => filterAndSortActivities(allActivities, analyticsFilter),
+    [allActivities, analyticsFilter, dealStatuses, transportStatuses]
+  );
   const filteredAndSortedActivities = plansActivities;
 
   const [serverAnalytics, setServerAnalytics] = useState(null);
@@ -3024,51 +3100,59 @@ const App = () => {
   const getTransportType = (val) => transportStatuses.find(s => s.value === val)?.type || 'pending';
 
   const stats = useMemo(() => {
-    // เมื่อมีการกรองตามวันที่/เดือน/สัปดาห์/ช่วงเวลา ให้ใช้จำนวนแถวของ Scope นั้นโดยตรง
-    const isDateFiltered = plansFilter.dateMode !== 'all';
-    const total = isDateFiltered 
-      ? plansActivities.length 
-      : (serverStats?.total !== undefined ? serverStats.total : plansActivities.length);
+    // เมื่อมีการกรองตามวันที่/เดือน/สัปดาห์/ช่วงเวลา หรือค้นหา/หมวดหมู่ ให้ใช้จำนวนแถวของ Scope นั้นโดยตรง
+    const isUnfilteredAllScope =
+      plansFilter.dateMode === 'all' &&
+      !plansFilter.search?.trim() &&
+      plansFilter.category === 'all';
+    const baseActivities = plansScopeActivities;
+    const total =
+      isUnfilteredAllScope && serverStats?.total !== undefined
+        ? serverStats.total
+        : baseActivities.length;
     
-    const completed = plansActivities.filter(a => {
+    const completed = baseActivities.filter(a => {
         const dType = getDealType(a.dealStatus);
         const tType = getTransportType(a.transportStatus);
         return tType === 'completed' && (dType === 'active' || dType === 'completed');
     }).length;
 
-    const active = plansActivities.filter(a => {
+    const active = baseActivities.filter(a => {
         const dType = getDealType(a.dealStatus);
         const tType = getTransportType(a.transportStatus);
         return dType === 'active' && tType !== 'completed' && tType !== 'cancelled';
     }).length;
 
-    const pending = plansActivities.filter(a => {
+    const pending = baseActivities.filter(a => {
         const dType = getDealType(a.dealStatus);
         return dType === 'pending';
     }).length;
 
-    const issues = plansActivities.filter(a => {
+    const issues = baseActivities.filter(a => {
         const dType = getDealType(a.dealStatus);
         const tType = getTransportType(a.transportStatus);
         return dType === 'cancelled' || tType === 'cancelled';
     }).length;
 
     const renderVal = (v) => {
-      if (isScopeLoading && plansActivities.length === 0) {
+      if (isScopeLoading && baseActivities.length === 0) {
         return <span className="inline-block w-8 h-6 bg-slate-200 animate-pulse rounded-md" />;
       }
       return v;
     };
 
     return [
-      { title: 'งานทั้งหมด', value: renderVal(total), change: 'รวมทั้งหมด', isPositive: true, icon: Folder, color: 'text-indigo-600', bg: 'bg-indigo-50', onClick: () => resetTabFilter('Plans') },
-      { title: 'งานเสร็จสิ้น', value: renderVal(completed), change: 'ปิดจ๊อบแล้ว', isPositive: true, icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50', onClick: () => updateTabFilter('Plans', { status: 'confirmed', transport: 'delivered' }) },
-      { title: 'กำลังดำเนินการ', value: renderVal(active), change: 'Active Now', isPositive: true, icon: Clock, color: 'text-blue-600', bg: 'bg-blue-50', onClick: () => updateTabFilter('Plans', { status: 'confirmed', transport: 'active_only' }) },
-      { title: 'ยกเลิก/มีปัญหา', value: renderVal(issues), change: 'ต้องตรวจสอบ', isPositive: false, icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50', onClick: () => updateTabFilter('Plans', { status: 'cancelled', transport: 'all' }) },
+      { title: 'งานทั้งหมด', value: renderVal(total), change: 'รวมทั้งหมด', isPositive: true, icon: Folder, color: 'text-indigo-600', bg: 'bg-indigo-50', onClick: () => updateTabFilter('Plans', { status: 'all', transport: 'all' }) },
+      { title: 'งานเสร็จสิ้น', value: renderVal(completed), change: 'ปิดจ๊อบแล้ว', isPositive: true, icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50', onClick: () => updateTabFilter('Plans', { status: '__kpi_completed__', transport: 'all' }) },
+      { title: 'กำลังดำเนินการ', value: renderVal(active), change: 'Active Now', isPositive: true, icon: Clock, color: 'text-blue-600', bg: 'bg-blue-50', onClick: () => updateTabFilter('Plans', { status: '__kpi_active__', transport: 'all' }) },
+      { title: 'ยกเลิก/มีปัญหา', value: renderVal(issues), change: 'ต้องตรวจสอบ', isPositive: false, icon: AlertTriangle, color: 'text-rose-600', bg: 'bg-rose-50', onClick: () => updateTabFilter('Plans', { status: '__kpi_issues__', transport: 'all' }) },
     ];
-  }, [plansActivities, plansFilter.dateMode, serverStats, dealStatuses, transportStatuses, isScopeLoading]);
+  }, [plansScopeActivities, plansFilter.dateMode, plansFilter.search, plansFilter.category, serverStats, dealStatuses, transportStatuses, isScopeLoading]);
+
+  const openModalReqIdRef = useRef(0);
 
   const closeModal = () => {
+    openModalReqIdRef.current += 1;
     refDragCounterRef.current = 0;
     slipDragCounterRef.current = 0;
     setIsDraggingRef(false);
@@ -3079,6 +3163,52 @@ const App = () => {
       setIsModalClosing(false);
     }, 300); 
   };
+
+  const {
+    requestClose: requestCloseAddModal,
+    isConfirmOpen: isAddModalCloseConfirmOpen,
+    hasUnsavedChanges: hasAddModalUnsavedChanges,
+    markClean: markAddModalClean,
+    closeConfirmDialog: addModalCloseConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen: isAddModalOpen,
+    onClose: closeModal,
+    shouldConfirm: !viewOnlyMode,
+    watch: isAddModalOpen ? [
+      projectName,
+      projectCategory,
+      projectDateTime,
+      paymentDate,
+      deliveryStart,
+      deliveryEnd,
+      artistName,
+      customerName,
+      customerSocial,
+      customerLine,
+      customerPhone,
+      customerEmail,
+      customerTaxId,
+      customerAddress,
+      recipientName,
+      recipientPhone,
+      locationName,
+      mapLink,
+      uploadedImages,
+      uploadedSlips,
+      note,
+      wage,
+      deliveryFee,
+      expenses,
+      quotationItems,
+      customerSupportItems,
+      paymentStatus,
+      depositAmount,
+      dealStatus,
+      transportStatus,
+    ] : null,
+    disabled: isModalClosing,
+    listenEscape: false,
+  });
 
   const closeDeleteModal = () => {
     setIsDeleteClosing(true);
@@ -3092,18 +3222,21 @@ const App = () => {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
+        if (e.defaultPrevented) return;
+        if (isAddModalCloseConfirmOpen) return;
         if (selectedVenueForModal) setSelectedVenueForModal(null);
         else if (isVenueDirectoryOpen) setIsVenueDirectoryOpen(false);
         else if (shareData) setShareData(null);
         else if (deleteConfirm.show) closeDeleteModal();
         else if (deleteLogoConfirm) closeDeleteLogoModal();
         else if (deleteProfileConfirm) closeDeleteProfileModal();
-        else if (isAddModalOpen && !isModalClosing) closeModal();
+        else if (isAddModalOpen && !isModalClosing) requestCloseAddModal();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
+    isAddModalCloseConfirmOpen,
     selectedVenueForModal,
     isVenueDirectoryOpen,
     shareData,
@@ -3111,7 +3244,8 @@ const App = () => {
     deleteLogoConfirm,
     deleteProfileConfirm,
     isAddModalOpen,
-    isModalClosing
+    isModalClosing,
+    requestCloseAddModal
   ]);
 
   const applyMatchedCustomerDetails = (cust) => {
@@ -3144,7 +3278,12 @@ const App = () => {
     }
   };
 
+  const addModalGuardStateRef = useRef({ viewOnlyMode: false, hasUnsavedChanges: false });
+  addModalGuardStateRef.current = { viewOnlyMode, hasUnsavedChanges: hasAddModalUnsavedChanges };
+
   const openModal = (activityOrId = null, viewOnly) => {
+    const reqId = ++openModalReqIdRef.current;
+    markAddModalClean();
     const activity =
       typeof activityOrId === 'string'
         ? allActivities.find((a) => String(a.id) === String(activityOrId)) || null
@@ -3191,21 +3330,22 @@ const App = () => {
       
       // JIT on-demand fetch of detailed heavy images & slips if opened
       if (activity.id) {
-        fetchProjectDetailOnDemand(activity.id).then(detail => {
-          if (detail) {
-            if (detail.images && detail.images.length > 0) setUploadedImages(detail.images);
-            if (detail.slips && detail.slips.length > 0) setUploadedSlips(detail.slips);
-            if (detail.quotationItems && detail.quotationItems.length > 0) {
-              setQuotationItems(detail.quotationItems);
-              setWage(detail.quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0));
-            }
-            if (detail.customerSupport && detail.customerSupport.length > 0) {
-              setCustomerSupportItems(detail.customerSupport);
-            }
-            if (detail.expenses && detail.expenses.length > 0) {
-              setExpenses(detail.expenses);
-            }
+        fetchProjectDetailOnDemand(activity.id).then((detail) => {
+          if (reqId !== openModalReqIdRef.current || !detail) return;
+          if (addModalGuardStateRef.current.hasUnsavedChanges) return;
+          if (detail.images && detail.images.length > 0) setUploadedImages(detail.images);
+          if (detail.slips && detail.slips.length > 0) setUploadedSlips(detail.slips);
+          if (detail.quotationItems && detail.quotationItems.length > 0) {
+            setQuotationItems(detail.quotationItems);
+            setWage(detail.quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0));
           }
+          if (detail.customerSupport && detail.customerSupport.length > 0) {
+            setCustomerSupportItems(detail.customerSupport);
+          }
+          if (detail.expenses && detail.expenses.length > 0) {
+            setExpenses(detail.expenses);
+          }
+          markAddModalClean();
         }).catch(() => {});
       } 
       
@@ -3312,7 +3452,7 @@ const App = () => {
       setExpenses([{ category: '', detail: '', quantity: 1, unitPrice: 0, price: 0, date: todayDateStr }]); // [MODIFIED] Init
       setQuotationItems([{ category: '', detail: '', quantity: 1, unitPrice: 0, price: 0, date: todayDateStr }]); // [MODIFIED] Init
       setCustomerSupportItems([{ denomination: 1000, quantity: 0, price: 0, date: todayDateStr }]); 
-      setPaymentStatus('unpaid');
+      setPaymentStatus(paymentStatuses.length > 0 ? paymentStatuses[0].value : 'unpaid');
       setDepositAmount(0); 
       setDealStatus(dealStatuses.length > 0 ? dealStatuses[0].value : ''); 
       setTransportStatus(transportStatuses.length > 0 ? transportStatuses[0].value : '');
@@ -3741,13 +3881,6 @@ const App = () => {
         <div className="md:hidden flex flex-col gap-4 p-2">
           {items.length === 0 && isScopeLoading ? (
             <div className="flex flex-col gap-3 animate-pulse">
-              <div className="p-3 bg-indigo-50/70 border border-indigo-100/60 rounded-xl flex items-center justify-between text-xs text-indigo-700">
-                <span className="flex items-center gap-2 font-bold">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
-                  กำลังดึง 50 แถวล่าสุด...
-                </span>
-                <span className="text-xs text-indigo-600 font-bold">Zero-Egress</span>
-              </div>
               {[1, 2, 3].map(idx => (
                 <div key={idx} className="bg-white rounded-2xl border border-slate-100 p-4 flex flex-col gap-3 shadow-xs">
                   <div className="flex justify-between items-center">
@@ -3976,15 +4109,6 @@ const App = () => {
         </div>
 
         <div className="hidden md:block">
-            {isScopeLoading && items.length === 0 && (
-              <div className="px-5 py-2.5 bg-indigo-50/70 border-b border-indigo-100/60 text-xs font-semibold text-indigo-700 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
-                  <span>กำลังดึง 50 แถวล่าสุดของเดือนนี้...</span>
-                </div>
-                <span className="text-xs text-indigo-600 font-bold">Progressive Loading (Zero-Egress)</span>
-              </div>
-            )}
             {/* Desktop Table Container with responsive constraints */}
             <div className="overflow-x-auto overflow-y-hidden pb-4 custom-scrollbar">
               {/* [MODIFIED] Removed max-w constraint to let table grow with screen */}
@@ -4324,57 +4448,59 @@ const App = () => {
             />
           </div>
 
-          <div className="relative bg-slate-50 border border-slate-200/80 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-              <Tag className="w-3.5 h-3.5" />
-            </div>
-            <select
-              className="w-full h-full pl-8 pr-7 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-bold appearance-none cursor-pointer"
-              value={curCategory}
-              onChange={(e) => setCurCategory(e.target.value)}
-            >
-              <option value="all">ทุกหมวดหมู่</option>
-              {projectCategories.map((cat, i) => (
-                <option key={i} value={cat}>{cat}</option>
-              ))}
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
+          <StatusDropdown
+            value={curCategory}
+            onChange={(val) => setCurCategory(val)}
+            options={[
+              { value: 'all', label: 'ทุกหมวดหมู่' },
+              ...projectCategories.map((cat) => ({ value: cat, label: cat })),
+            ]}
+            placeholder="ทุกหมวดหมู่"
+            size="sm"
+            showDot={false}
+            leftIcon={Tag}
+            className="bg-slate-50 border-slate-200/80 hover:border-slate-300 text-slate-700"
+          />
 
-          <div className="relative bg-slate-50 border border-slate-200/80 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-              <Briefcase className="w-3.5 h-3.5" />
-            </div>
-            <select
-              className="w-full h-full pl-8 pr-7 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-bold appearance-none cursor-pointer"
-              value={curStatus}
-              onChange={(e) => setCurStatus(e.target.value)}
-            >
-              <option value="all">ทุกสถานะ (ดีล)</option>
-              {dealStatuses.map((status, i) => (
-                <option key={i} value={status.value}>{status.label}</option>
-              ))}
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
+          <StatusDropdown
+            value={curStatus}
+            onChange={(val) => setCurStatus(val)}
+            options={[
+              { value: 'all', label: 'ทุกสถานะ (ดีล)' },
+              ...(curStatus === '__kpi_completed__' ? [{ value: '__kpi_completed__', label: 'งานเสร็จสิ้น (ปิดจ๊อบแล้ว)' }] : []),
+              ...(curStatus === '__kpi_active__' ? [{ value: '__kpi_active__', label: 'กำลังดำเนินการ (Active)' }] : []),
+              ...(curStatus === '__kpi_issues__' ? [{ value: '__kpi_issues__', label: 'ยกเลิก / มีปัญหา' }] : []),
+              ...dealStatuses.map((status) => ({
+                value: status.value,
+                label: status.label,
+                color: status.color,
+              })),
+            ]}
+            placeholder="ทุกสถานะ (ดีล)"
+            size="sm"
+            showDot={true}
+            leftIcon={Briefcase}
+            className="bg-slate-50 border-slate-200/80 hover:border-slate-300 text-slate-700"
+          />
 
-          <div className="relative bg-slate-50 border border-slate-200/80 rounded-xl h-10 flex items-center hover:border-slate-300 transition-colors">
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-              <Truck className="w-3.5 h-3.5" />
-            </div>
-            <select
-              className="w-full h-full pl-8 pr-7 bg-transparent outline-none text-slate-700 text-xs sm:text-sm font-bold appearance-none cursor-pointer"
-              value={curTransport}
-              onChange={(e) => setCurTransport(e.target.value)}
-            >
-              <option value="all">ขนส่ง: ทั้งหมด</option>
-              <option value="active_only">กำลังดำเนินการ (Active)</option>
-              {transportStatuses.map((status, i) => (
-                <option key={i} value={status.value}>{status.label}</option>
-              ))}
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
+          <StatusDropdown
+            value={curTransport}
+            onChange={(val) => setCurTransport(val)}
+            options={[
+              { value: 'all', label: 'ขนส่ง: ทั้งหมด' },
+              { value: 'active_only', label: 'กำลังดำเนินการ (Active)' },
+              ...transportStatuses.map((status) => ({
+                value: status.value,
+                label: status.label,
+                color: status.color,
+              })),
+            ]}
+            placeholder="ขนส่ง: ทั้งหมด"
+            size="sm"
+            showDot={true}
+            leftIcon={Truck}
+            className="bg-slate-50 border-slate-200/80 hover:border-slate-300 text-slate-700"
+          />
         </div>
       </HeaderFilterPortal>
     );
@@ -4569,6 +4695,7 @@ const App = () => {
                   inventoryItems={inventoryItems}
                   dealStatuses={dealStatuses}
                   transportStatuses={transportStatuses}
+                  paymentStatuses={paymentStatuses}
                   shopInfo={shopInfo}
                   onOpenProjectModal={openModal}
                   themeColor={shopInfo?.themeColor || 'indigo'}
@@ -4670,13 +4797,13 @@ const App = () => {
             <Artists
               artists={artistList}
               artistStats={artistSummaryStats}
-              assetsDriveFolderId={assetsDriveFolderId}
+              assetsDriveFolderId={getFolderIdByType('artists')}
               activities={allActivities}
               isCreateOpen={isCreateArtistOpen}
               onCloseCreate={() => setIsCreateArtistOpen(false)}
               onOpenProjectModal={openModal}
               onFilterByArtist={(artistName) => {
-                setSearchQuery(artistName);
+                updateTabFilter('Plans', { search: artistName });
                 handleSelectTab('Plans');
               }}
               onRefresh={() => {
@@ -4701,7 +4828,7 @@ const App = () => {
               onCloseCreate={() => setIsCreateCustomerOpen(false)}
               onOpenProjectModal={openModal}
               onFilterByCustomer={(custName) => {
-                setSearchQuery(custName);
+                updateTabFilter('Plans', { search: custName });
                 handleSelectTab('Plans');
               }}
               onRefresh={() => {
@@ -4776,6 +4903,8 @@ const App = () => {
               setDealStatuses={setDealStatuses}
               transportStatuses={transportStatuses}
               setTransportStatuses={setTransportStatuses}
+              paymentStatuses={paymentStatuses}
+              setPaymentStatuses={setPaymentStatuses}
               handleLogout={handleLogout}
               processImageUrl={processImageUrl}
               defaultCategory={settingsDefaultCategory}
@@ -4969,9 +5098,18 @@ const App = () => {
                                       alt="Profile" 
                                       className="w-full h-full object-cover" 
                                       referrerPolicy="no-referrer"
+                                      onError={(e) => {
+                                        e.target.style.display = 'none';
+                                        if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                                      }}
                                     />
                                   ) : (
                                     userProfile?.name?.charAt(0) || 'U'
+                                  )}
+                                  {userProfile?.image && (
+                                    <div className="hidden w-full h-full items-center justify-center bg-slate-900 text-white">
+                                      {userProfile?.name?.charAt(0) || 'U'}
+                                    </div>
                                   )}
                                 </div>
                                 <div className="flex-1 min-w-0">
@@ -5045,7 +5183,7 @@ const App = () => {
           const isInventorySubView = activeTab === 'Inventory' && isInventoryHistoryOpen;
           const currentHeaderTitle = isInventorySubView ? 'ประวัติคลังสินค้า' : getPageTitle(activeTab);
           const primaryActionBtnClass =
-            'min-w-9 min-h-9 w-9 h-9 sm:w-10 sm:h-10 lg:w-auto lg:h-10 lg:px-4 rounded-full text-slate-900 hover:bg-slate-100 lg:bg-violet-600 lg:hover:bg-violet-700 lg:text-white text-sm font-bold transition flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600';
+            'min-w-9 min-h-9 w-9 h-9 sm:w-10 sm:h-10 lg:w-auto lg:h-10 lg:px-4 rounded-xl theme-logo-bg text-white hover:brightness-95 text-sm font-bold transition flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600';
 
           const singlePageCreateMap = {
             Plans: { label: 'เพิ่มแผนงาน', onClick: () => openModal() },
@@ -5091,8 +5229,8 @@ const App = () => {
                 ref={headerRef}
                 className="relative z-30 bg-white/95 backdrop-blur-xl border-b border-slate-200/75 px-4 pt-[calc(16px+env(safe-area-inset-top,0px))] pb-4 min-h-[calc(72px+env(safe-area-inset-top,0px))] grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(320px,496px)_minmax(0,1fr)] items-center gap-x-1.5 sm:gap-x-2 lg:gap-x-4"
               >
-                {/* ================= ZONE 1: LEFT NAVIGATION (+ TITLE ON WIDE PC) ================= */}
-                <div className="justify-self-start flex items-center gap-2.5 min-w-0 relative">
+                {/* ================= ZONE 1: LEFT NAVIGATION / MOBILE SEARCH (+ TITLE ON WIDE PC) ================= */}
+                <div className="justify-self-start flex items-center gap-1.5 sm:gap-2 lg:gap-2.5 min-w-0 relative">
                   {isInventorySubView ? (
                     <button
                       type="button"
@@ -5104,86 +5242,36 @@ const App = () => {
                       <ArrowLeft aria-hidden="true" className="w-[21px] h-[21px] stroke-[2.2]" />
                     </button>
                   ) : (
-                    <>
-                      {/* Mobile (< md): Smart Quick-Jump Navigation Menu [☰] */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsHeaderOverflowOpen(false);
-                          setIsQuickNavOpen((v) => !v);
-                        }}
-                        className={`md:hidden w-10 h-10 -ml-1.5 rounded-full flex items-center justify-center transition active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600 ${
-                          isQuickNavOpen ? 'bg-slate-900 text-white' : 'text-slate-900 hover:bg-slate-100'
-                        }`}
-                        title="เมนูนำทางด่วน"
-                        aria-label="เมนูนำทางด่วน"
-                        aria-expanded={isQuickNavOpen}
-                      >
-                        <Menu aria-hidden="true" className="w-[21px] h-[21px] stroke-[2]" />
-                      </button>
-
-                      {/* Tablet & Wide PC (md+): Minimal Sidebar Toggle */}
-                      <button
-                        type="button"
-                        onClick={toggleDesktopSidebar}
-                        className="hidden md:flex w-10 h-10 -ml-1.5 rounded-full text-slate-800 hover:text-slate-950 hover:bg-slate-100 items-center justify-center transition active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
-                        title={isSidebarCollapsed ? 'ขยายแถบเมนูซ้าย' : 'ย่อแถบเมนูซ้าย'}
-                        aria-label="สลับแถบเมนูซ้าย"
-                        aria-pressed={!isSidebarCollapsed}
-                      >
-                        <PanelLeft aria-hidden="true" className="w-[20px] h-[20px] stroke-[2]" />
-                      </button>
-                    </>
+                    /* Tablet & Wide PC (md+): Minimal Sidebar Toggle */
+                    <button
+                      type="button"
+                      onClick={toggleDesktopSidebar}
+                      className="hidden md:flex w-10 h-10 -ml-1.5 rounded-full text-slate-800 hover:text-slate-950 hover:bg-slate-100 items-center justify-center transition active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
+                      title={isSidebarCollapsed ? 'ขยายแถบเมนูซ้าย' : 'ย่อแถบเมนูซ้าย'}
+                      aria-label="สลับแถบเมนูซ้าย"
+                      aria-pressed={!isSidebarCollapsed}
+                    >
+                      <PanelLeft aria-hidden="true" className="w-[20px] h-[20px] stroke-[2]" />
+                    </button>
                   )}
+
+                  {/* Mobile & Portrait Tablet (< lg): Search Trigger Slot [🔍] + Standalone Filter Slot [🎚️] */}
+                  <div className="lg:hidden flex items-center gap-1">
+                    <div id="app-header-mobile-search-trigger-slot" className="flex items-center empty:hidden" />
+                    <div
+                      id="app-header-filter-slot"
+                      className={`${
+                        activeTab === 'Inventory' || activeTab === 'Quotations'
+                          ? 'hidden'
+                          : 'flex'
+                      } items-center empty:hidden`}
+                    />
+                  </div>
 
                   {/* Wide PC (lg+): Page Title next to Nav Action */}
                   <h1 className="hidden lg:block text-xl font-extrabold text-slate-900 tracking-[-0.02em] truncate">
                     {currentHeaderTitle}
                   </h1>
-
-                  {/* Mobile Quick-Jump Navigation Popover (Apple / IG Frosted Sheet) */}
-                  {isQuickNavOpen && (
-                    <>
-                      <div
-                        className="md:hidden fixed inset-0 z-40"
-                        onClick={() => setIsQuickNavOpen(false)}
-                      />
-                      <div className="md:hidden absolute left-0 top-[calc(100%+8px)] w-64 max-h-[min(74vh,480px)] overflow-y-auto bg-white/98 backdrop-blur-2xl rounded-2xl shadow-[0_16px_40px_rgba(15,23,42,0.14)] ring-1 ring-slate-900/10 p-1.5 z-50 animate-in fade-in zoom-in-95 origin-top-left duration-150">
-                        <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                          ไปยังหน้า
-                        </div>
-                        <div className="space-y-0.5">
-                          {allowedNavItems.map((item) => {
-                            const isCurrent = activeTab === item.name;
-                            return (
-                              <button
-                                key={item.name}
-                                type="button"
-                                onClick={() => {
-                                  setIsQuickNavOpen(false);
-                                  handleSelectTab(item.name);
-                                }}
-                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-600 ${
-                                  isCurrent
-                                    ? 'bg-violet-50 text-violet-700'
-                                    : 'text-slate-700 hover:bg-slate-100/80 hover:text-slate-950'
-                                }`}
-                              >
-                                <item.icon
-                                  aria-hidden="true"
-                                  className={`w-4 h-4 shrink-0 ${isCurrent ? 'text-violet-600' : 'text-slate-400'}`}
-                                />
-                                <span className="flex-1 truncate">{item.label}</span>
-                                {isCurrent && (
-                                  <Check aria-hidden="true" className="w-4 h-4 text-violet-600 shrink-0" />
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </>
-                  )}
                 </div>
 
                 {/* ================= ZONE 2: CENTER TITLE (< lg) / SPOTLIGHT SEARCH (lg+) ================= */}
@@ -5199,19 +5287,6 @@ const App = () => {
 
                 {/* ================= ZONE 3: RIGHT PRIMARY ACTIONS (STRICT <= 3 + [⋯] OVERFLOW) ================= */}
                 <div className="justify-self-end flex items-center justify-end gap-0.5 sm:gap-1.5 lg:gap-2 shrink-0 min-w-0 relative">
-                  {/* Mobile (< lg) Search Trigger Slot [🔍] */}
-                  <div id="app-header-mobile-search-trigger-slot" className="lg:hidden flex items-center" />
-
-                  {/* Mobile (< lg) Inline Filter Slot [🎚️] beside [🔍] — hidden on lg+ (lives next to Center Search) and when folded into [⋯] */}
-                  <div
-                    id="app-header-filter-slot"
-                    className={`${
-                      activeTab === 'Inventory' || activeTab === 'Quotations'
-                        ? 'hidden'
-                        : 'flex lg:hidden'
-                    } items-center`}
-                  />
-
                   {/* Standard Single-CTA Pages (<= 3 right actions across all viewports) */}
                   {singleCreateAction && (
                     <button
@@ -5221,13 +5296,12 @@ const App = () => {
                       title={singleCreateAction.label}
                       aria-label={singleCreateAction.label}
                     >
-                      <SquarePlus aria-hidden="true" className="w-[21px] h-[21px] stroke-[2] lg:hidden" />
-                      <Plus aria-hidden="true" className="hidden lg:block w-4 h-4 stroke-[2.5]" />
+                      <Plus aria-hidden="true" className="w-5 h-5 lg:w-4 lg:h-4 stroke-[2.5] shrink-0" />
                       <span className="hidden lg:inline">{singleCreateAction.label}</span>
                     </button>
                   )}
 
-                  {/* Quotations: PC shows [⚙️ ราคากลางวัสดุ] + [+ คำนวณราคา]; Mobile shows [🔍] + [⚙️] + [⊞+] (= 3 actions, no overflow needed) */}
+                  {/* Quotations: PC shows [⚙️ ราคากลางวัสดุ] + [+ คำนวณราคา]; Mobile right shows [⚙️] + [+] (Left has [🔍]) */}
                   {activeTab === 'Quotations' && (
                     <>
                       <button
@@ -5251,14 +5325,13 @@ const App = () => {
                         title="คำนวณราคา"
                         aria-label="คำนวณราคา"
                       >
-                        <SquarePlus aria-hidden="true" className="w-[21px] h-[21px] stroke-[2] lg:hidden" />
-                        <Plus aria-hidden="true" className="hidden lg:block w-4 h-4 stroke-[2.5]" />
+                        <Plus aria-hidden="true" className="w-5 h-5 lg:w-4 lg:h-4 stroke-[2.5] shrink-0" />
                         <span className="hidden lg:inline">คำนวณราคา</span>
                       </button>
                     </>
                   )}
 
-                  {/* Inventory: Mobile shows [🔍] + [📷] + [⋯] (= 3); PC shows [📷 สแกนหยิบ/คืน] + [+ เพิ่มพัสดุใหม่] + [⋯] (= 3) */}
+                  {/* Inventory: Mobile right shows [📷] + [⋯] (Left has [🔍]); PC shows [📷 สแกนหยิบ/คืน] + [+ เพิ่มพัสดุใหม่] + [⋯] */}
                   {activeTab === 'Inventory' && (
                     <>
                       <button
@@ -5278,7 +5351,7 @@ const App = () => {
                           setIsCreateInventoryOpen(true);
                           window.dispatchEvent(new CustomEvent('trigger-create-inventory'));
                         }}
-                        className="hidden lg:inline-flex h-10 px-4 bg-violet-600 hover:bg-violet-700 text-white rounded-full text-sm font-bold transition items-center justify-center gap-1.5 active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
+                        className="hidden lg:inline-flex h-10 px-4 theme-logo-bg hover:brightness-95 text-white rounded-xl text-sm font-bold transition items-center justify-center gap-1.5 active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
                         title="เพิ่มพัสดุใหม่"
                         aria-label="เพิ่มพัสดุใหม่"
                       >
@@ -5289,7 +5362,6 @@ const App = () => {
                       <button
                         type="button"
                         onClick={() => {
-                          setIsQuickNavOpen(false);
                           setIsHeaderOverflowOpen((v) => !v);
                         }}
                         className={`relative min-w-9 min-h-9 w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition active:scale-95 cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600 ${
@@ -5846,9 +5918,18 @@ const App = () => {
                           alt="Profile"
                           className="w-full h-full object-cover"
                           referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                          }}
                         />
                       ) : (
                         userProfile?.name?.charAt(0) || 'U'
+                      )}
+                      {userProfile?.image && (
+                        <div className="hidden w-full h-full items-center justify-center bg-slate-900 text-white">
+                          {userProfile?.name?.charAt(0) || 'U'}
+                        </div>
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -6030,19 +6111,19 @@ const App = () => {
       />
 
       {/* Modern Add Item Modal - Expanded Version */}
+      {addModalCloseConfirmDialog}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
            {/* Backdrop */}
            <div
              className={`fixed inset-0 bg-slate-900/60 backdrop-blur-md ${isModalClosing ? 'backdrop-animate-out' : 'backdrop-animate-in'}`}
-             onClick={closeModal}
            />
            
            {/* Modal Content - Responsive Layout with File Drag & Drop */}
            <div 
              onDragOver={handleModalDragOver}
              onDrop={handleModalDrop}
-             className={`bg-white w-full max-w-4xl sm:rounded-[2.5rem] rounded-xl shadow-2xl relative z-10 overflow-hidden border border-slate-100 flex flex-col max-h-[90vh] ${isModalClosing ? 'modal-animate-out' : 'modal-animate-in'}`}
+             className={`bg-white w-full max-w-5xl sm:rounded-[2.5rem] rounded-xl shadow-2xl relative z-10 overflow-hidden border border-slate-100 flex flex-col max-h-[90vh] ${isModalClosing ? 'modal-animate-out' : 'modal-animate-in'}`}
            >
              {/* Header - Compact for Mobile */}
              <div className="px-4 py-4 sm:px-8 sm:py-6 border-b border-slate-100 flex justify-between items-center bg-white sticky top-0 z-20">
@@ -6109,7 +6190,7 @@ const App = () => {
                        </button>
                    )}
                    <button
-                     onClick={closeModal}
+                     onClick={requestCloseAddModal}
                      className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors"
                    >
                      <X className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -6267,39 +6348,28 @@ const App = () => {
                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                               <div className="space-y-2">
                                 <label className="text-sm font-bold text-slate-700 ml-1">หมวดหมู่</label>
-                                <div className="relative">
-                                  <select
-                                    value={projectCategory}
-                                    disabled={viewOnlyMode}
-                                    onChange={(e) => setProjectCategory(e.target.value)}
-                                    className={`w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium appearance-none cursor-pointer ${viewOnlyMode ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
-                                  >
-                                    {projectCategories.map((cat, i) => (
-                                        <option key={i} value={cat}>{cat}</option>
-                                    ))}
-                                  </select>
-                                  <div className="absolute right-4 top-3.5 pointer-events-none opacity-50"><ChevronDown className="w-5 h-5" /></div>
-                                </div>
+                                <StatusDropdown
+                                  value={projectCategory}
+                                  disabled={viewOnlyMode}
+                                  options={projectCategories}
+                                  showDot={false}
+                                  placeholder="เลือกหมวดหมู่งาน..."
+                                  ariaLabel="หมวดหมู่"
+                                  onChange={(val) => setProjectCategory(val)}
+                                  className="font-medium"
+                                />
                               </div>
                               <div className="space-y-2">
                                 <label className="text-sm font-bold text-slate-700 ml-1">สถานะ (ดีล)</label>
-                                <div className="relative">
-                                  <select
-                                    value={dealStatus}
-                                    disabled={viewOnlyMode}
-                                    onChange={(e) => setDealStatus(e.target.value)}
-                                    className={`w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all font-bold appearance-none cursor-pointer ${
-                                      getDealStatusInfo(dealStatus).color
-                                    } ${viewOnlyMode ? 'opacity-70 cursor-not-allowed' : ''}`}
-                                  >
-                                     {dealStatuses.map((status, i) => (
-                                       <option key={i} value={status.value}>{status.label}</option>
-                                      ))}
-                                  </select>
-                                  <div className="absolute right-4 top-3.5 pointer-events-none opacity-50">
-                                     <ChevronDown className="w-5 h-5" />
-                                  </div>
-                                </div>
+                                <StatusDropdown
+                                  value={dealStatus}
+                                  disabled={viewOnlyMode}
+                                  options={dealStatuses}
+                                  showDot={true}
+                                  placeholder="เลือกสถานะดีล..."
+                                  ariaLabel="สถานะ (ดีล)"
+                                  onChange={(val) => setDealStatus(val)}
+                                />
                               </div>
                            </div>
 
@@ -6310,27 +6380,15 @@ const App = () => {
                                  <Wallet className="w-4 h-4 text-indigo-600" />
                                  <span>สถานะการชำระเงิน</span>
                                </label>
-                               <div className="relative">
-                                 <select
-                                   value={paymentStatus}
-                                   disabled={viewOnlyMode}
-                                   onChange={(e) => setPaymentStatus(e.target.value)}
-                                   className={`w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all font-bold appearance-none cursor-pointer ${
-                                     paymentStatus === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                                     paymentStatus === 'deposit' ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                                     paymentStatus === 'refunded' ? 'bg-rose-50 text-rose-700 border-rose-200' :
-                                     'bg-amber-50 text-amber-700 border-amber-200'
-                                   } ${viewOnlyMode ? 'opacity-70 cursor-not-allowed' : ''}`}
-                                 >
-                                   <option value="unpaid">รอชำระเงิน (Unpaid)</option>
-                                   <option value="deposit">ชำระมัดจำแล้ว (Partial / Deposit)</option>
-                                   <option value="paid">ชำระครบถ้วนแล้ว (Paid)</option>
-                                   <option value="refunded">คืนเงิน / ยกเลิก (Refunded)</option>
-                                 </select>
-                                 <div className="absolute right-4 top-3.5 pointer-events-none opacity-50">
-                                   <ChevronDown className="w-5 h-5" />
-                                 </div>
-                               </div>
+                               <StatusDropdown
+                                 value={paymentStatus}
+                                 disabled={viewOnlyMode}
+                                 options={paymentStatuses}
+                                 showDot={true}
+                                 placeholder="เลือกสถานะการชำระเงิน..."
+                                 ariaLabel="สถานะการชำระเงิน"
+                                 onChange={(val) => setPaymentStatus(val)}
+                               />
                              </div>
 
                              {paymentStatus === 'deposit' ? (
@@ -6352,7 +6410,8 @@ const App = () => {
                                  <div className="px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-medium text-slate-500">
                                    {paymentStatus === 'paid' ? 'บันทึกเป็นรายได้ที่ได้รับชำระครบถ้วนแล้ว' :
                                     paymentStatus === 'refunded' ? 'บันทึกเป็นรายการคืนเงินหรือยกเลิก' :
-                                    'บันทึกเป็นยอดรอรับชำระเงิน (ค้างรับ)'}
+                                    paymentStatus === 'unpaid' ? 'บันทึกเป็นยอดรอรับชำระเงิน (ค้างรับ)' :
+                                    `สถานะปัจจุบัน: ${getPaymentStatusInfo(paymentStatus).label}`}
                                  </div>
                                </div>
                              )}
@@ -6550,23 +6609,15 @@ const App = () => {
                            {/* สถานะงาน (ขนส่ง) เปลี่ยนสีได้ */}
                            <div className="space-y-2">
                               <label className="text-sm font-bold text-slate-700 ml-1">สถานะงาน (ขนส่ง)</label>
-                              <div className="relative">
-                                <select
-                                  value={transportStatus}
-                                  disabled={viewOnlyMode}
-                                  onChange={(e) => setTransportStatus(e.target.value)}
-                                  className={`w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all font-bold appearance-none cursor-pointer ${
-                                    getTransportStatusInfo(transportStatus).color
-                                  } ${viewOnlyMode ? 'opacity-70 cursor-not-allowed' : ''}`}
-                                >
-                                   {transportStatuses.map((status, i) => (
-                                      <option key={i} value={status.value}>{status.label}</option>
-                                   ))}
-                                </select>
-                                <div className="absolute right-4 top-3.5 pointer-events-none opacity-50">
-                                   <ChevronDown className="w-5 h-5" />
-                                </div>
-                              </div>
+                              <StatusDropdown
+                                value={transportStatus}
+                                disabled={viewOnlyMode}
+                                options={transportStatuses}
+                                showDot={true}
+                                placeholder="เลือกสถานะขนส่ง..."
+                                ariaLabel="สถานะงาน (ขนส่ง)"
+                                onChange={(val) => setTransportStatus(val)}
+                              />
                            </div>
 
                           {/* Reference Images Upload Area */}
@@ -6937,33 +6988,33 @@ const App = () => {
 
                      {/* 3.1: Customer Support (Bank Calculator) */}
                      <div className="space-y-3">
-                         <h5 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                         <h5 className="font-bold text-slate-800 text-base flex items-center gap-2">
                             <span className="bg-indigo-600 text-white w-5 h-5 rounded-full flex items-center justify-center text-xs font-black shadow-xs">1</span>
                             เงินสนับสนุนศิลปิน (Money Order)
                          </h5>
-                         <p className="text-xs text-slate-500 -mt-1 ml-7 font-medium">ยอดเงินสนับสนุนส่งต่อศิลปินโดยตรง (ไม่นำมาคิดเป็นกำไรของร้าน)</p>
+                         <p className="text-sm text-slate-500 -mt-1 ml-7 font-medium">ยอดเงินสนับสนุนส่งต่อศิลปินโดยตรง (ไม่นำมาคิดเป็นกำไรของร้าน)</p>
                          <div className="bg-slate-50/80 rounded-2xl border border-indigo-200/80 p-4 shadow-2xs">
                               <div className="space-y-3">
                                   {/* Header Row on Desktop */}
-                                  <div className="hidden sm:grid grid-cols-12 gap-2 px-2 text-xs font-bold text-slate-600 uppercase tracking-wide">
-                                      <div className="col-span-3 text-center sm:text-left">วันที่รับเงิน</div>
-                                      <div className="col-span-2">ประเภทแบงค์</div>
-                                      <div className="col-span-2 text-center">จำนวน</div>
-                                      <div className="col-span-2 text-right">รวมเป็นเงิน</div>
-                                      <div className="col-span-2 pl-1">รายละเอียด</div>
-                                      <div className="col-span-1"></div>
+                                  <div className="hidden sm:grid sm:grid-cols-[142px_172px_88px_124px_minmax(0,1fr)_36px] gap-2.5 px-1 text-sm font-bold text-slate-700 tracking-wide">
+                                      <div className="text-left">วันที่รับเงิน</div>
+                                      <div>ประเภทแบงค์</div>
+                                      <div className="text-center">จำนวน</div>
+                                      <div className="text-right">รวมเป็นเงิน</div>
+                                      <div className="pl-1">รายละเอียด</div>
+                                      <div></div>
                                   </div>
 
                                   {/* Dynamic Rows */}
                                   {customerSupportItems.map((item, idx) => (
                                       <div 
                                           key={idx} 
-                                          className="rounded-2xl sm:rounded-none border border-indigo-200 sm:border-none overflow-hidden bg-white sm:bg-transparent shadow-xs sm:shadow-none animate-in fade-in slide-in-from-left-2 duration-300"
+                                          className="rounded-2xl sm:rounded-none border border-indigo-200 sm:border-none overflow-visible bg-white sm:bg-transparent shadow-xs sm:shadow-none animate-in fade-in slide-in-from-left-2 duration-300"
                                       >
                                           {/* Mobile Card Header */}
-                                          <div className="sm:hidden bg-gradient-to-r from-indigo-600 to-indigo-700 px-3.5 py-2 flex items-center justify-between text-white shadow-2xs">
-                                              <span className="font-black text-xs flex items-center gap-1.5 tracking-wide text-white">
-                                                  <Wallet className="w-3.5 h-3.5 text-white/90" />
+                                          <div className="sm:hidden rounded-t-2xl bg-gradient-to-r from-indigo-600 to-indigo-700 px-3.5 py-2.5 flex items-center justify-between text-white shadow-2xs">
+                                              <span className="font-black text-sm flex items-center gap-1.5 tracking-wide text-white">
+                                                  <Wallet className="w-4 h-4 text-white/90" />
                                                   รายการที่ {idx + 1}
                                               </span>
                                               {!viewOnlyMode && (
@@ -6973,83 +7024,83 @@ const App = () => {
                                                       className="w-7 h-7 rounded-lg bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-90"
                                                       title={`ลบรายการที่ ${idx + 1}`}
                                                   >
-                                                      <Trash2 className="w-3.5 h-3.5" />
+                                                      <Trash2 className="w-4 h-4" />
                                                   </button>
                                               )}
                                           </div>
 
                                           {/* Card Content / Desktop Row */}
-                                          <div className="p-3.5 sm:p-0 grid grid-cols-1 sm:grid-cols-12 gap-2.5 sm:gap-2 items-center bg-white sm:bg-transparent">
+                                          <div className="p-3.5 sm:p-0 grid grid-cols-1 sm:grid-cols-[142px_172px_88px_124px_minmax(0,1fr)_36px] gap-2.5 items-center bg-white sm:bg-transparent">
                                           {/* 1. วันที่รับเงิน */}
-                                          <div className="sm:col-span-3">
-                                              <span className="sm:hidden text-xs font-bold text-slate-700 mb-1.5 block text-left">วันที่รับเงิน</span>
+                                          <div>
+                                              <span className="sm:hidden text-sm font-bold text-slate-700 mb-1.5 block text-left">วันที่รับเงิน</span>
                                               <ModernDateTimePicker
                                                   value={item.date ? item.date.slice(0, 10) : ''}
                                                   disabled={viewOnlyMode}
                                                   hasTime={false}
-                                                  compact={true}
+                                                  compact={false}
                                                   placeholder="เลือกวันที่..."
                                                   onChange={(e) => handleSupportItemChange(idx, 'date', e.target.value)}
-                                                  className={`border-indigo-200 h-[34px] bg-white text-slate-800 font-medium ${viewOnlyMode ? 'opacity-80 cursor-not-allowed' : ''}`}
+                                                  className={`!px-3 !py-3 h-[46px] border-indigo-200 bg-white text-slate-800 font-medium ${viewOnlyMode ? 'opacity-80 cursor-not-allowed' : ''}`}
                                               />
                                           </div>
 
                                           {/* 2. ประเภทแบงค์ */}
-                                          <div className="sm:col-span-2 relative">
-                                              <span className="sm:hidden text-xs font-bold text-slate-700 mb-1.5 block text-left">ประเภทแบงค์</span>
-                                              <select
+                                          <div className="relative">
+                                              <span className="sm:hidden text-sm font-bold text-slate-700 mb-1.5 block text-left">ประเภทแบงค์</span>
+                                              <StatusDropdown
                                                   value={item.denomination}
                                                   disabled={viewOnlyMode}
-                                                  onChange={(e) => handleSupportItemChange(idx, 'denomination', e.target.value)}
-                                                  className={`w-full px-2 py-2 bg-white border border-indigo-200 rounded-lg text-xs font-bold text-slate-800 text-center sm:text-left focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
-                                              >
-                                                  {[1000, 500, 100, 50, 20, 10, 5, 2, 1].map(val => (
-                                                      <option key={val} value={val}>{val >= 20 ? `แบงค์ ${val}` : `เหรียญ ${val}`}</option>
-                                                  ))}
-                                              </select>
+                                                  options={BANKNOTE_DENOMINATION_OPTIONS}
+                                                  showDot={true}
+                                                  placeholder="เลือกแบงค์..."
+                                                  ariaLabel="ประเภทแบงค์"
+                                                  onChange={(val) => handleSupportItemChange(idx, 'denomination', val)}
+                                                  className="!px-3 !py-3 !rounded-xl !text-base h-[46px]"
+                                              />
                                           </div>
                                           
                                           {/* 3. จำนวน */}
-                                          <div className="sm:col-span-2">
-                                              <span className="sm:hidden text-xs font-bold text-slate-700 mb-1.5 block text-left">จำนวน</span>
+                                          <div>
+                                              <span className="sm:hidden text-sm font-bold text-slate-700 mb-1.5 block text-left">จำนวน</span>
                                               <input
                                                   type="number"
                                                   placeholder="จำนวน"
                                                   value={item.quantity === 0 ? '' : item.quantity} 
                                                   disabled={viewOnlyMode}
                                                   onChange={(e) => handleSupportItemChange(idx, 'quantity', e.target.value)}
-                                                  className={`w-full px-2 py-2 bg-white border border-indigo-200 rounded-lg text-xs text-center font-bold text-slate-800 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
+                                                  className={`w-full h-[46px] px-2 py-3 bg-white border border-indigo-200 rounded-xl text-base text-center font-bold text-slate-800 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
                                               />
                                           </div>
 
                                           {/* 4. รวมเป็นเงิน */}
-                                          <div className="sm:col-span-2">
-                                              <span className="sm:hidden text-xs font-bold text-slate-700 mb-1.5 block text-left">รวมเป็นเงิน (บาท)</span>
+                                          <div>
+                                              <span className="sm:hidden text-sm font-bold text-slate-700 mb-1.5 block text-left">รวมเป็นเงิน (บาท)</span>
                                               <input
                                                   type="number"
                                                   placeholder="0.00"
                                                   value={item.price === 0 ? '' : item.price} 
                                                   disabled={viewOnlyMode}
                                                   onChange={(e) => handleSupportItemChange(idx, 'price', e.target.value)}
-                                                  className={`w-full px-2 py-2 bg-indigo-50/70 border border-indigo-200 rounded-lg text-xs font-black text-indigo-900 text-center sm:text-right focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'opacity-80 cursor-not-allowed' : ''}`}
+                                                  className={`w-full h-[46px] px-3 py-3 bg-indigo-50/70 border border-indigo-200 rounded-xl text-base font-black text-indigo-900 text-center sm:text-right focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'opacity-80 cursor-not-allowed' : ''}`}
                                               />
                                           </div>
 
                                           {/* 5. รายละเอียด */}
-                                          <div className="sm:col-span-2">
-                                              <span className="sm:hidden text-xs font-bold text-slate-700 mb-1.5 block text-left">รายละเอียด</span>
+                                          <div>
+                                              <span className="sm:hidden text-sm font-bold text-slate-700 mb-1.5 block text-left">รายละเอียด</span>
                                               <input
                                                   type="text"
                                                   placeholder="รายละเอียด (ถ้ามี)"
                                                   value={item.detail || ''}
                                                   disabled={viewOnlyMode}
                                                   onChange={(e) => handleSupportItemChange(idx, 'detail', e.target.value)}
-                                                  className={`w-full px-2 py-2 bg-white border border-indigo-200 rounded-lg text-xs text-left text-slate-800 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
+                                                  className={`w-full h-[46px] px-3 py-3 bg-white border border-indigo-200 rounded-xl text-base text-left text-slate-800 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${viewOnlyMode ? 'bg-slate-50 opacity-80 cursor-not-allowed' : ''}`}
                                               />
                                           </div>
 
                                           {/* 6. ปุ่มลบ (Desktop Only) */}
-                                          <div className="hidden sm:flex sm:col-span-1 justify-end">
+                                          <div className="hidden sm:flex justify-center">
                                               {!viewOnlyMode && (
                                                   <button
                                                       type="button"
@@ -7073,26 +7124,26 @@ const App = () => {
                                       <button
                                           type="button"
                                           onClick={handleAddSupportItem}
-                                          className="flex items-center gap-2 text-xs font-bold text-indigo-700 hover:text-indigo-900 bg-white hover:bg-indigo-50 px-3.5 py-2 rounded-xl border border-indigo-200 transition shadow-2xs cursor-pointer w-fit"
+                                          className="flex items-center gap-2 text-sm font-bold text-indigo-700 hover:text-indigo-900 bg-white hover:bg-indigo-50 px-3.5 py-2 rounded-xl border border-indigo-200 transition shadow-2xs cursor-pointer w-fit"
                                       >
                                           <Plus className="w-4 h-4 text-indigo-600" />
                                           เพิ่มรายการเงิน
                                       </button>
                                     )}
                                     {!viewOnlyMode && (
-                                      <label className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-800 bg-white/80 px-3 py-2 rounded-xl border border-indigo-200 cursor-pointer select-none">
+                                      <label className="inline-flex items-center gap-1.5 text-sm font-bold text-indigo-800 bg-white/80 px-3 py-2 rounded-xl border border-indigo-200 cursor-pointer select-none">
                                         <input
                                           type="checkbox"
                                           checked={syncSupportToCashVault}
                                           onChange={(e) => setSyncSupportToCashVault(e.target.checked)}
                                           className="w-4 h-4 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                                         />
-                                        <Banknote className="w-3.5 h-3.5 text-indigo-600" />
+                                        <Banknote className="w-4 h-4 text-indigo-600" />
                                         <span>เติม+จองธนบัตรเข้าคลังอัตโนมัติตอนบันทึก</span>
                                       </label>
                                     )}
                                   </div>
-                                  <div className="text-xs sm:text-sm font-black text-indigo-900 bg-white px-3.5 py-1.5 rounded-xl border border-indigo-200 shadow-2xs font-mono">
+                                  <div className="text-base font-black text-indigo-900 bg-white px-4 py-2 rounded-xl border border-indigo-200 shadow-2xs font-mono">
                                       รวม: ฿{customerSupportItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0).toLocaleString()}
                                   </div>
                               </div>
@@ -7101,32 +7152,32 @@ const App = () => {
 
                      {/* 3.2: Quotation Items (Replaces Service + Delivery) */}
                      <div className="space-y-3 pt-4 border-t border-slate-100">
-                         <h5 className="font-bold text-emerald-700 text-sm flex items-center gap-2">
-                            <span className="bg-emerald-100 text-emerald-700 w-5 h-5 rounded-full flex items-center justify-center text-xs">2</span>
+                         <h5 className="font-bold text-emerald-700 text-base flex items-center gap-2">
+                            <span className="bg-emerald-100 text-emerald-700 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold">2</span>
                             รายการเสนอราคา (Quotation)
                          </h5>
                          <div className="bg-emerald-50/50 rounded-2xl border border-emerald-100 p-4">
                              <div className="space-y-3">
                                 {/* Header Row */}
-                                <div className="hidden sm:grid grid-cols-12 gap-2 px-2 text-xs font-bold text-emerald-800/60 uppercase tracking-wide">
-                                   <div className="col-span-3 text-center sm:text-left">วันที่ทำบิล/รับเงิน</div>
-                                   <div className="col-span-2">หมวดหมู่</div>
-                                   <div className="col-span-3">รายละเอียดรายการ</div>
-                                   <div className="col-span-1 text-center">จำนวน</div>
-                                   <div className="col-span-2 text-right">ราคา/หน่วย</div>
-                                   <div className="col-span-1"></div>
+                                <div className="hidden sm:grid sm:grid-cols-[142px_minmax(175px,1.25fr)_minmax(0,1.4fr)_72px_118px_36px] gap-2 px-1 text-sm font-bold text-emerald-800/80 tracking-wide">
+                                   <div className="text-left">วันที่ทำบิล/รับเงิน</div>
+                                   <div>หมวดหมู่</div>
+                                   <div>รายละเอียดรายการ</div>
+                                   <div className="text-center">จำนวน</div>
+                                   <div className="text-right">ราคา/หน่วย</div>
+                                   <div></div>
                                 </div>
 
                                 {/* Dynamic Rows */}
                                 {quotationItems.map((item, idx) => (
                                    <div 
                                        key={idx} 
-                                       className="rounded-2xl sm:rounded-none border border-emerald-200 sm:border-none overflow-hidden bg-white sm:bg-transparent shadow-xs sm:shadow-none animate-in fade-in slide-in-from-left-2 duration-300"
+                                       className="rounded-2xl sm:rounded-none border border-emerald-200 sm:border-none overflow-visible bg-white sm:bg-transparent shadow-xs sm:shadow-none animate-in fade-in slide-in-from-left-2 duration-300"
                                    >
                                        {/* Mobile Card Header */}
-                                       <div className="sm:hidden bg-gradient-to-r from-emerald-600 to-emerald-700 px-3.5 py-2 flex items-center justify-between text-white shadow-2xs">
-                                           <span className="font-black text-xs flex items-center gap-1.5 tracking-wide">
-                                               <FileText className="w-3.5 h-3.5 text-white/90" />
+                                       <div className="sm:hidden rounded-t-2xl bg-gradient-to-r from-emerald-600 to-emerald-700 px-3.5 py-2.5 flex items-center justify-between text-white shadow-2xs">
+                                           <span className="font-black text-sm flex items-center gap-1.5 tracking-wide">
+                                               <FileText className="w-4 h-4 text-white/90" />
                                                รายการที่ {idx + 1}
                                            </span>
                                            {!viewOnlyMode && (
@@ -7136,66 +7187,66 @@ const App = () => {
                                                    className="w-7 h-7 rounded-lg bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-90"
                                                    title={`ลบรายการที่ ${idx + 1}`}
                                                >
-                                                   <Trash2 className="w-3.5 h-3.5" />
+                                                   <Trash2 className="w-4 h-4" />
                                                </button>
                                            )}
                                        </div>
 
                                        {/* Card Content / Desktop Row */}
-                                       <div className="p-3 sm:p-0 grid grid-cols-1 sm:grid-cols-12 gap-2 items-start">
-                                       <div className="sm:col-span-3">
-                                          <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">วันที่ทำบิล/รับเงิน</span>
+                                       <div className="p-3 sm:p-0 grid grid-cols-1 sm:grid-cols-[142px_minmax(175px,1.25fr)_minmax(0,1.4fr)_72px_118px_36px] gap-2 items-center">
+                                       <div>
+                                          <span className="sm:hidden text-sm font-bold text-emerald-600 mb-1.5 block">วันที่ทำบิล/รับเงิน</span>
                                           <ModernDateTimePicker
                                             value={item.date ? item.date.slice(0, 10) : ''}
                                             hasTime={false}
-                                            compact={true}
+                                            compact={false}
                                             placeholder="เลือกวันที่..."
                                             onChange={(e) => handleQuotationItemChange(idx, 'date', e.target.value)}
-                                            className="border-emerald-200 h-[34px]"
+                                            className="!px-3 !py-3 h-[46px] border-emerald-200"
                                           />
                                        </div>
-                                       <div className="sm:col-span-2">
-                                          <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">หมวดหมู่</span>
+                                       <div>
+                                          <span className="sm:hidden text-sm font-bold text-emerald-600 mb-1.5 block">หมวดหมู่</span>
                                           <DbCombobox
-                                            options={expenseCategories}
+                                            options={projectCategories}
                                             placeholder="ระบุหมวดหมู่..."
                                             value={item.category}
                                             onChange={(val) => handleQuotationItemChange(idx, 'category', val)}
-                                            inputClassName="w-full px-2 py-2 bg-white border border-emerald-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-800"
+                                            inputClassName="w-full h-[46px] px-3 py-3 bg-white border border-emerald-200 rounded-xl text-base font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-800"
                                           />
                                        </div>
-                                       <div className="sm:col-span-3">
-                                          <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">รายละเอียด</span>
+                                       <div>
+                                          <span className="sm:hidden text-sm font-bold text-emerald-600 mb-1.5 block">รายละเอียด</span>
                                           <input
                                             type="text"
                                             placeholder="รายละเอียดเพิ่มเติม..."
                                             value={item.detail}
                                             onChange={(e) => handleQuotationItemChange(idx, 'detail', e.target.value)}
-                                            className="w-full px-2 py-2 bg-white border border-emerald-200 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                                            className="w-full h-[46px] px-3 py-3 bg-white border border-emerald-200 rounded-xl text-base focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-800"
                                           />
                                        </div>
-                                       <div className="sm:col-span-1">
-                                          <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">จำนวน</span>
+                                       <div>
+                                          <span className="sm:hidden text-sm font-bold text-emerald-600 mb-1.5 block">จำนวน</span>
                                           <input
                                             type="number"
                                             placeholder="1"
                                             value={item.quantity}
                                             onChange={(e) => handleQuotationItemChange(idx, 'quantity', e.target.value)}
-                                            className="w-full px-2 py-2 bg-white border border-emerald-200 rounded-lg text-xs font-bold text-center text-slate-700 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                                            className="w-full h-[46px] px-2 py-3 bg-white border border-emerald-200 rounded-xl text-base font-bold text-center text-slate-700 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                                           />
                                        </div>
-                                       <div className="sm:col-span-2">
-                                          <span className="sm:hidden text-xs font-bold text-emerald-500 mb-1 block">ราคา/หน่วย</span>
+                                       <div>
+                                          <span className="sm:hidden text-sm font-bold text-emerald-600 mb-1.5 block">ราคา/หน่วย</span>
                                           <input
                                             type="number"
                                             placeholder="0.00"
                                             value={item.unitPrice !== undefined ? item.unitPrice : item.price}
                                             onChange={(e) => handleQuotationItemChange(idx, 'unitPrice', e.target.value)}
-                                            className="w-full px-2 py-2 bg-white border border-emerald-200 rounded-lg text-xs font-black text-emerald-700 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-right"
+                                            className="w-full h-[46px] px-3 py-3 bg-white border border-emerald-200 rounded-xl text-base font-black text-emerald-700 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-right"
                                           />
                                        </div>
                                        {/* 6. ปุ่มลบ (Desktop Only) */}
-                                       <div className="hidden sm:flex sm:col-span-1 justify-end pt-1">
+                                       <div className="hidden sm:flex justify-center">
                                           {!viewOnlyMode && (
                                               <button
                                                 type="button"
@@ -7215,12 +7266,12 @@ const App = () => {
                               <div className="flex justify-between items-center mt-4">
                                   <button
                                     onClick={handleAddQuotationItem}
-                                    className="flex items-center gap-2 text-xs font-bold text-emerald-600 hover:text-emerald-700 hover:bg-emerald-100 px-3 py-2 rounded-lg transition w-fit"
+                                    className="flex items-center gap-2 text-sm font-bold text-emerald-600 hover:text-emerald-700 hover:bg-emerald-100 px-3 py-2 rounded-xl transition w-fit cursor-pointer"
                                   >
                                     <Plus className="w-4 h-4" />
                                     เพิ่มรายการเสนอราคา
                                   </button>
-                                  <div className="text-sm font-bold text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">
+                                  <div className="text-base font-black text-emerald-800 bg-white px-4 py-2 rounded-xl border border-emerald-200 shadow-2xs font-mono">
                                       รวม: ฿{quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0).toLocaleString()}
                                   </div>
                               </div>
@@ -7229,32 +7280,32 @@ const App = () => {
 
                      {/* 3.3: Expenses (Moved to Row 3) */}
                      <div className="space-y-3 pt-4 border-t border-slate-100">
-                         <h5 className="font-bold text-rose-700 text-sm flex items-center gap-2">
-                            <TrendingDown className="w-4 h-4" />
+                         <h5 className="font-bold text-rose-700 text-base flex items-center gap-2">
+                            <TrendingDown className="w-5 h-5" />
                             รายจ่ายจริง / ต้นทุนเพิ่ม (Expenses)
                          </h5>
-                         <p className="text-xs text-slate-400 -mt-1 ml-6">รายการนี้ไม่แสดงให้ลูกค้าเห็น (ใช้สำหรับคำนวณกำไรภายใน)</p>
+                         <p className="text-sm text-slate-400 -mt-1 ml-7">รายการนี้ไม่แสดงให้ลูกค้าเห็น (ใช้สำหรับคำนวณกำไรภายใน)</p>
                          <div className="bg-rose-50/50 rounded-2xl border border-rose-100 p-4">
                              <div className="space-y-3">
                                 {/* Header Row */}
-                                <div className="hidden sm:grid grid-cols-12 gap-2 px-2 text-xs font-bold text-rose-800/60 uppercase tracking-wide">
-                                   <div className="col-span-3 text-center sm:text-left">วันที่จ่ายเงิน</div>
-                                   <div className="col-span-2">หมวดหมู่</div>
-                                   <div className="col-span-3">รายละเอียด</div>
-                                   <div className="col-span-1 text-center">จำนวน</div>
-                                   <div className="col-span-2 text-right">ราคา/หน่วย</div>
-                                   <div className="col-span-1"></div>
+                                <div className="hidden sm:grid sm:grid-cols-[142px_minmax(175px,1.25fr)_minmax(0,1.4fr)_72px_118px_36px] gap-2 px-1 text-sm font-bold text-rose-800/80 tracking-wide">
+                                   <div className="text-left">วันที่จ่ายเงิน</div>
+                                   <div>หมวดหมู่</div>
+                                   <div>รายละเอียด</div>
+                                   <div className="text-center">จำนวน</div>
+                                   <div className="text-right">ราคา/หน่วย</div>
+                                   <div></div>
                                 </div>
 
                                 {expenses.map((item, idx) => (
                                     <div 
                                         key={idx} 
-                                        className="rounded-2xl sm:rounded-none border border-rose-200 sm:border-none overflow-hidden bg-white sm:bg-transparent shadow-xs sm:shadow-none animate-in fade-in slide-in-from-left-2 duration-300"
+                                        className="rounded-2xl sm:rounded-none border border-rose-200 sm:border-none overflow-visible bg-white sm:bg-transparent shadow-xs sm:shadow-none animate-in fade-in slide-in-from-left-2 duration-300"
                                     >
                                         {/* Mobile Card Header */}
-                                        <div className="sm:hidden bg-gradient-to-r from-rose-500 to-rose-600 px-3.5 py-2 flex items-center justify-between text-white shadow-2xs">
-                                            <span className="font-black text-xs flex items-center gap-1.5 tracking-wide">
-                                                <TrendingDown className="w-3.5 h-3.5 text-white/90" />
+                                        <div className="sm:hidden rounded-t-2xl bg-gradient-to-r from-rose-500 to-rose-600 px-3.5 py-2.5 flex items-center justify-between text-white shadow-2xs">
+                                            <span className="font-black text-sm flex items-center gap-1.5 tracking-wide">
+                                                <TrendingDown className="w-4 h-4 text-white/90" />
                                                 รายการที่ {idx + 1}
                                             </span>
                                             {!viewOnlyMode && (
@@ -7264,66 +7315,66 @@ const App = () => {
                                                     className="w-7 h-7 rounded-lg bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition active:scale-90"
                                                     title={`ลบรายการที่ ${idx + 1}`}
                                                 >
-                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                    <Trash2 className="w-4 h-4" />
                                                 </button>
                                             )}
                                         </div>
 
                                         {/* Card Content / Desktop Row */}
-                                        <div className="p-3 sm:p-0 grid grid-cols-1 sm:grid-cols-12 gap-2 items-start">
-                                            <div className="sm:col-span-3">
-                                               <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">วันที่จ่ายเงิน</span>
+                                        <div className="p-3 sm:p-0 grid grid-cols-1 sm:grid-cols-[142px_minmax(175px,1.25fr)_minmax(0,1.4fr)_72px_118px_36px] gap-2 items-center">
+                                            <div>
+                                               <span className="sm:hidden text-sm font-bold text-rose-500 mb-1.5 block">วันที่จ่ายเงิน</span>
                                                <ModernDateTimePicker
                                                  value={item.date ? item.date.slice(0, 10) : ''}
                                                  hasTime={false}
-                                                 compact={true}
+                                                 compact={false}
                                                  placeholder="เลือกวันที่..."
                                                  onChange={(e) => handleExpenseChange(idx, 'date', e.target.value)}
-                                                 className="border-rose-200 h-[34px]"
+                                                 className="!px-3 !py-3 h-[46px] border-rose-200"
                                                />
                                             </div>
-                                            <div className="sm:col-span-2">
-                                               <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">หมวดหมู่</span>
+                                            <div>
+                                               <span className="sm:hidden text-sm font-bold text-rose-500 mb-1.5 block">หมวดหมู่</span>
                                                <DbCombobox
                                                  options={expenseCategories}
                                                  placeholder="หมวดหมู่..."
                                                  value={item.category}
                                                  onChange={(val) => handleExpenseChange(idx, 'category', val)}
-                                                 inputClassName="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-slate-800"
+                                                 inputClassName="w-full h-[46px] px-3 py-3 bg-white border border-rose-200 rounded-xl text-base font-medium focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-slate-800"
                                                />
                                             </div>
-                                            <div className="sm:col-span-3">
-                                               <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">รายละเอียด</span>
+                                            <div>
+                                               <span className="sm:hidden text-sm font-bold text-rose-500 mb-1.5 block">รายละเอียด</span>
                                                <DbCombobox
                                                  options={inventoryItems}
                                                  dbTable="inventory_items"
                                                  placeholder="รายละเอียด (เช่น โฟม, ดอกไม้)..."
                                                  value={item.detail}
                                                  onChange={(val) => handleExpenseChange(idx, 'detail', val)}
-                                                 inputClassName="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-slate-800"
+                                                 inputClassName="w-full h-[46px] px-3 py-3 bg-white border border-rose-200 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-slate-800"
                                                />
                                             </div>
-                                            <div className="sm:col-span-1">
-                                               <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">จำนวน</span>
+                                            <div>
+                                               <span className="sm:hidden text-sm font-bold text-rose-500 mb-1.5 block">จำนวน</span>
                                                <input
                                                  type="number"
                                                  placeholder="1"
                                                  value={item.quantity}
                                                  onChange={(e) => handleExpenseChange(idx, 'quantity', e.target.value)}
-                                                 className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs font-bold text-center text-slate-700 focus:ring-2 focus:ring-rose-500/20"
+                                                 className="w-full h-[46px] px-2 py-3 bg-white border border-rose-200 rounded-xl text-base font-bold text-center text-slate-700 focus:ring-2 focus:ring-rose-500/20"
                                                />
                                             </div>
-                                            <div className="sm:col-span-2">
-                                               <span className="sm:hidden text-xs font-bold text-rose-400 mb-1 block">ราคา/หน่วย</span>
+                                            <div>
+                                               <span className="sm:hidden text-sm font-bold text-rose-500 mb-1.5 block">ราคา/หน่วย</span>
                                                <input
                                                  type="number"
                                                  placeholder="0.00"
                                                  value={item.unitPrice !== undefined ? item.unitPrice : item.price}
                                                  onChange={(e) => handleExpenseChange(idx, 'unitPrice', e.target.value)}
-                                                 className="w-full px-2 py-2 bg-white border border-rose-200 rounded-lg text-xs font-semibold text-rose-800 focus:ring-2 focus:ring-rose-500/20 text-right"
+                                                 className="w-full h-[46px] px-3 py-3 bg-white border border-rose-200 rounded-xl text-base font-semibold text-rose-800 focus:ring-2 focus:ring-rose-500/20 text-right"
                                                />
                                             </div>
-                                            <div className="hidden sm:flex sm:col-span-1 justify-end pt-1">
+                                            <div className="hidden sm:flex justify-center">
                                                {!viewOnlyMode && (
                                                    <button
                                                      type="button"
@@ -7345,25 +7396,25 @@ const App = () => {
                                       <button
                                         type="button"
                                         onClick={handleAddExpense}
-                                        className="flex items-center gap-2 text-xs font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-3 py-2 rounded-lg transition w-fit cursor-pointer"
+                                        className="flex items-center gap-2 text-sm font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-3.5 py-2 rounded-xl transition w-fit cursor-pointer"
                                       >
                                         <Plus className="w-4 h-4" />
                                         เพิ่มรายการจ่าย
                                       </button>
                                     {!viewOnlyMode && (
-                                      <label className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-800 bg-white px-3 py-1.5 rounded-xl border border-rose-200 cursor-pointer select-none">
+                                      <label className="inline-flex items-center gap-1.5 text-sm font-bold text-rose-800 bg-white px-3 py-2 rounded-xl border border-rose-200 cursor-pointer select-none">
                                         <input
                                           type="checkbox"
                                           checked={syncExpensesToWarehouse}
                                           onChange={(e) => setSyncExpensesToWarehouse(e.target.checked)}
                                           className="w-4 h-4 rounded border-rose-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
                                         />
-                                        <Package className="w-3.5 h-3.5 text-rose-600" />
+                                        <Package className="w-4 h-4 text-rose-600" />
                                         <span>เติมของที่ซื้อเข้ากระเป๋าคลังอัตโนมัติตอนบันทึก</span>
                                       </label>
                                     )}
                                   </div>
-                                  <div className="text-sm font-bold text-rose-800 bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-100">
+                                  <div className="text-base font-black text-rose-800 bg-white px-4 py-2 rounded-xl border border-rose-200 shadow-2xs font-mono">
                                       รวม: ฿{expenses.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0).toLocaleString()}
                                   </div>
                               </div>

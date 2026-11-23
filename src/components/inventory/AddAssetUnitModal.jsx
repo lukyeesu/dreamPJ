@@ -6,7 +6,9 @@ import {
   Loader2
 } from 'lucide-react';
 import Toast from '../common/Toast.jsx';
+import StatusDropdown from '../common/StatusDropdown.jsx';
 import { useWarehouseCommandKey } from '../../hooks/useWarehouseCommandKey.js';
+import { useModalCloseGuard } from '../../hooks/useModalCloseGuard.jsx';
 
 /**
  * AddAssetUnitModal Component
@@ -70,28 +72,32 @@ export default function AddAssetUnitModal({
     }
   }, [isOpen]);
 
-  // ESC key listener (blocked during active pending)
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && !isPendingRef.current && !isSubmitting && !isLocalPending) {
-        onClose?.();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isSubmitting, isLocalPending, onClose]);
-
-  if (!isOpen) return null;
-
   const pending = isSubmitting || isLocalPending || isSearching;
 
-  const handleClose = () => {
-    if (isPendingRef.current || pending) return;
+  const doClose = () => {
     setSelectedItemId('');
     setUnitCode('');
     setNotes('');
     if (onClose) onClose();
+  };
+
+  const {
+    requestClose,
+    closeConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen,
+    onClose: doClose,
+    shouldConfirm: true,
+    watch: isOpen ? [selectedItemId, unitCode, notes] : null,
+    disabled: pending,
+    listenEscape: true,
+  });
+
+  if (!isOpen) return null;
+
+  const handleClose = () => {
+    if (isPendingRef.current || pending) return;
+    requestClose();
   };
 
   const handleSubmit = async (e) => {
@@ -161,18 +167,13 @@ export default function AddAssetUnitModal({
     }
   };
 
-  const handleBackdropClick = (e) => {
-    if (e.target === e.currentTarget && !isPendingRef.current && !pending) {
-      handleClose();
-    }
-  };
-
   const modalContent = (
+    <>
+    {closeConfirmDialog}
     <div
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
-      onClick={handleBackdropClick}
     >
       {toastMessage && (
         <Toast
@@ -241,22 +242,23 @@ export default function AddAssetUnitModal({
               <label className="block text-sm font-bold text-slate-700 mb-1">
                 รายการเครื่องมือ: <span className="text-rose-600">*</span>
               </label>
-              <select
+              <StatusDropdown
                 value={effectiveItemId}
-                onChange={(e) => setSelectedItemId(e.target.value)}
-                required
+                onChange={(val) => setSelectedItemId(val)}
                 disabled={pending}
-                className="w-full min-h-[44px] px-3 bg-white border border-slate-200 rounded-xl text-sm sm:text-sm text-slate-800 outline-hidden focus:border-[var(--theme-main,#8b5cf6)]"
-              >
-                <option value="">-- เลือกรายการเครื่องมือ --</option>
-                {items
-                  .filter((it) => it.item_type === 'asset' || it.item_type === 'tool')
-                  .map((it) => (
-                    <option key={it.id} value={it.id}>
-                      {it.name} {it.color ? `(สี${it.color})` : ''} {it.code ? `[${it.code}]` : ''}
-                    </option>
-                  ))}
-              </select>
+                placeholder="-- เลือกรายการเครื่องมือ --"
+                showDot={false}
+                options={[
+                  { value: '', label: '-- เลือกรายการเครื่องมือ --' },
+                  ...items
+                    .filter((it) => it.item_type === 'asset' || it.item_type === 'tool')
+                    .map((it) => ({
+                      value: it.id,
+                      label: `${it.name}${it.color ? ` (สี${it.color})` : ''}${it.code ? ` [${it.code}]` : ''}`
+                    }))
+                ]}
+                className="w-full"
+              />
             </div>
 
             {/* Unit Code */}
@@ -314,6 +316,7 @@ export default function AddAssetUnitModal({
         </form>
       </div>
     </div>
+    </>
   );
 
   if (typeof document !== 'undefined' && document.body) {

@@ -22,6 +22,8 @@ import {
 import { saveStaffSync } from '../../services/syncService';
 import db from '../../services/db';
 import ModernDateTimePicker from '../common/ModernDateTimePicker';
+import { processImageUrl } from '../../utils/formatters';
+import { useModalCloseGuard } from '../../hooks/useModalCloseGuard';
 
 export default function UserProfileModal({
   isOpen,
@@ -51,6 +53,12 @@ export default function UserProfileModal({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [avatarLoadError, setAvatarLoadError] = useState(false);
+
+  const resolvedAvatarUrl = processImageUrl(formData.avatar_url || '');
+  useEffect(() => {
+    setAvatarLoadError(false);
+  }, [resolvedAvatarUrl]);
 
   // Load latest staff data from db.staff when modal opens
   useEffect(() => {
@@ -104,14 +112,17 @@ export default function UserProfileModal({
     return () => { isMounted = false; };
   }, [isOpen, userProfile]);
 
-  // Handle escape key
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && isOpen) onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  const {
+    requestClose,
+    closeConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen,
+    onClose,
+    shouldConfirm: isEditing,
+    watch: isOpen ? formData : null,
+    disabled: isSaving,
+    listenEscape: true,
+  });
 
   if (!isOpen) return null;
 
@@ -191,11 +202,12 @@ export default function UserProfileModal({
   };
 
   return (
+    <>
+    {closeConfirmDialog}
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4">
       {/* Backdrop */}
       <div 
         className="fixed inset-0 bg-slate-900/60 backdrop-blur-md backdrop-animate-in"
-        onClick={onClose}
       />
 
       {/* Modal Dialog */}
@@ -223,7 +235,7 @@ export default function UserProfileModal({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-xl transition-colors cursor-pointer active:scale-95"
           >
             <X className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -250,14 +262,13 @@ export default function UserProfileModal({
             {/* Top Identity Card */}
             <div className="p-4 bg-gradient-to-br from-indigo-50/70 via-slate-50 to-purple-50/40 rounded-2xl border border-indigo-100/70 flex flex-col sm:flex-row items-center gap-4">
               <div className="w-20 h-20 rounded-full bg-slate-900 text-white font-bold flex items-center justify-center shrink-0 overflow-hidden ring-4 ring-white shadow-lg text-2xl relative group">
-                {formData.avatar_url ? (
+                {resolvedAvatarUrl && !avatarLoadError ? (
                   <img
-                    src={formData.avatar_url}
+                    src={resolvedAvatarUrl}
                     alt={formData.name}
+                    referrerPolicy="no-referrer"
                     className="w-full h-full object-cover"
-                    onError={(e) => {
-                      e.target.style.display = 'none';
-                    }}
+                    onError={() => setAvatarLoadError(true)}
                   />
                 ) : (
                   formData.name ? formData.name.charAt(0).toUpperCase() : 'U'
@@ -398,7 +409,7 @@ export default function UserProfileModal({
                 </label>
                 <ModernDateTimePicker
                   value={formData.birth_date}
-                  onChange={(val) => setFormData({ ...formData, birth_date: val })}
+                  onChange={(e) => setFormData({ ...formData, birth_date: e?.target ? e.target.value : e })}
                   disabled={!isEditing}
                   placeholder="เลือกวันเดือนปีเกิด"
                   hasTime={false}
@@ -545,15 +556,16 @@ export default function UserProfileModal({
           <div className="px-5 py-4 sm:px-8 sm:py-5 border-t border-slate-100 bg-white/95 backdrop-blur-xl sticky bottom-0 z-30 flex items-center justify-between gap-3 shrink-0">
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               className="py-3 px-5 sm:px-6 rounded-2xl text-slate-600 bg-slate-100/80 hover:bg-slate-200 font-bold text-sm transition-colors active:scale-95 cursor-pointer"
             >
               {isEditing ? 'ยกเลิก' : 'ปิด'}
             </button>
             {!isEditing ? (
               <button
+                key="unlock-edit-btn"
                 type="button"
-                onClick={() => setIsEditing(true)}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsEditing(true); }}
                 className="py-3 px-7 sm:px-8 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 rounded-2xl font-bold text-sm shadow-sm flex items-center justify-center gap-2 active:scale-95 transition-colors cursor-pointer"
               >
                 <Edit className="w-4 h-4" />
@@ -561,6 +573,7 @@ export default function UserProfileModal({
               </button>
             ) : (
               <button
+                key="submit-save-btn"
                 type="submit"
                 disabled={isSaving}
                 className="py-3 px-7 sm:px-8 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 cursor-pointer"
@@ -578,5 +591,6 @@ export default function UserProfileModal({
 
       </div>
     </div>
+    </>
   );
 }

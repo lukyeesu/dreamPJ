@@ -7,7 +7,9 @@ import {
   Loader2
 } from 'lucide-react';
 import Toast from '../common/Toast.jsx';
+import StatusDropdown from '../common/StatusDropdown.jsx';
 import { useWarehouseCommandKey } from '../../hooks/useWarehouseCommandKey.js';
+import { useModalCloseGuard } from '../../hooks/useModalCloseGuard.jsx';
 
 /**
  * StockAdjustModal Component
@@ -47,17 +49,27 @@ export default function StockAdjustModal({
     }
   }, [isOpen]);
 
-  // ESC key listener (blocked during active pending)
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && !isPendingRef.current && !isSubmitting && !isLocalPending) {
-        if (onClose) onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isSubmitting, isLocalPending, onClose]);
+  const doClose = () => {
+    setSelectedItemId('');
+    setDirection('in');
+    setQuantity('');
+    setReason('supplier_receive');
+    setNotes('');
+    setToastMessage(null);
+    onClose?.();
+  };
+
+  const {
+    requestClose,
+    closeConfirmDialog,
+  } = useModalCloseGuard({
+    isOpen,
+    onClose: doClose,
+    shouldConfirm: true,
+    watch: isOpen ? [selectedItemId, direction, quantity, reason, notes] : null,
+    disabled: isSubmitting || isLocalPending,
+    listenEscape: true,
+  });
 
   if (!isOpen) return null;
 
@@ -134,18 +146,13 @@ export default function StockAdjustModal({
     }
   };
 
-  const handleBackdropClick = (e) => {
-    if (e.target === e.currentTarget && !isPendingRef.current && !pending) {
-      if (onClose) onClose();
-    }
-  };
-
   const modalContent = (
+    <>
+    {closeConfirmDialog}
     <div
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
-      onClick={handleBackdropClick}
     >
       {toastMessage && (
         <Toast
@@ -166,7 +173,7 @@ export default function StockAdjustModal({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             disabled={pending}
             className="min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer disabled:opacity-40"
           >
@@ -219,22 +226,23 @@ export default function StockAdjustModal({
               <label className="block text-sm font-bold text-slate-700 mb-1">
                 เลือกรายการพัสดุ: <span className="text-rose-600">*</span>
               </label>
-              <select
+              <StatusDropdown
                 value={selectedItemId}
-                onChange={(e) => setSelectedItemId(e.target.value)}
-                required
+                onChange={(val) => setSelectedItemId(val)}
                 disabled={pending}
-                className="w-full min-h-[44px] px-3 bg-white border border-slate-200 rounded-xl text-sm sm:text-sm text-slate-800 outline-hidden focus:border-[var(--theme-main,#8b5cf6)]"
-              >
-                <option value="">-- เลือกรายการพัสดุ --</option>
-                {items
-                  .filter((it) => it.item_type !== 'banknote' && it.item_type !== 'task')
-                  .map((it) => (
-                    <option key={it.id} value={it.id}>
-                      {it.name} {it.color ? `(สี${it.color})` : ''} - คงเหลือ {it.current_stock || 0} {it.unit}
-                    </option>
-                  ))}
-              </select>
+                placeholder="-- เลือกรายการพัสดุ --"
+                showDot={false}
+                options={[
+                  { value: '', label: '-- เลือกรายการพัสดุ --' },
+                  ...items
+                    .filter((it) => it.item_type !== 'banknote' && it.item_type !== 'task')
+                    .map((it) => ({
+                      value: it.id,
+                      label: `${it.name}${it.color ? ` (สี${it.color})` : ''} - คงเหลือ ${it.current_stock || 0} ${it.unit}`
+                    }))
+                ]}
+                className="w-full"
+              />
             </div>
 
             {/* Current Stock Preview */}
@@ -268,28 +276,28 @@ export default function StockAdjustModal({
             {/* Reason */}
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-1">เหตุผลในการทำรายการ:</label>
-              <select
+              <StatusDropdown
                 value={reason}
-                onChange={(e) => setReason(e.target.value)}
+                onChange={(val) => setReason(val)}
                 disabled={pending}
-                className="w-full min-h-[44px] px-3 bg-white border border-slate-200 rounded-xl text-sm sm:text-sm text-slate-800 outline-hidden focus:border-[var(--theme-main,#8b5cf6)]"
-              >
-                {direction === 'in' ? (
-                  <>
-                    <option value="supplier_receive">รับสินค้าใหม่จากซัพพลายเออร์</option>
-                    <option value="audit_gain">ตรวจนับสต็อกประจำงวด (พบเกิน)</option>
-                    <option value="supplier_return">รับสินค้าคืนจากลูกค้า/ผู้ผลิต</option>
-                    <option value="other_in">อื่นๆ</option>
-                  </>
-                ) : (
-                  <>
-                    <option value="damaged">ชำรุดเสียหายจากการเก็บรักษา</option>
-                    <option value="audit_loss">ตรวจนับสต็อกประจำงวด (พบขาด/หาไม่พบ)</option>
-                    <option value="expired">หมดอายุ/เสื่อมสภาพ</option>
-                    <option value="other_out">อื่นๆ</option>
-                  </>
-                )}
-              </select>
+                showDot={false}
+                options={
+                  direction === 'in'
+                    ? [
+                        { value: 'supplier_receive', label: 'รับสินค้าใหม่จากซัพพลายเออร์' },
+                        { value: 'audit_gain', label: 'ตรวจนับสต็อกประจำงวด (พบเกิน)' },
+                        { value: 'supplier_return', label: 'รับสินค้าคืนจากลูกค้า/ผู้ผลิต' },
+                        { value: 'other_in', label: 'อื่นๆ' }
+                      ]
+                    : [
+                        { value: 'damaged', label: 'ชำรุดเสียหายจากการเก็บรักษา' },
+                        { value: 'audit_loss', label: 'ตรวจนับสต็อกประจำงวด (พบขาด/หาไม่พบ)' },
+                        { value: 'expired', label: 'หมดอายุ/เสื่อมสภาพ' },
+                        { value: 'other_out', label: 'อื่นๆ' }
+                      ]
+                }
+                className="w-full"
+              />
             </div>
 
             {/* Notes */}
@@ -310,7 +318,7 @@ export default function StockAdjustModal({
           <div className="flex items-center justify-end gap-2 p-3 sm:p-4 border-t border-slate-100 bg-slate-50/60 shrink-0">
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               disabled={pending}
               className="min-h-[44px] px-4 py-2 border border-slate-200 text-slate-600 rounded-xl text-sm sm:text-sm font-bold hover:bg-slate-50 cursor-pointer disabled:opacity-50"
             >
@@ -330,6 +338,7 @@ export default function StockAdjustModal({
         </form>
       </div>
     </div>
+    </>
   );
 
   if (typeof document !== 'undefined' && document.body) {

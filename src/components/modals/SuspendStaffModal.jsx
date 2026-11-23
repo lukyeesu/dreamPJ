@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import StatusDropdown from '../common/StatusDropdown';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -22,6 +23,13 @@ const PRESETS = [
   { label: '1 ปี', value: 1, unit: 'years' },
   { label: 'ถาวร', value: null, unit: 'permanent' },
   { label: 'กำหนดเอง', value: null, unit: 'custom' }
+];
+
+const UNIT_OPTIONS = [
+  { value: 'minutes', label: 'นาที (Minutes)' },
+  { value: 'hours', label: 'ชั่วโมง (Hours)' },
+  { value: 'days', label: 'วัน (Days)' },
+  { value: 'years', label: 'ปี (Years)' },
 ];
 
 export default function SuspendStaffModal({
@@ -255,16 +263,16 @@ export default function SuspendStaffModal({
                   className="w-24 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
                   placeholder="จำนวน"
                 />
-                <select
-                  value={customUnit}
-                  onChange={(e) => setCustomUnit(e.target.value)}
-                  className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs sm:text-sm font-bold focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 cursor-pointer"
-                >
-                  <option value="minutes">นาที (Minutes)</option>
-                  <option value="hours">ชั่วโมง (Hours)</option>
-                  <option value="days">วัน (Days)</option>
-                  <option value="years">ปี (Years)</option>
-                </select>
+                <div className="flex-1">
+                  <StatusDropdown
+                    value={customUnit}
+                    onChange={setCustomUnit}
+                    options={UNIT_OPTIONS}
+                    showDot={false}
+                    size="sm"
+                    ariaLabel="หน่วยเวลา"
+                  />
+                </div>
               </div>
             )}
 
