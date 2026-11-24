@@ -3461,10 +3461,13 @@ export async function saveStaffSync(staffData) {
         // 🛡️ Auto-register to Supabase Auth when creating new staff or setting password
         if (!isUpdate || rawInputPassword.length > 0) {
           try {
-            await syncStaffToSupabaseAuth({
+            const authRes = await syncStaffToSupabaseAuth({
               ...payload,
               password: supaPayload.password
             });
+            if (authRes?.user?.id) {
+              payload.auth_user_id = authRes.user.id;
+            }
           } catch (authErr) {
             console.warn('Background Supabase Auth auto-sync notice:', authErr);
           }
@@ -3517,6 +3520,32 @@ export async function syncStaffToSupabaseAuth(staffData) {
       birth_date: staffData.birth_date || ''
     };
 
+    // 1. Primary path: Server-side Admin SECURITY DEFINER RPC (bypasses Confirm Email & SMTP rate limits)
+    const staffId = String(staffData.id || staffData.staff_code || '').trim();
+    if (staffId && typeof client.rpc === 'function') {
+      try {
+        const rpcPayload = { p_staff_id: staffId };
+        if (staffData.password && String(staffData.password).trim()) {
+          rpcPayload.p_password = String(staffData.password).trim();
+        }
+        const { data: rpcData, error: rpcErr } = await client.rpc('provision_staff_auth_user', rpcPayload);
+        if (!rpcErr && rpcData?.success) {
+          return {
+            success: true,
+            alreadyExists: Boolean(rpcData.already_exists),
+            email: rpcData.email || email,
+            user: rpcData.auth_user_id ? { id: rpcData.auth_user_id, email: rpcData.email || email } : undefined
+          };
+        }
+        if (rpcErr && rpcErr.code !== 'PGRST202' && !String(rpcErr.message || '').includes('provision_staff_auth_user')) {
+          console.warn(`provision_staff_auth_user notice for ${email}:`, rpcErr.message);
+        }
+      } catch (rpcCatchErr) {
+        console.warn('provision_staff_auth_user fallback notice:', rpcCatchErr?.message || rpcCatchErr);
+      }
+    }
+
+    // 2. Fallback path: Ephemeral signUp client (when RPC is not yet installed)
     const { createClient } = await import('@supabase/supabase-js');
     const supabaseUrl =
       client.supabaseUrl ||
