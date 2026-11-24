@@ -783,6 +783,12 @@ const App = () => {
   const [locationName, setLocationName] = useState('');
   const [mapLink, setMapLink] = useState('');
   const [uploadedImages, setUploadedImages] = useState([]);
+  const uploadedImagesRef = useRef([]);
+  uploadedImagesRef.current = uploadedImages;
+  const pendingPreUploadedFileIdsRef = useRef(new Set());
+  const inFlightRefUploadsRef = useRef(new Map());
+  const removedRefIdsRef = useRef(new Set());
+  const modalSessionIdRef = useRef(0);
   const uploadedImage = uploadedImages.length > 0 
     ? (typeof uploadedImages[0] === 'object' ? uploadedImages[0].url : uploadedImages[0]) 
     : null;
@@ -1826,7 +1832,8 @@ const App = () => {
       loadProjectsScoped({
         mode: plansFilter.dateMode,
         date: plansFilter.date,
-        range: { start: plansFilter.dateRange?.start, end: plansFilter.dateRange?.end }
+        range: { start: plansFilter.dateRange?.start, end: plansFilter.dateRange?.end },
+        dateField: 'project'
       }, (projects, deletedIds) => {
         applyProjectsData(projects, deletedIds);
       });
@@ -1835,7 +1842,8 @@ const App = () => {
         mode: financeFilter.dateMode,
         date: financeFilter.date,
         range: { start: financeFilter.dateRange?.start, end: financeFilter.dateRange?.end },
-        includeDetails: financeFilter.dateMode !== 'year' && financeFilter.dateMode !== 'all'
+        includeDetails: financeFilter.dateMode !== 'year' && financeFilter.dateMode !== 'all',
+        dateField: 'payment'
       }, (projects, deletedIds) => {
         applyProjectsData(projects, deletedIds);
       });
@@ -2426,7 +2434,8 @@ const App = () => {
     loadProjectsScoped({
       mode: plansFilter.dateMode,
       date: plansFilter.date,
-      range: { start: plansFilter.dateRange?.start, end: plansFilter.dateRange?.end }
+      range: { start: plansFilter.dateRange?.start, end: plansFilter.dateRange?.end },
+      dateField: 'project'
     }, (projects, deletedIds) => {
       if (cancelled) return;
       applyProjectsData(projects, deletedIds);
@@ -2446,7 +2455,8 @@ const App = () => {
         mode: financeFilter.dateMode,
         date: financeFilter.date,
         range: { start: financeFilter.dateRange?.start, end: financeFilter.dateRange?.end },
-        includeDetails: financeFilter.dateMode !== 'year' && financeFilter.dateMode !== 'all'
+        includeDetails: financeFilter.dateMode !== 'year' && financeFilter.dateMode !== 'all',
+        dateField: 'payment'
       }, (projects, deletedIds) => {
         if (!cancelled) applyProjectsData(projects, deletedIds);
       });
@@ -2929,8 +2939,29 @@ const App = () => {
           
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          
-          const dataUrl = canvas.toDataURL('image/jpeg', quality);
+
+          const isAlphaCapable =
+            file?.type === 'image/png' ||
+            file?.type === 'image/webp' ||
+            /\.(png|webp)$/i.test(file?.name || '');
+          let hasTransparency = false;
+          if (isAlphaCapable) {
+            try {
+              const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              for (let p = 3; p < data.length; p += 4) {
+                if (data[p] < 255) {
+                  hasTransparency = true;
+                  break;
+                }
+              }
+            } catch {
+              hasTransparency = file?.type === 'image/png';
+            }
+          }
+
+          const dataUrl = hasTransparency
+            ? canvas.toDataURL('image/png')
+            : canvas.toDataURL('image/jpeg', quality);
           resolve(dataUrl);
         };
         img.onerror = (err) => reject(err);
@@ -3209,12 +3240,76 @@ const App = () => {
       closeDeleteLogoModal();
   };
 
+  const deleteDriveFileSilently = useCallback((fileId, useKeepalive = false) => {
+    if (!fileId || !GOOGLE_SCRIPT_URL) return;
+    fetch(GOOGLE_SCRIPT_URL, {
+      method: 'POST',
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: 'deleteFile', id: fileId }),
+      ...(useKeepalive ? { keepalive: true } : {})
+    }).catch(() => {});
+  }, [GOOGLE_SCRIPT_URL]);
+
+  const cleanupPendingPreUploads = useCallback((useKeepalive = false) => {
+    const ids = Array.from(pendingPreUploadedFileIdsRef.current);
+    pendingPreUploadedFileIdsRef.current.clear();
+    ids.forEach((fileId) => deleteDriveFileSilently(fileId, useKeepalive));
+  }, [deleteDriveFileSilently]);
+
+  useEffect(() => {
+    if (!isAddModalOpen) return;
+    const handleBeforeUnload = () => {
+      if (pendingPreUploadedFileIdsRef.current.size > 0) {
+        cleanupPendingPreUploads(true);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isAddModalOpen, cleanupPendingPreUploads]);
+
+  const uploadReferenceDataUrlToDrive = async (dataUrl, projectPrefix, index) => {
+    const refFolderId = getFolderIdByType('reference');
+    if (!GOOGLE_SCRIPT_URL || !refFolderId) return null;
+    const mimeType = dataUrl.split(',')[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+    const ext = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+    const rawBase64 = dataUrl.substring(dataUrl.indexOf(',') + 1);
+    const safePrefix = String(projectPrefix || 'project').replace(/[^a-zA-Z0-9_-]/g, '') || 'project';
+    const fileName = `${safePrefix}_${Date.now()}_${index + 1}.${ext}`;
+    const uploadRes = await fetch(GOOGLE_SCRIPT_URL, {
+      method: 'POST',
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({
+        action: 'uploadAsset',
+        data: {
+          folderId: refFolderId,
+          fileData: rawBase64,
+          fileName: fileName,
+          mimeType: mimeType
+        }
+      })
+    });
+    const resJson = await uploadRes.json();
+    if (resJson.status === 'success' && (resJson.url || resJson.fileId)) {
+      const fileId = resJson.fileId || null;
+      const url = fileId
+        ? `https://drive.google.com/uc?export=view&id=${fileId}`
+        : resJson.url;
+      return { url, fileId };
+    }
+    return null;
+  };
+
   const handleReferenceImageUpload = async (files) => {
     if (!files || files.length === 0) return;
-    setIsSaving(true);
     try {
       const fileList = Array.from(files);
+      const refFolderId = getFolderIdByType('reference');
+      const canPreUpload = Boolean(GOOGLE_SCRIPT_URL && refFolderId);
+      const sessionAtStart = modalSessionIdRef.current;
+      const projectPrefix = editingId || currentId || 'project';
+      const existingCount = uploadedImagesRef.current.length;
       const newImages = [];
+
       for (let i = 0; i < fileList.length; i++) {
         const file = fileList[i];
         if (!file.type || !file.type.startsWith('image/')) continue;
@@ -3222,23 +3317,85 @@ const App = () => {
         newImages.push({
           id: `ref_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
           url: base64Data,
+          localPreview: base64Data,
           name: file.name,
-          createdAt: new Date().toISOString()
+          createdAt: new Date().toISOString(),
+          isUploading: canPreUpload,
+          uploadFailed: false
         });
       }
-      if (newImages.length > 0) {
-        setUploadedImages(prev => [...prev, ...newImages]);
+
+      if (newImages.length === 0) return;
+
+      setUploadedImages(prev => [...prev, ...newImages]);
+      if (!canPreUpload) {
         showToast(`เพิ่มรูปภาพอ้างอิง ${newImages.length} รูปเรียบร้อย`, 'success');
+        return;
       }
+
+      // Pre-upload concurrently in the background while the user fills out the rest of the form
+      newImages.forEach((imgItem, idx) => {
+        const uploadPromise = (async () => {
+          try {
+            const uploaded = await uploadReferenceDataUrlToDrive(imgItem.url, projectPrefix, existingCount + idx);
+            if (!uploaded?.url || uploaded.url.startsWith('data:image')) {
+              throw new Error('Drive upload failed');
+            }
+            // If modal closed without saving or user deleted this image mid-upload, clean up Drive file immediately
+            if (sessionAtStart !== modalSessionIdRef.current || removedRefIdsRef.current.has(imgItem.id)) {
+              if (uploaded.fileId) deleteDriveFileSilently(uploaded.fileId);
+              return;
+            }
+            if (uploaded.fileId) {
+              pendingPreUploadedFileIdsRef.current.add(uploaded.fileId);
+            }
+            setUploadedImages((prev) =>
+              prev.map((entry) =>
+                typeof entry === 'object' && entry.id === imgItem.id
+                  ? {
+                      ...entry,
+                      url: uploaded.url,
+                      ...(uploaded.fileId ? { fileId: uploaded.fileId } : {}),
+                      isUploading: false,
+                      uploadFailed: false
+                    }
+                  : entry
+              )
+            );
+          } catch (imgErr) {
+            console.warn("Background pre-upload ref image error:", imgErr);
+            if (sessionAtStart !== modalSessionIdRef.current) return;
+            setUploadedImages((prev) =>
+              prev.map((entry) =>
+                typeof entry === 'object' && entry.id === imgItem.id
+                  ? { ...entry, isUploading: false, uploadFailed: true }
+                  : entry
+              )
+            );
+          } finally {
+            inFlightRefUploadsRef.current.delete(imgItem.id);
+          }
+        })();
+        inFlightRefUploadsRef.current.set(imgItem.id, uploadPromise);
+      });
     } catch (err) {
       console.error("Reference image upload error:", err);
-      showToast('เกิดข้อผิดพลาดในการอัปโหลดรูปภาพ', 'error');
-    } finally {
-      setIsSaving(false);
+      showToast('เกิดข้อผิดพลาดในการเพิ่มรูปภาพ', 'error');
     }
   };
 
   const handleRemoveReferenceImage = (imgKey) => {
+    removedRefIdsRef.current.add(imgKey);
+    const target = uploadedImagesRef.current.find((img) => {
+      const id = typeof img === 'object' ? img.id : img;
+      const url = typeof img === 'object' ? img.url : img;
+      return id === imgKey || url === imgKey;
+    });
+    const pendingFileId = typeof target === 'object' ? target?.fileId : null;
+    if (pendingFileId && pendingPreUploadedFileIdsRef.current.has(pendingFileId)) {
+      pendingPreUploadedFileIdsRef.current.delete(pendingFileId);
+      deleteDriveFileSilently(pendingFileId);
+    }
     setUploadedImages(prev => prev.filter(img => {
       const id = typeof img === 'object' ? img.id : img;
       const url = typeof img === 'object' ? img.url : img;
@@ -3407,7 +3564,7 @@ const App = () => {
   };
 
   // Pure filtering and sorting function that can run against any tab filter state
-  const filterAndSortActivities = (activities, filter) => {
+  const filterAndSortActivities = (activities, filter, { dateField = 'delivery' } = {}) => {
     if (!Array.isArray(activities)) return [];
     let items = activities.filter(item => {
       const searchLower = (filter.search || '').toLowerCase();
@@ -3420,13 +3577,29 @@ const App = () => {
 
       let matchesDate = true;
       if (filter.dateMode !== 'all') {
-        const candidates = [
-          item.rawDeliveryStart,
-          item.rawDateTime,
-          item.date,
-          item.paymentDate,
-          item.deliveryDate
-        ];
+        const candidates = dateField === 'payment'
+          ? [
+              item.paymentDate,
+              item.rawDateTime,
+              item.date,
+              item.rawDeliveryStart,
+              item.deliveryDate
+            ]
+          : dateField === 'project'
+            ? [
+                item.rawDateTime,
+                item.date,
+                item.rawDeliveryStart,
+                item.paymentDate,
+                item.deliveryDate
+              ]
+            : [
+                item.rawDeliveryStart,
+                item.rawDateTime,
+                item.date,
+                item.paymentDate,
+                item.deliveryDate
+              ];
 
         let itemDateStr = '';
         for (const val of candidates) {
@@ -3553,15 +3726,15 @@ const App = () => {
 
   // Dedicated activity streams per tab
   const plansScopeActivities = useMemo(
-    () => filterAndSortActivities(allActivities, { ...plansFilter, status: 'all', transport: 'all' }),
+    () => filterAndSortActivities(allActivities, { ...plansFilter, status: 'all', transport: 'all' }, { dateField: 'project' }),
     [allActivities, plansFilter, dealStatuses, transportStatuses]
   );
   const plansActivities = useMemo(
-    () => filterAndSortActivities(allActivities, plansFilter),
+    () => filterAndSortActivities(allActivities, plansFilter, { dateField: 'project' }),
     [allActivities, plansFilter, dealStatuses, transportStatuses]
   );
   const financeActivities = useMemo(
-    () => filterAndSortActivities(allActivities, financeFilter),
+    () => filterAndSortActivities(allActivities, financeFilter, { dateField: 'payment' }),
     [allActivities, financeFilter, dealStatuses, transportStatuses]
   );
   const filteredAndSortedActivities = plansActivities;
@@ -3811,8 +3984,16 @@ const App = () => {
 
   const openModalReqIdRef = useRef(0);
 
-  const closeModal = () => {
+  const closeModal = (didSave = false) => {
     openModalReqIdRef.current += 1;
+    modalSessionIdRef.current += 1;
+    if (didSave === true) {
+      pendingPreUploadedFileIdsRef.current.clear();
+    } else {
+      cleanupPendingPreUploads(false);
+    }
+    removedRefIdsRef.current.clear();
+    inFlightRefUploadsRef.current.clear();
     refDragCounterRef.current = 0;
     slipDragCounterRef.current = 0;
     setIsDraggingRef(false);
@@ -3943,6 +4124,10 @@ const App = () => {
 
   const openModal = (activityOrId = null, viewOnly) => {
     const reqId = ++openModalReqIdRef.current;
+    modalSessionIdRef.current += 1;
+    cleanupPendingPreUploads(false);
+    removedRefIdsRef.current.clear();
+    inFlightRefUploadsRef.current.clear();
     markAddModalClean();
     const activity =
       typeof activityOrId === 'string'
@@ -4200,13 +4385,15 @@ const App = () => {
 
     const totalQuotation = quotationItems.reduce((sum, item) => sum + (parseFloat(item.price) || 0), 0);
 
-    // [ADDED] Logic ป้องกัน ID ชนกัน และป้องกันเซฟทับของที่ถูกลบไปแล้ว (อ้างอิง In-Memory & Supabase)
+    // [ADDED] Logic ป้องกัน ID ชนกัน และป้องกันเซฟทับของที่ถูกลบไปแล้ว (อ้างอิง Atomic Sequence ฝั่งเซิร์ฟเวอร์)
+    const previewIdBeforeSave = currentId;
     let finalId = currentId;
 
     if (!editingId) {
       if (typeof allocateNextProjectCodeSync === 'function') {
         try {
           finalId = await allocateNextProjectCodeSync(allActivities);
+          setCurrentId(finalId);
         } catch (allocErr) {
           console.warn('allocateNextProjectCodeSync fallback:', allocErr);
           const ids = allActivities.map(item => {
@@ -4216,6 +4403,7 @@ const App = () => {
           });
           const maxId = ids.length > 0 ? Math.max(...ids) : 0;
           finalId = `P-${String(maxId + 1).padStart(4, '0')}`;
+          setCurrentId(finalId);
         }
       } else {
         const ids = allActivities.map(item => {
@@ -4225,6 +4413,7 @@ const App = () => {
         });
         const maxId = ids.length > 0 ? Math.max(...ids) : 0;
         finalId = `P-${String(maxId + 1).padStart(4, '0')}`;
+        setCurrentId(finalId);
       }
     } else {
       // กรณีแก้ไข: เช็คว่างานนี้ยังอยู่ในระบบไหม
@@ -4292,10 +4481,29 @@ const App = () => {
         return typeof u === 'string' && u.startsWith('data:image');
       });
 
+    // Wait for any background pre-uploads that are still in flight before finalizing
+    if (typeof inFlightRefUploadsRef !== 'undefined' && inFlightRefUploadsRef.current?.size > 0) {
+      await Promise.allSettled(Array.from(inFlightRefUploadsRef.current.values()));
+    }
+
+    const sanitizePersistedImageEntry = (entry) => {
+      if (!entry || typeof entry !== 'object') return entry;
+      const { localPreview: _lp, isUploading: _iu, uploadFailed: _uf, ...clean } = entry;
+      return clean;
+    };
+
+    const rawLatestImages =
+      typeof uploadedImagesRef !== 'undefined' && Array.isArray(uploadedImagesRef.current)
+        ? uploadedImagesRef.current
+        : (Array.isArray(uploadedImages) ? uploadedImages : []);
+    const latestImages = rawLatestImages.map(sanitizePersistedImageEntry);
+    activityData.images = latestImages;
+    activityData.image = latestImages.length > 0 ? (typeof latestImages[0] === 'object' ? latestImages[0].url : latestImages[0]) : null;
+
     if (GOOGLE_SCRIPT_URL) {
       try {
-        // Upload any base64 reference images to Google Drive reference folder (strictly forbid Base64 leak into DB)
-        let finalImages = Array.isArray(uploadedImages) ? [...uploadedImages] : [];
+        // Upload any remaining base64 reference images to Google Drive reference folder (fallback if pre-upload wasn't done or failed)
+        let finalImages = [...latestImages];
         if (hasBase64Item(finalImages)) {
           const refFolderId = getFolderIdByType('reference');
           if (!refFolderId) {
@@ -4307,31 +4515,13 @@ const App = () => {
             const itemImg = finalImages[i];
             const imgUrl = typeof itemImg === 'object' ? itemImg.url : itemImg;
             if (typeof imgUrl === 'string' && imgUrl.startsWith('data:image')) {
-              const mimeType = imgUrl.split(',')[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
-              const rawBase64 = imgUrl.substring(imgUrl.indexOf(',') + 1);
-              const fileName = `${activityData.id}_${Date.now()}_${i + 1}.jpg`;
               let uploadedLink = null;
               let uploadedFileId = null;
               try {
-                const uploadRes = await fetch(GOOGLE_SCRIPT_URL, {
-                  method: 'POST',
-                  headers: { "Content-Type": "text/plain;charset=utf-8" },
-                  body: JSON.stringify({
-                    action: 'uploadAsset',
-                    data: {
-                      folderId: refFolderId,
-                      fileData: rawBase64,
-                      fileName: fileName,
-                      mimeType: mimeType
-                    }
-                  })
-                });
-                const resJson = await uploadRes.json();
-                if (resJson.status === 'success' && (resJson.url || resJson.fileId)) {
-                  uploadedFileId = resJson.fileId || null;
-                  uploadedLink = resJson.fileId 
-                    ? `https://drive.google.com/uc?export=view&id=${resJson.fileId}`
-                    : resJson.url;
+                const uploaded = await uploadReferenceDataUrlToDrive(imgUrl, activityData.id, i);
+                if (uploaded) {
+                  uploadedLink = uploaded.url;
+                  uploadedFileId = uploaded.fileId;
                 }
               } catch (imgErr) {
                 console.warn("Upload ref image to Drive error:", imgErr);
@@ -4446,14 +4636,17 @@ const App = () => {
         });
 
         setIsSaving(false);
-        closeModal();
-        showToast(`บันทึกข้อมูลเรียบร้อยแล้ว${syncedNotesMsg}`, 'success');
+        closeModal(true);
+        const reassignedNote = !editingId && previewIdBeforeSave && finalId !== previewIdBeforeSave
+          ? ` (ออกรหัส ${finalId})`
+          : (!editingId ? ` (${finalId})` : '');
+        showToast(`บันทึกข้อมูลเรียบร้อยแล้ว${reassignedNote}${syncedNotesMsg}`, 'success');
         return;
       } catch (error) {
         showToast("เกิดข้อผิดพลาดในการเชื่อมต่อ: " + error.message, 'error');
       }
     } else {
-      if (hasBase64Item(uploadedImages) || hasBase64Item(uploadedSlips)) {
+      if (hasBase64Item(latestImages) || hasBase64Item(uploadedSlips)) {
         showToast('กรุณาตั้งค่าระบบอัปโหลดรูปภาพ Google Drive ก่อนบันทึกรูปภาพหรือสลิป', 'error');
         setIsSaving(false);
         return;
@@ -4463,7 +4656,7 @@ const App = () => {
       } else {
         setAllActivities([activityData, ...allActivities]);
       }
-      closeModal();
+      closeModal(true);
       showToast("บันทึกข้อมูลสำเร็จ", 'success');
     }
     setIsSaving(false);
@@ -4985,7 +5178,9 @@ const App = () => {
                               {/* [MODIFIED] Date: whitespace-nowrap to prevent truncation */}
                               <div className="flex items-center gap-1.5 text-slate-500 text-xs mt-1 whitespace-nowrap">
                                 <Clock className="w-3 h-3 shrink-0" />
-                                {item.date}
+                                {item.rawDateTime
+                                  ? formatDate(item.rawDateTime)
+                                  : (item.date && item.date !== '-' ? item.date : '-')}
                               </div>
                               {item.paymentDate && (
                                 <div className="flex items-center gap-1.5 text-emerald-700 text-xs mt-1 whitespace-nowrap font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 w-fit">
@@ -7481,8 +7676,9 @@ const App = () => {
                                 )}
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                                   {uploadedImages.map((img, idx) => {
-                                    const imgSrc = typeof img === 'object' ? img.url : img;
+                                    const imgSrc = typeof img === 'object' ? (img.localPreview || img.url) : img;
                                     const imgKey = typeof img === 'object' ? (img.id || idx) : idx;
+                                    const isImgUploading = typeof img === 'object' && Boolean(img.isUploading);
                                     return (
                                       <div
                                         key={imgKey}
@@ -7503,6 +7699,12 @@ const App = () => {
                                             e.target.src = "https://placehold.co/300x400?text=Image+Error";
                                           }}
                                         />
+                                        {isImgUploading && (
+                                          <div className="absolute top-1.5 left-1.5 px-2 py-0.5 bg-indigo-600/90 backdrop-blur-sm rounded-md text-[11px] text-white font-semibold flex items-center gap-1 shadow-sm z-10 pointer-events-none">
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                            <span>กำลังอัปโหลด</span>
+                                          </div>
+                                        )}
                                         <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
                                         <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center pointer-events-none">
                                           <div className="p-2 bg-white/25 backdrop-blur-md rounded-full text-white shadow-sm">

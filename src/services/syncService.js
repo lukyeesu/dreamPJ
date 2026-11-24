@@ -224,16 +224,14 @@ export async function allocateNextProjectCodeSync(localActivities = []) {
     try {
       const { data: rpcData, error: rpcErr } = await client.rpc('allocate_next_project_code');
       if (!rpcErr && rpcData !== null && rpcData !== undefined) {
-        if (typeof rpcData === 'number' && Number.isFinite(rpcData)) {
-          const nextRpcNum = Math.max(rpcData, localMax + 1);
-          return 'P-' + String(nextRpcNum).padStart(4, '0');
+        if (typeof rpcData === 'number' && Number.isFinite(rpcData) && rpcData > 0) {
+          return 'P-' + String(Math.trunc(rpcData)).padStart(4, '0');
         }
         const rawCode = typeof rpcData === 'string' ? rpcData.trim() : String(rpcData?.code ?? rpcData?.project_code ?? rpcData?.id ?? '').trim();
         const rpcMatch = rawCode.match(/^P-(\d+)$/);
         if (rpcMatch) {
           const rpcNum = parseInt(rpcMatch[1], 10);
-          const nextNum = Math.max(rpcNum, localMax + 1);
-          return 'P-' + String(nextNum).padStart(4, '0');
+          return 'P-' + String(rpcNum).padStart(4, '0');
         }
       }
     } catch (_) {}
@@ -263,6 +261,18 @@ export async function allocateNextProjectCodeSync(localActivities = []) {
 }
 
 const isChildItemVoided = (item) => Boolean(item?.is_voided || item?.isVoided);
+
+const toLocalDateTimeInput = (val) => {
+  if (!val) return '';
+  const str = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?$/.test(str)) {
+    return str.replace(' ', 'T').substring(0, 16);
+  }
+  const d = new Date(str);
+  if (isNaN(d.getTime())) return str.substring(0, 16);
+  const offset = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+};
 
 // Helper แปลงแถวจาก Supabase เป็นโครงสร้าง Activity ที่หน้าบ้านใช้งาน
 export function transformSupabaseProjectToUi(row, childItems = {}, existing = {}) {
@@ -333,10 +343,12 @@ export function transformSupabaseProjectToUi(row, childItems = {}, existing = {}
       taxId: row.customer_tax_id === undefined ? (existing.customerInfo?.taxId || '') : (row.customer_tax_id || ''),
       address: row.customer_address === undefined ? (existing.customerInfo?.address || '') : (row.customer_address || '')
     },
-    rawDateTime: (row.raw_delivery_start || row.project_datetime || '').substring(0, 16),
+    rawDateTime: toLocalDateTimeInput(row.project_datetime || row.raw_delivery_start),
     date: row.raw_delivery_start
       ? row.raw_delivery_start.substring(0, 10)
-      : (row.delivery_date_display ? row.delivery_date_display.split(' ')[0] : ''),
+      : (row.delivery_date_display && row.delivery_date_display.trim() !== '-'
+          ? row.delivery_date_display.split(' ')[0]
+          : (toLocalDateTimeInput(row.project_datetime).substring(0, 10) || '')),
     deliveryDate: row.delivery_date_display || '',
     rawDeliveryStart: row.raw_delivery_start || '',
     rawDeliveryEnd: row.raw_delivery_end || '',
@@ -588,10 +600,12 @@ export async function loadProjectsByMonth(yearMonth, onSyncUpdate, options = {})
   return loadProjectsScoped({ mode: 'month', date: yearMonth, includeDetails: !!options.includeDetails }, onSyncUpdate);
 }
 
-export async function loadProjectsScoped({ mode = 'month', date = '', range = { start: '', end: '' }, includeDetails = false } = {}, onSyncUpdate) {
+export async function loadProjectsScoped({ mode = 'month', date = '', range = { start: '', end: '' }, includeDetails = false, dateField = 'delivery' } = {}, onSyncUpdate) {
   const client = getActiveClient();
   const epoch = projectLoadEpoch;
   const isCurrent = () => epoch === projectLoadEpoch;
+  const useProjectDate = dateField === 'project';
+  const usePaymentDate = dateField === 'payment';
   let localScoped = [];
   try {
     let startStr = null;
@@ -625,14 +639,25 @@ export async function loadProjectsScoped({ mode = 'month', date = '', range = { 
       endStr = bounds.end;
     }
 
-    // Use the same delivery date as the remote query when reconciling deletions.
-    const inScope = p => !startStr || (p.rawDeliveryStart && p.rawDeliveryStart >= startStr && p.rawDeliveryStart <= endStr);
+    // Use the same date field as the remote query when reconciling deletions.
+    const inScope = p => {
+      if (!startStr) return true;
+      if (usePaymentDate) {
+        if (p.paymentDate) {
+          const payDay = String(p.paymentDate).trim().slice(0, 10);
+          return Boolean(payDay && payDay >= startStr.slice(0, 10) && payDay <= endStr.slice(0, 10));
+        }
+        return Boolean(p.rawDateTime && p.rawDateTime >= startStr && p.rawDateTime <= endStr);
+      }
+      const val = useProjectDate ? p.rawDateTime : p.rawDeliveryStart;
+      return Boolean(val && val >= startStr && val <= endStr);
+    };
     const allLocal = await db.projects.toArray();
     if (!isCurrent()) return [];
     localScoped = allLocal.filter(inScope);
     if (localScoped.length && onSyncUpdate) onSyncUpdate(localScoped);
 
-    const cacheKey = JSON.stringify([startStr, endStr, includeDetails]);
+    const cacheKey = JSON.stringify([startStr, endStr, includeDetails, dateField]);
     const inFlight = inFlightProjectLoads.get(cacheKey);
     if (inFlight) {
       if (onSyncUpdate) {
@@ -667,9 +692,22 @@ export async function loadProjectsScoped({ mode = 'month', date = '', range = { 
         while (!complete) {
           const batchSize = offset === 0 ? 50 : 500;
           let query = client.from('projects').select(PROJECT_LIST_COLUMNS, offset === 0 ? { count: 'exact' } : undefined);
-          if (startStr && endStr) query = query.gte('raw_delivery_start', startStr).lte('raw_delivery_start', endStr);
+          if (startStr && endStr) {
+            if (usePaymentDate) {
+              const startDay = startStr.slice(0, 10);
+              const endDay = endStr.slice(0, 10);
+              query = query.or(
+                `and(payment_date.gte.${startDay},payment_date.lte.${endDay}),and(payment_date.is.null,project_datetime.gte.${startStr}+07:00,project_datetime.lte.${endStr}+07:00)`
+              );
+            } else if (useProjectDate) {
+              query = query.gte('project_datetime', `${startStr}+07:00`).lte('project_datetime', `${endStr}+07:00`);
+            } else {
+              query = query.gte('raw_delivery_start', startStr).lte('raw_delivery_start', endStr);
+            }
+          }
+          const orderCol = usePaymentDate || useProjectDate ? 'project_datetime' : 'raw_delivery_start';
           const { data, error, count } = await query
-            .order('raw_delivery_start', { ascending: false }).order('id', { ascending: false })
+            .order(orderCol, { ascending: false }).order('id', { ascending: false })
             .range(offset, offset + batchSize - 1);
           if (error) throw error;
           if (!isCurrent()) return [];

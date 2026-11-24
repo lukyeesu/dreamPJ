@@ -274,6 +274,7 @@ const ModernDateTimePicker = ({
             const isSelectedYear = pickerType === 'year' && value && parseInt(value) === year;
             return (
               <button
+                type="button"
                 key={year}
                 onClick={() => selectYear(year)}
                 className={`p-2 rounded-xl text-sm font-bold transition-all ${
@@ -297,6 +298,7 @@ const ModernDateTimePicker = ({
             const isSelectedMonth = pickerType === 'month' && value && value === `${viewDate.getFullYear()}-${String(i + 1).padStart(2, '0')}`;
             return (
               <button
+                type="button"
                 key={i}
                 onClick={() => selectMonth(i)}
                 className={`p-3 rounded-xl text-sm font-bold transition-all ${
@@ -335,6 +337,7 @@ const ModernDateTimePicker = ({
 
             return (
               <button
+                type="button"
                 key={day}
                 onClick={() => handleDateClick(day)}
                 className={`h-8 w-full flex items-center justify-center text-sm font-medium transition-all
@@ -386,11 +389,12 @@ const ModernDateTimePicker = ({
           <div className="flex justify-between items-center mb-4 pl-1 pr-1">
             <div className="flex items-center gap-1">
               {viewMode !== 'days' && pickerType !== 'month' && pickerType !== 'year' && (
-                <button onClick={() => setViewMode('days')} className="p-1 hover:bg-slate-100 rounded-lg mr-1">
+                <button type="button" onClick={() => setViewMode('days')} className="p-1 hover:bg-slate-100 rounded-lg mr-1">
                   <ArrowUp className="w-4 h-4 text-slate-500" />
                 </button>
               )}
               <button 
+                type="button"
                 onClick={() => {
                   if (pickerType === 'year') return; 
                   if (pickerType === 'month' && viewMode === 'years') return;
@@ -407,6 +411,7 @@ const ModernDateTimePicker = ({
 
             <div className="flex gap-1">
               <button 
+                type="button"
                 onClick={() => {
                   if (viewMode === 'days') changeMonth(-1);
                   else if (viewMode === 'years') changeYear(-16);
@@ -417,6 +422,7 @@ const ModernDateTimePicker = ({
                 <ChevronUp className="w-5 h-5 -rotate-90"/>
               </button>
               <button 
+                type="button"
                 onClick={() => {
                   if (viewMode === 'days') changeMonth(1);
                   else if (viewMode === 'years') changeYear(16);
@@ -449,12 +455,14 @@ const ModernDateTimePicker = ({
             
             <div className="flex gap-2 w-full mt-1">
               <button 
+                type="button"
                 onClick={handleClear} 
                 className="flex-1 text-xs font-bold text-slate-500 hover:bg-slate-100 hover:text-rose-500 px-3 py-2 rounded-lg transition-colors"
               >
                 ล้างค่า
               </button>
               <button 
+                type="button"
                 onClick={() => setIsOpen(false)} 
                 className="flex-1 text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 px-3 py-2 rounded-lg transition-colors shadow-sm shadow-indigo-200"
               >

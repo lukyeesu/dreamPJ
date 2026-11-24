@@ -2025,8 +2025,13 @@ BEGIN
 END $$;
 
 -- ==============================================================================
--- ส่วนที่ 9: ระบบออกรหัสโปรเจกต์อัตโนมัติฝั่งเซิร์ฟเวอร์ (`public.allocate_next_project_code`)
+-- ส่วนที่ 9: ระบบออกรหัสโปรเจกต์อัตโนมัติฝั่งเซิร์ฟเวอร์แบบ Atomic Sequence (`public.allocate_next_project_code`)
 -- ==============================================================================
+CREATE SEQUENCE IF NOT EXISTS public.project_code_seq
+    START WITH 1
+    INCREMENT BY 1
+    MINVALUE 1;
+
 CREATE OR REPLACE FUNCTION public.allocate_next_project_code()
 RETURNS TEXT
 LANGUAGE plpgsql
@@ -2034,9 +2039,10 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-    v_max_projects NUMERIC := 0;
-    v_max_deleted NUMERIC := 0;
-    v_max NUMERIC := 0;
+    v_max_projects BIGINT := 0;
+    v_max_deleted BIGINT := 0;
+    v_max BIGINT := 0;
+    v_seq_val BIGINT;
     v_next_text TEXT;
 BEGIN
     IF auth.uid() IS NULL THEN
@@ -2046,14 +2052,14 @@ BEGIN
     PERFORM pg_advisory_xact_lock(2026042401);
 
     IF to_regclass('public.projects') IS NOT NULL THEN
-        SELECT COALESCE(MAX(substring(id FROM 3)::numeric), 0)
+        SELECT COALESCE(MAX(substring(id FROM 3)::bigint), 0)
         INTO v_max_projects
         FROM public.projects
         WHERE id ~ '^P-[0-9]+$';
     END IF;
 
     IF to_regclass('public.deleted_records') IS NOT NULL THEN
-        SELECT COALESCE(MAX(substring(record_id FROM 3)::numeric), 0)
+        SELECT COALESCE(MAX(substring(record_id FROM 3)::bigint), 0)
         INTO v_max_deleted
         FROM public.deleted_records
         WHERE table_name = 'projects'
@@ -2061,7 +2067,14 @@ BEGIN
     END IF;
 
     v_max := GREATEST(COALESCE(v_max_projects, 0), COALESCE(v_max_deleted, 0));
-    v_next_text := trunc(COALESCE(v_max, 0) + 1)::text;
+
+    -- Atomic PostgreSQL Sequence: guarantees unique strictly increasing IDs even when multiple users save simultaneously before INSERT commits
+    v_seq_val := nextval('public.project_code_seq');
+    IF v_seq_val <= v_max THEN
+        v_seq_val := setval('public.project_code_seq', v_max + 1, true);
+    END IF;
+
+    v_next_text := v_seq_val::text;
 
     IF length(v_next_text) < 4 THEN
         RETURN 'P-' || lpad(v_next_text, 4, '0');

@@ -1,12 +1,10 @@
 import React from 'react';
-import { Plus } from 'lucide-react';
 
 const Plans = ({
   stats = [],
   renderFilterCard,
   renderTable,
   filteredAndSortedActivities = [],
-  onOpenModal,
   renderBatchBanner
 }) => {
   return (
@@ -52,15 +50,6 @@ const Plans = ({
       <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden p-2 mx-4 sm:mx-8 lg:mx-10 mb-6">
         <div className="px-6 py-5 sm:px-8 sm:py-6 flex items-center justify-between border-b border-slate-50">
           <h3 className="text-lg sm:text-xl font-bold text-slate-900">แผนงานทั้งหมด</h3>
-          <div className="flex gap-2">
-            <button
-              onClick={onOpenModal} 
-              className="p-2 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition cursor-pointer"
-              title="เพิ่มแผนงานใหม่"
-            >
-              <Plus className="w-5 h-5"/>
-            </button>
-          </div>
         </div>
         {renderTable && renderTable(0, filteredAndSortedActivities)}
       </div>

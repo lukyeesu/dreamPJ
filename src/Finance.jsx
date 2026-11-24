@@ -762,13 +762,13 @@ function Finance({
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  // Helper สำหรับดึงและแปลงวันที่โปรเจกต์ให้เป็นมาตรฐานสากล YYYY-MM-DD (รองรับทั้ง ค.ศ. และ พ.ศ.)
+  // Helper สำหรับดึงและแปลงวันที่โปรเจกต์ให้เป็นมาตรฐานสากล YYYY-MM-DD (หน้าการเงินยึดวันที่รับเงินเป็นหลัก)
   const getEffectiveItemDateStr = (item) => {
     const candidates = [
-      item.rawDeliveryStart,
+      item.paymentDate,
       item.rawDateTime,
       item.date,
-      item.paymentDate,
+      item.rawDeliveryStart,
       item.deliveryDate
     ];
 
