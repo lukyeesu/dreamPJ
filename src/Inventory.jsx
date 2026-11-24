@@ -1667,7 +1667,7 @@ export default function Inventory({
       {/* QR Label Print Workspace (Lazy loaded, leak-proof unmount on isActive=false) */}
       {isActive && isPrintWorkspaceOpen && (
         <Suspense fallback={
-          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="p-4 bg-white rounded-xl shadow-lg text-xs font-bold text-slate-700">กำลังเตรียมระบบพิมพ์ฉลาก QR...</div>
           </div>
         }>

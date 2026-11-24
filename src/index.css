@@ -179,20 +179,17 @@ body.is-sidebar-animating [data-main-shell="true"] {
   will-change: transform;
 }
 
-#main-scroll-container {
+/* Keep contain: layout only during active sidebar motion so fixed modals inside #main-scroll-container are never trapped under header/sidebar */
+body.is-dragging-sidebar #main-scroll-container,
+body.is-sidebar-animating #main-scroll-container {
   contain: layout style;
+  pointer-events: none !important;
 }
 
 body.is-sidebar-animating [class*="backdrop-blur"],
 body.is-dragging-sidebar [class*="backdrop-blur"] {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
-}
-
-/* Eliminate pointer-event hit-testing overhead on main view during sidebar transition for solid 60-120fps */
-body.is-dragging-sidebar #main-scroll-container,
-body.is-sidebar-animating #main-scroll-container {
-  pointer-events: none !important;
 }
 
 @media print {

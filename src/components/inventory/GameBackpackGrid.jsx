@@ -1233,7 +1233,7 @@ export default function GameBackpackGrid({
       {/* ===================================================================== */}
       {restockTarget && (
         <div
-          className="fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-[110] bg-slate-900/45 backdrop-blur-xs flex items-center justify-center p-4"
           onClick={() => setRestockTarget(null)}
         >
           <form

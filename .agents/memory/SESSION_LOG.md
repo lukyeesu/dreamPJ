@@ -50,10 +50,9 @@
 
 ## 3. ประวัติการทำงานและข้อตกลงล่าสุด (Session History)
 
-### [2026-11-24 - ถอด `database_scripts/` ออกจาก Git Tracking + ลบ Hardcoded API Keys/URLs ทั้งหมด]
-- ตรวจสอบ Git tracking และประวัติ commit ทั้งหมด ไม่พบ `service_role` / `sb_secret_` / `.env` / LINE/Telegram token หลุดขึ้น Git
-- พบค่า fallback ที่เขียนฝังไว้ 3 ตัว (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_GOOGLE_APPS_SCRIPT_URL`) ใน 6 ไฟล์ (`src/services/supabaseClient.js`, `src/services/syncService.js`, `src/App.jsx`, `src/Artists.jsx`, `src/Staff.jsx`, `scripts/migrate_sheets_to_supabase.cjs`) จึงลบออกทั้งหมดให้รับจาก Environment Variables เท่านั้น
-- เพิ่ม `database_scripts/` ใน `.gitignore` และรัน `git rm -r --cached database_scripts` เพื่อถอดทั้ง 23 ไฟล์ออกจาก Git tracking โดยคงไฟล์ในเครื่องไว้ให้รันเทสและอ้างอิงในเครื่องได้ตามปกติ (รอผู้ใช้ commit & push เองตามนโยบาย Git)
+### [2026-11-24 - แก้ Modal ซ้อนใต้ Header/Sidebar ทั้งระบบ + ถอด `database_scripts/` และ Hardcoded APIs ออกจาก Git]
+- **แก้ Modal ถูกขังใต้ Header/Sidebar ทั้งระบบ**: ย้าย `contain: layout style;` บน `#main-scroll-container` ใน [`src/index.css`](file:///D:/WebappDreame/Flower2U/src/index.css) ไปทำงานเฉพาะตอน `body.is-dragging-sidebar` / `body.is-sidebar-animating` (เพราะ `contain: layout` สร้าง containing block + stacking context ขัง `position: fixed` ทุก Modal ในทุกหน้าให้อยู่ใต้ `<header>` และ `<aside>`), พร้อมดัน `z-index` ของ Modal ที่ต่ำกว่า Mobile Bottom Nav (`z-[90]`) ใน [`src/Calendar.jsx`](file:///D:/WebappDreame/Flower2U/src/Calendar.jsx) (`z-[55]` → `z-[100]`), [`src/Inventory.jsx`](file:///D:/WebappDreame/Flower2U/src/Inventory.jsx) (`z-50` → `z-[110]`), และ [`src/components/inventory/GameBackpackGrid.jsx`](file:///D:/WebappDreame/Flower2U/src/components/inventory/GameBackpackGrid.jsx) (`z-50` → `z-[110]`)
+- **ถอด `database_scripts/` ออกจาก Git & ลบ Hardcoded APIs**: ตรวจสอบ Git tracking และประวัติ commit ทั้งหมด ไม่พบ `service_role` / `sb_secret_` / `.env` / LINE/Telegram token หลุดขึ้น Git; ลบค่า fallback 3 ตัว (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_GOOGLE_APPS_SCRIPT_URL`) ออกจาก 6 ไฟล์; เพิ่ม `database_scripts/` ใน `.gitignore` และรัน `git rm -r --cached database_scripts` (คงไฟล์ในเครื่องครบ 23 ไฟล์)
 
 ### [2026-11-24 - Zero-Knowledge Staff Password Reset Link + QR System (`?reset_token=rst_...`), Anping Sidebar Engine (`80px` <-> `256px`), Cross-Device Sync & Zero-Egress Hardening]
 - **1. Zero-Knowledge Staff Password Reset Link + QR System (`?reset_token=rst_...`) & Consolidated SQL Script**:
