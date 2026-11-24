@@ -736,7 +736,9 @@ function Settings({
                 label: r.label || def.label || r.name,
                 code: r.code || def.code || '99',
                 description: r.description || prev?.[r.name]?.description || def.description || '',
-                allowed_pages: Array.isArray(r.allowed_pages) && r.allowed_pages.length > 0 ? r.allowed_pages : (def.allowed_pages || []),
+                allowed_pages: Array.isArray(r.allowed_pages)
+                  ? r.allowed_pages.map(p => (p === 'Venues' ? 'Locations' : p))
+                  : (def.allowed_pages || []),
                 can_edit_pricing: r.can_edit_pricing !== undefined ? !!r.can_edit_pricing : !!def.can_edit_pricing,
                 can_delete_project: r.can_delete_project !== undefined ? !!r.can_delete_project : !!def.can_delete_project,
                 can_borrow_tools: r.can_borrow_tools !== undefined ? !!r.can_borrow_tools : (def.can_borrow_tools !== undefined ? def.can_borrow_tools : true),
@@ -805,36 +807,45 @@ function Settings({
   const handleSavePermissionMatrix = async () => {
     setIsSavingPermissions(true);
     try {
-      localStorage.setItem('f2u_role_permissions', JSON.stringify(permissionMatrix));
-      broadcastPermissionsUpdated(permissionMatrix);
-
       // Batch upsert all roles to Supabase roles table in a single HTTP request
-      try {
-        const client = getActiveClient();
-        if (client) {
-          const rolePayloads = Object.entries(permissionMatrix).map(([roleName, p]) => ({
-            name: roleName,
-            label: p.label || roleName,
-            code: p.code || '99',
-            description: p.description || '',
-            allowed_pages: p.allowed_pages || [],
-            can_edit_pricing: !!p.can_edit_pricing,
-            can_delete_project: !!p.can_delete_project,
-            can_borrow_tools: !!p.can_borrow_tools,
-            can_manage_users: !!p.can_manage_users,
-            is_system_role: p.is_system_role !== undefined ? p.is_system_role : ['admin', 'technician', 'driver', 'accountant'].includes(roleName)
-          }));
-          if (rolePayloads.length > 0) {
-            await client.from('roles').upsert(rolePayloads, { onConflict: 'name' });
+      const normalizedMatrix = {};
+      Object.entries(permissionMatrix).forEach(([roleName, p]) => {
+        normalizedMatrix[roleName] = {
+          ...p,
+          allowed_pages: Array.from(new Set((p.allowed_pages || []).map(pg => (pg === 'Venues' ? 'Locations' : pg))))
+        };
+      });
+
+      const client = getActiveClient();
+      if (client) {
+        const rolePayloads = Object.entries(normalizedMatrix).map(([roleName, p]) => ({
+          name: roleName,
+          label: p.label || roleName,
+          code: p.code || '99',
+          description: p.description || '',
+          allowed_pages: p.allowed_pages || [],
+          can_edit_pricing: !!p.can_edit_pricing,
+          can_delete_project: !!p.can_delete_project,
+          can_borrow_tools: !!p.can_borrow_tools,
+          can_manage_users: !!p.can_manage_users,
+          is_system_role: p.is_system_role !== undefined ? p.is_system_role : ['admin', 'technician', 'driver', 'accountant'].includes(roleName)
+        }));
+        if (rolePayloads.length > 0) {
+          const { error: upsertError } = await client.from('roles').upsert(rolePayloads, { onConflict: 'name' });
+          if (upsertError) {
+            throw new Error(upsertError.message || 'ไม่สามารถบันทึกสิทธิ์ลงระบบได้');
           }
         }
-      } catch (cErr) {
-        console.warn('Could not sync roles to Supabase:', cErr);
       }
+
+      setPermissionMatrix(normalizedMatrix);
+      localStorage.setItem('f2u_role_permissions', JSON.stringify(normalizedMatrix));
+      broadcastPermissionsUpdated(normalizedMatrix);
 
       showToast('บันทึกการตั้งค่าสิทธิ์และบทบาทเรียบร้อยแล้ว', 'success');
     } catch (err) {
-      showToast('เกิดข้อผิดพลาดในการบันทึกสิทธิ์', 'error');
+      console.error('Error saving role permissions:', err);
+      showToast('เกิดข้อผิดพลาดในการบันทึกสิทธิ์: ' + (err?.message || 'กรุณาลองใหม่'), 'error');
     } finally {
       setIsSavingPermissions(false);
     }

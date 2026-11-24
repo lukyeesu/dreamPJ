@@ -3369,6 +3369,14 @@ export async function saveStaffSync(staffData) {
           .maybeSingle();
         if (roleRow?.id) {
           roleId = roleRow.id;
+        } else {
+          const rolesQuery = client.from('roles').select('id');
+          if (typeof rolesQuery?.ilike === 'function') {
+            const { data: ciRoleRow } = await rolesQuery.ilike('name', roleName).maybeSingle();
+            if (ciRoleRow?.id) {
+              roleId = ciRoleRow.id;
+            }
+          }
         }
       }
     } catch (rErr) {}
@@ -3423,16 +3431,26 @@ export async function saveStaffSync(staffData) {
           supaPayload.password = `unset_${generateSecureHex(24)}`;
         }
 
+        let finalUpsertErr = null;
         const { error: upsertErr } = await client.from('staff_users').upsert(supaPayload);
-        if (upsertErr && 'password' in supaPayload) {
+        if (upsertErr) {
           const errMsg = `${upsertErr.message || ''} ${upsertErr.details || ''} ${upsertErr.hint || ''}`.toLowerCase();
           if (
+            'password' in supaPayload &&
             (upsertErr.code === '42703' || upsertErr.code === 'PGRST204') &&
             errMsg.includes('password')
           ) {
             const { password: _dropPassword, ...fallbackSupaPayload } = supaPayload;
-            await client.from('staff_users').upsert(fallbackSupaPayload);
+            const { error: fallbackErr } = await client.from('staff_users').upsert(fallbackSupaPayload);
+            finalUpsertErr = fallbackErr || null;
+          } else {
+            finalUpsertErr = upsertErr;
           }
+        }
+        if (finalUpsertErr) {
+          const saveErr = new Error(finalUpsertErr.message || 'ไม่สามารถบันทึกข้อมูลพนักงานลงระบบได้');
+          saveErr.isSupabaseError = true;
+          throw saveErr;
         }
 
         // If password was explicitly changed and signed-in Supabase Auth user matches, update Auth password too
@@ -3474,7 +3492,8 @@ export async function saveStaffSync(staffData) {
         }
       }
     } catch (cErr) {
-      // Local fallback
+      if (cErr?.isSupabaseError) throw cErr;
+      // Local fallback for offline mode
     }
 
     await db.staff.put(payload);
@@ -3626,13 +3645,17 @@ export async function syncAllStaffToSupabaseAuth(staffList = []) {
 export async function deleteStaffSync(staffId, username) {
   const client = getActiveClient();
   try {
-    try {
+    if (client) {
+      let delRes = null;
       if (staffId) {
-        await client.from('staff_users').delete().eq('id', staffId);
+        delRes = await client.from('staff_users').delete().eq('id', staffId);
       } else if (username) {
-        await client.from('staff_users').delete().eq('username', username);
+        delRes = await client.from('staff_users').delete().eq('username', username);
       }
-    } catch (cErr) {}
+      if (delRes?.error) {
+        throw new Error(delRes.error.message || 'ไม่สามารถลบข้อมูลพนักงานออกจากระบบได้');
+      }
+    }
 
     if (staffId) await db.staff.delete(staffId);
     if (username) {

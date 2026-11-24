@@ -570,6 +570,7 @@ function Staff({
       const finalStaffCode = (formData.staff_code || '').trim() || generateSuggestedStaffCode(formData.role);
       const payload = {
         id: editingStaffId || finalStaffCode, // ID IS THE STAFF CODE DIRECTLY
+        isUpdate: Boolean(editingStaffId),
         username: formData.username.trim(),
         staff_code: finalStaffCode,
         name: (formData.name || '').trim() || formData.username.trim(),
@@ -1599,18 +1600,27 @@ function Staff({
                         <label className="block text-sm font-bold text-slate-700 mb-1.5">
                           ตำแหน่ง &amp; สิทธิ์การใช้งาน *
                         </label>
-                        <StatusDropdown
-                          value={watchedRole}
-                          disabled={isViewOnly}
-                          options={activeRoleDefinitions.map(r => ({
-                            value: r.name,
-                            label: `${r.label} (${r.code})`,
-                            color: 'bg-white text-slate-800 border-slate-200'
-                          }))}
-                          showDot={false}
-                          onChange={(val) => handleRoleChange(val)}
-                          ariaLabel="ตำแหน่ง &amp; สิทธิ์การใช้งาน"
-                          className="h-[46px] !text-base"
+                        <Controller
+                          name="role"
+                          control={control}
+                          render={({ field }) => (
+                            <StatusDropdown
+                              value={field.value || 'technician'}
+                              disabled={isViewOnly}
+                              options={activeRoleDefinitions.map(r => ({
+                                value: r.name,
+                                label: `${r.label} (${r.code})`,
+                                color: 'bg-white text-slate-800 border-slate-200'
+                              }))}
+                              showDot={false}
+                              onChange={(val) => {
+                                field.onChange(val);
+                                handleRoleChange(val);
+                              }}
+                              ariaLabel="ตำแหน่ง &amp; สิทธิ์การใช้งาน"
+                              className="h-[46px] !text-base"
+                            />
+                          )}
                         />
                         {errors.role && (
                           <p className="text-xs text-rose-600 font-bold mt-1">{errors.role.message}</p>

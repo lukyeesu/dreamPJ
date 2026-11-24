@@ -513,8 +513,13 @@ const App = () => {
   const lastFocusSyncRef = useRef(0);
   const lastMasterSyncRef = useRef(0);
 
+  const allowedTabSetRef = useRef(null);
+
   const handleSelectTab = useCallback((tabName) => {
     if (!tabName || tabName === activeTab) return;
+    if (allowedTabSetRef.current && allowedTabSetRef.current.size > 0 && !allowedTabSetRef.current.has(tabName)) {
+      return;
+    }
     startTransition(() => {
       setVisitedTabs(prev => {
         if (prev.has(tabName)) return prev;
@@ -570,12 +575,54 @@ const App = () => {
   const [userProfile, setUserProfile] = useState(null);
 
   const allowedNavItems = useMemo(() => {
-    const roleName = userProfile?.role || 'admin';
-    if (roleName === 'admin') return navItems;
-    const allowed = permissionMatrix?.[roleName]?.allowed_pages;
-    if (!allowed || !Array.isArray(allowed)) return navItems;
-    return navItems.filter(item => allowed.includes(item.name));
-  }, [userProfile?.role, permissionMatrix]);
+    const rawRole = String(userProfile?.role || '').trim();
+    const roleLower = rawRole.toLowerCase();
+    if (!rawRole || roleLower === 'admin') return navItems;
+
+    // Look up role permissions in permissionMatrix (exact or case-insensitive)
+    let allowed = permissionMatrix?.[rawRole]?.allowed_pages;
+    if (!Array.isArray(allowed) && permissionMatrix && typeof permissionMatrix === 'object') {
+      const matchedKey = Object.keys(permissionMatrix).find((k) => k.toLowerCase() === roleLower);
+      if (matchedKey && Array.isArray(permissionMatrix[matchedKey]?.allowed_pages)) {
+        allowed = permissionMatrix[matchedKey].allowed_pages;
+      }
+    }
+    // Fall back to allowedPages from login profile if permissionMatrix hasn't synced yet
+    if (!Array.isArray(allowed) && Array.isArray(userProfile?.allowedPages)) {
+      allowed = userProfile.allowedPages;
+    }
+    if (!Array.isArray(allowed)) return navItems;
+
+    const normalizedAllowed = new Set(
+      allowed.map((page) => (page === 'Venues' ? 'Locations' : page))
+    );
+    return navItems.filter((item) => normalizedAllowed.has(item.name));
+  }, [userProfile?.role, userProfile?.allowedPages, permissionMatrix]);
+
+  const allowedTabSet = useMemo(
+    () => new Set(allowedNavItems.map((item) => item.name)),
+    [allowedNavItems]
+  );
+
+  useEffect(() => {
+    allowedTabSetRef.current = isLoggedIn ? allowedTabSet : null;
+  }, [isLoggedIn, allowedTabSet]);
+
+  // Enforce page-level access: redirect away if activeTab is not permitted for the current role
+  useEffect(() => {
+    if (!isLoggedIn || trackingId || quotationId || resetToken) return;
+    if (allowedNavItems.length === 0) return;
+    if (!allowedTabSet.has(activeTab)) {
+      const fallbackTab = allowedNavItems[0].name;
+      setVisitedTabs((prev) => {
+        if (prev.has(fallbackTab)) return prev;
+        const next = new Set(prev);
+        next.add(fallbackTab);
+        return next;
+      });
+      setActiveTab(fallbackTab);
+    }
+  }, [isLoggedIn, trackingId, quotationId, resetToken, activeTab, allowedNavItems, allowedTabSet]);
   const [newUser, setNewUser] = useState({ username: '', password: '', name: '', role: '', email: '', phone: '' });
   const [isAddingUser, setIsAddingUser] = useState(false);
 
@@ -6586,113 +6633,107 @@ const App = () => {
               />
             </div>
 
-            {/* Row 1: Primary Quick Navigation (5 Slots) */}
-            <div className="relative grid grid-cols-5 h-13 items-center px-1">
-                {/* 1. Calendar */}
-                <button
+            {/* Row 1: Primary Quick Navigation (5 Slots — strictly filtered by role permissions) */}
+            {(() => {
+              const preferredPrimary = ['Calendar', 'Plans', 'Finance'];
+              const primarySlots = [];
+              preferredPrimary.forEach((name) => {
+                const found = allowedNavItems.find((i) => i.name === name);
+                if (found && primarySlots.length < 3) primarySlots.push(found);
+              });
+              allowedNavItems.forEach((item) => {
+                if (primarySlots.length < 3 && !primarySlots.some((p) => p.name === item.name)) {
+                  primarySlots.push(item);
+                }
+              });
+              const slotLeft1 = primarySlots[0] || null;
+              const slotLeft2 = primarySlots[1] || null;
+              const slotRight1 = primarySlots[2] || null;
+              const primaryNames = new Set(primarySlots.map((p) => p.name));
+              const drawerItems = allowedNavItems.filter((item) => !primaryNames.has(item.name));
+              const shortLabelMap = {
+                Calendar: 'ปฏิทิน',
+                Plans: 'แผนงาน',
+                Finance: 'การเงิน',
+                Quotations: 'คำนวณราคา',
+                Inventory: 'คลังพัสดุ',
+                Locations: 'สถานที่',
+                Artists: 'ศิลปิน',
+                Customers: 'ลูกค้า',
+                Staff: 'พนักงาน',
+                Analytics: 'วิเคราะห์',
+                Settings: 'ตั้งค่า'
+              };
+              const renderPrimarySlot = (item) => {
+                if (!item) return <div />;
+                const IconComp = item.icon;
+                const isActive = activeTab === item.name;
+                return (
+                  <button
+                    key={item.name}
                     onClick={() => {
-                      handleSelectTab('Calendar');
+                      handleSelectTab(item.name);
                       if (isMobileNavExpanded) setIsMobileNavExpanded(false);
                     }}
                     className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10 active:scale-95 transition-transform"
-                    title="ปฏิทินงาน"
-                >
+                    title={item.label}
+                  >
                     <div className={`transition-all duration-200 flex flex-col items-center justify-center ${
-                        activeTab === 'Calendar' ? 'text-violet-600' : 'text-slate-400 hover:text-slate-600'
+                      isActive ? 'text-violet-600' : 'text-slate-400 hover:text-slate-600'
                     }`}>
-                        <CalendarIcon 
-                          className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
-                          strokeWidth={activeTab === 'Calendar' ? 2.5 : 2} 
-                        />
-                        <span className={`text-xs leading-none transition-all duration-200 ${
-                          isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Calendar' ? 'font-bold text-violet-600' : 'font-semibold text-slate-600'}`}>
-                          ปฏิทิน
-                        </span>
-                        {activeTab === 'Calendar' && (
-                            <span className={`w-1.5 h-1.5 bg-violet-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
-                        )}
+                      <IconComp
+                        className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`}
+                        strokeWidth={isActive ? 2.5 : 2}
+                      />
+                      <span className={`text-xs leading-none transition-all duration-200 ${
+                        isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
+                      } ${isActive ? 'font-bold text-violet-600' : 'font-semibold text-slate-600'}`}>
+                        {shortLabelMap[item.name] || item.label}
+                      </span>
+                      {isActive && (
+                        <span className={`w-1.5 h-1.5 bg-violet-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
+                      )}
                     </div>
-                </button>
+                  </button>
+                );
+              };
 
-                {/* 2. Plans */}
-                <button
-                    onClick={() => {
-                      handleSelectTab('Plans');
-                      if (isMobileNavExpanded) setIsMobileNavExpanded(false);
-                    }}
-                    className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10 active:scale-95 transition-transform"
-                    title="แผนงาน"
-                >
-                    <div className={`transition-all duration-200 flex flex-col items-center justify-center ${
-                        activeTab === 'Plans' ? 'text-violet-600' : 'text-slate-400 hover:text-slate-600'
-                    }`}>
-                        <List 
-                          className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
-                          strokeWidth={activeTab === 'Plans' ? 2.5 : 2} 
-                        />
-                        <span className={`text-xs leading-none transition-all duration-200 ${
-                          isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Plans' ? 'font-bold text-violet-600' : 'font-semibold text-slate-600'}`}>
-                          แผนงาน
-                        </span>
-                        {activeTab === 'Plans' && (
-                            <span className={`w-1.5 h-1.5 bg-violet-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
-                        )}
+              return (
+                <>
+                  <div className="relative grid grid-cols-5 h-13 items-center px-1">
+                    {renderPrimarySlot(slotLeft1)}
+                    {renderPrimarySlot(slotLeft2)}
+
+                    {/* 3. Center Elevated Plus Button */}
+                    <div className="relative flex justify-center items-center z-20 pointer-events-none">
+                      {allowedTabSet.has('Plans') || allowedTabSet.has('Calendar') ? (
+                        <button
+                          onClick={() => openModal()}
+                          className="w-11 h-11 theme-logo-bg rounded-full text-white shadow-lg flex items-center justify-center transform active:scale-95 transition-all border-2 border-white pointer-events-auto"
+                          title="เพิ่มรายการใหม่"
+                        >
+                          <Plus className="w-6 h-6" strokeWidth={2.5} />
+                        </button>
+                      ) : (
+                        <div className="w-11 h-11" />
+                      )}
                     </div>
-                </button>
 
-                {/* 3. Center Elevated Plus Button */}
-                <div className="relative flex justify-center items-center z-20 pointer-events-none">
-                     <button
-                        onClick={() => openModal()}
-                        className="w-11 h-11 theme-logo-bg rounded-full text-white shadow-lg flex items-center justify-center transform active:scale-95 transition-all border-2 border-white pointer-events-auto"
-                        title="เพิ่มรายการใหม่"
-                     >
-                        <Plus className="w-6 h-6" strokeWidth={2.5} />
-                     </button>
-                </div>
+                    {renderPrimarySlot(slotRight1)}
 
-                {/* 4. Finance */}
-                <button
-                    onClick={() => {
-                      handleSelectTab('Finance');
-                      if (isMobileNavExpanded) setIsMobileNavExpanded(false);
-                    }}
-                    className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10 active:scale-95 transition-transform"
-                    title="การเงิน"
-                >
-                    <div className={`transition-all duration-200 flex flex-col items-center justify-center ${
-                        activeTab === 'Finance' ? 'text-violet-600' : 'text-slate-400 hover:text-slate-600'
-                    }`}>
-                        <Wallet 
-                          className={`transition-all duration-200 ${isMobileNavExpanded ? 'w-5.5 h-5.5' : 'w-7 h-7'}`} 
-                          strokeWidth={activeTab === 'Finance' ? 2.5 : 2} 
-                        />
-                        <span className={`text-xs leading-none transition-all duration-200 ${
-                          isMobileNavExpanded ? 'opacity-100 max-h-4 mt-0.5' : 'opacity-0 max-h-0 pointer-events-none'
-                        } ${activeTab === 'Finance' ? 'font-bold text-violet-600' : 'font-semibold text-slate-600'}`}>
-                          การเงิน
-                        </span>
-                        {activeTab === 'Finance' && (
-                            <span className={`w-1.5 h-1.5 bg-violet-600 rounded-full transition-all duration-200 ${isMobileNavExpanded ? 'mt-0.5' : 'mt-1'}`} />
-                        )}
-                    </div>
-                </button>
-
-                {/* 5. Profile Popover Button (เหมือน PC Sidebar มุมซ้ายล่าง) */}
-                <button
-                    type="button"
-                    onClick={() => {
-                      setIsMobileProfileMenuOpen((prev) => !prev);
-                      if (isMobileNavExpanded) setIsMobileNavExpanded(false);
-                    }}
-                    className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10 active:scale-95 transition-transform"
-                    title="โปรไฟล์และบัญชีผู้ใช้"
-                    aria-label="เมนูโปรไฟล์ผู้ใช้"
-                    aria-expanded={isMobileProfileMenuOpen}
-                >
-                    <div className="transition-all duration-200 flex flex-col items-center justify-center">
+                    {/* 5. Profile Popover Button (เหมือน PC Sidebar มุมซ้ายล่าง) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileProfileMenuOpen((prev) => !prev);
+                        if (isMobileNavExpanded) setIsMobileNavExpanded(false);
+                      }}
+                      className="relative flex flex-col items-center justify-center h-full w-full group cursor-pointer outline-none z-10 active:scale-95 transition-transform"
+                      title="โปรไฟล์และบัญชีผู้ใช้"
+                      aria-label="เมนูโปรไฟล์ผู้ใช้"
+                      aria-expanded={isMobileProfileMenuOpen}
+                    >
+                      <div className="transition-all duration-200 flex flex-col items-center justify-center">
                         <div
                           className={`rounded-full bg-slate-900 flex items-center justify-center text-white text-xs font-bold overflow-hidden transition-all duration-200 ${
                             isMobileNavExpanded ? 'w-6 h-6' : 'w-7 h-7'
@@ -6727,166 +6768,49 @@ const App = () => {
                         } ${isMobileProfileMenuOpen ? 'font-bold text-violet-600' : 'font-semibold text-slate-600'}`}>
                           โปรไฟล์
                         </span>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* Row 2: Secondary Navigation Section (strictly filtered by role permissions) */}
+                  <div
+                    ref={expandSectionRef}
+                    className="overflow-hidden"
+                    style={{
+                      height: isMobileNavExpanded ? `${EXPAND_TARGET_H}px` : '0px',
+                      opacity: isMobileNavExpanded ? 1 : 0,
+                      pointerEvents: isMobileNavExpanded ? 'auto' : 'none'
+                    }}
+                  >
+                    <div className="pt-2 pb-3 grid grid-cols-4 px-2 items-center gap-y-3.5 gap-x-2">
+                      {drawerItems.map((item) => {
+                        const IconComp = item.icon;
+                        const isActive = activeTab === item.name;
+                        return (
+                          <button
+                            key={item.name}
+                            onClick={() => {
+                              handleSelectTab(item.name);
+                              setIsMobileNavExpanded(false);
+                            }}
+                            className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
+                            title={item.label}
+                          >
+                            <IconComp className={`w-6 h-6 transition-colors ${isActive ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={isActive ? 2.5 : 2} />
+                            <span className={`text-xs mt-1 leading-none ${isActive ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
+                              {shortLabelMap[item.name] || item.label}
+                            </span>
+                            {isActive && (
+                              <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
-                </button>
-            </div>
-
-            {/* Row 2: Secondary Navigation Section (Grid 4 คอลัมน์ × 2 แถว = 8 เมนูพอดี) */}
-            <div 
-              ref={expandSectionRef}
-              className="overflow-hidden"
-              style={{
-                height: isMobileNavExpanded ? `${EXPAND_TARGET_H}px` : '0px',
-                opacity: isMobileNavExpanded ? 1 : 0,
-                pointerEvents: isMobileNavExpanded ? 'auto' : 'none'
-              }}
-            >
-              <div className="pt-2 pb-3 grid grid-cols-4 px-2 items-center gap-y-3.5 gap-x-2">
-                {/* 1. Quotations (คำนวณราคา) */}
-                <button
-                  onClick={() => {
-                    handleSelectTab('Quotations');
-                    setIsMobileNavExpanded(false);
-                  }}
-                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
-                  title="คำนวณราคา"
-                >
-                  <Calculator className={`w-6 h-6 transition-colors ${activeTab === 'Quotations' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Quotations' ? 2.5 : 2} />
-                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Quotations' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
-                    คำนวณราคา
-                  </span>
-                  {activeTab === 'Quotations' && (
-                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
-                  )}
-                </button>
-
-                {/* 2. Inventory (คลังพัสดุ) */}
-                <button
-                  onClick={() => {
-                    handleSelectTab('Inventory');
-                    setIsMobileNavExpanded(false);
-                  }}
-                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
-                  title="คลังพัสดุ"
-                >
-                  <Package className={`w-6 h-6 transition-colors ${activeTab === 'Inventory' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Inventory' ? 2.5 : 2} />
-                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Inventory' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
-                    คลังพัสดุ
-                  </span>
-                  {activeTab === 'Inventory' && (
-                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
-                  )}
-                </button>
-
-                {/* 3. Venues (สถานที่จัดส่ง) */}
-                <button
-                  onClick={() => {
-                    handleSelectTab('Locations');
-                    setIsMobileNavExpanded(false);
-                  }}
-                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
-                  title="สถานที่จัดส่ง"
-                >
-                  <MapPin className={`w-6 h-6 transition-colors ${activeTab === 'Locations' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Locations' ? 2.5 : 2} />
-                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Locations' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
-                    สถานที่
-                  </span>
-                  {activeTab === 'Locations' && (
-                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
-                  )}
-                </button>
-
-                {/* 4. Artists (ศิลปิน) */}
-                <button
-                  onClick={() => {
-                    handleSelectTab('Artists');
-                    setIsMobileNavExpanded(false);
-                  }}
-                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
-                  title="ศิลปิน"
-                >
-                  <Sparkles className={`w-6 h-6 transition-colors ${activeTab === 'Artists' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Artists' ? 2.5 : 2} />
-                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Artists' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
-                    ศิลปิน
-                  </span>
-                  {activeTab === 'Artists' && (
-                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
-                  )}
-                </button>
-
-                {/* 5. Customers (ลูกค้า) */}
-                <button
-                  onClick={() => {
-                    handleSelectTab('Customers');
-                    setIsMobileNavExpanded(false);
-                  }}
-                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
-                  title="ลูกค้า"
-                >
-                  <Users className={`w-6 h-6 transition-colors ${activeTab === 'Customers' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Customers' ? 2.5 : 2} />
-                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Customers' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
-                    ลูกค้า
-                  </span>
-                  {activeTab === 'Customers' && (
-                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
-                  )}
-                </button>
-
-                {/* 6. Staff (พนักงาน) */}
-                <button
-                  onClick={() => {
-                    handleSelectTab('Staff');
-                    setIsMobileNavExpanded(false);
-                  }}
-                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
-                  title="พนักงาน"
-                >
-                  <UserCheck className={`w-6 h-6 transition-colors ${activeTab === 'Staff' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Staff' ? 2.5 : 2} />
-                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Staff' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
-                    พนักงาน
-                  </span>
-                  {activeTab === 'Staff' && (
-                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
-                  )}
-                </button>
-
-                {/* 7. Analytics (วิเคราะห์ธุรกิจ) */}
-                <button
-                  onClick={() => {
-                    handleSelectTab('Analytics');
-                    setIsMobileNavExpanded(false);
-                  }}
-                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
-                  title="วิเคราะห์ธุรกิจ"
-                >
-                  <BarChart2 className={`w-6 h-6 transition-colors ${activeTab === 'Analytics' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Analytics' ? 2.5 : 2} />
-                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Analytics' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
-                    วิเคราะห์
-                  </span>
-                  {activeTab === 'Analytics' && (
-                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
-                  )}
-                </button>
-
-                {/* 8. Settings (ตั้งค่า) */}
-                <button
-                  onClick={() => {
-                    handleSelectTab('Settings');
-                    setIsMobileNavExpanded(false);
-                  }}
-                  className="flex flex-col items-center justify-center py-1 group cursor-pointer outline-none active:scale-95 transition-transform"
-                  title="ตั้งค่า"
-                >
-                  <SettingsIcon className={`w-6 h-6 transition-colors ${activeTab === 'Settings' ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-600'}`} strokeWidth={activeTab === 'Settings' ? 2.5 : 2} />
-                  <span className={`text-xs mt-1 leading-none ${activeTab === 'Settings' ? 'text-violet-600 font-bold' : 'text-slate-600 font-semibold'}`}>
-                    ตั้งค่า
-                  </span>
-                  {activeTab === 'Settings' && (
-                    <span className="w-1.5 h-1.5 bg-violet-600 rounded-full mt-1" />
-                  )}
-                </button>
-              </div>
-            </div>
+                  </div>
+                </>
+              );
+            })()}
           </nav>
 
           {/* Mobile Profile Popover (เหมือน PC Sidebar Popover) */}
