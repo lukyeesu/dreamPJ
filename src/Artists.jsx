@@ -42,8 +42,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { artistFormSchema } from './schemas/artistSchema';
 
-const GOOGLE_DRIVE_UPLOAD_URL = import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL || 
-  "https://script.google.com/macros/s/AKfycbw2WJ4tt7l__0U6XYtgHbyl0W1iGjm6oHXa9-2twBKfa1xP2-SBj2hMwaHUYp7ew_Ih/exec";
+const GOOGLE_DRIVE_UPLOAD_URL = import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL || '';
 
 const fileToBase64 = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();

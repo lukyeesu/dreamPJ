@@ -3521,11 +3521,11 @@ export async function syncStaffToSupabaseAuth(staffData) {
     const supabaseUrl =
       client.supabaseUrl ||
       import.meta?.env?.VITE_SUPABASE_URL ||
-      'https://hvjjgkyitgdldrqnqzpy.supabase.co';
+      '';
     const supabaseKey =
       client.supabaseKey ||
       import.meta?.env?.VITE_SUPABASE_ANON_KEY ||
-      'sb_publishable_l_RKf9B8gaWZK4QldnJcsA__pJclbBG';
+      '';
 
     const ephemeralClient = createClient(supabaseUrl, supabaseKey, {
       auth: {

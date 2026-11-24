@@ -19,9 +19,9 @@ if (fs.existsSync(envPath)) {
   });
 }
 
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://hvjjgkyitgdldrqnqzpy.supabase.co';
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
-const APPS_SCRIPT_URL = process.env.VITE_GOOGLE_APPS_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbw2WJ4tt7l__0U6XYtgHbyl0W1iGjm6oHXa9-2twBKfa1xP2-SBj2hMwaHUYp7ew_Ih/exec';
+const APPS_SCRIPT_URL = process.env.VITE_GOOGLE_APPS_SCRIPT_URL || '';
 
 const client = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false }

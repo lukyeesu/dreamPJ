@@ -124,7 +124,7 @@ import Staff from './Staff';
 
 // --- CONFIGURATION ---
 // Google Apps Script API URL สำหรับอัปโหลดรูปภาพและสลิปเข้า Google Drive เท่านั้น (ไม่ใช้เก็บข้อมูลแล้ว)
-const GOOGLE_DRIVE_UPLOAD_URL = import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbw2WJ4tt7l__0U6XYtgHbyl0W1iGjm6oHXa9-2twBKfa1xP2-SBj2hMwaHUYp7ew_Ih/exec"; 
+const GOOGLE_DRIVE_UPLOAD_URL = import.meta.env.VITE_GOOGLE_APPS_SCRIPT_URL || '';
 const GOOGLE_SCRIPT_URL = GOOGLE_DRIVE_UPLOAD_URL; // สำหรับฟังก์ชันอัปโหลดรูปภาพเดิม
 // ---------------------
 

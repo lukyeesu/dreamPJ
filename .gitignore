@@ -15,6 +15,9 @@ dist-ssr
 .env.*
 !.env.example
 
+# Database SQL scripts (local only)
+database_scripts/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://hvjjgkyitgdldrqnqzpy.supabase.co';
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_l_RKf9B8gaWZK4QldnJcsA__pJclbBG';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 // Supabase Client สำหรับหน้าเว็บ (ใช้ anon/publishable key ตามมาตรฐานสากล)
 export const supabase = createClient(supabaseUrl, anonKey, {

@@ -50,6 +50,11 @@
 
 ## 3. ประวัติการทำงานและข้อตกลงล่าสุด (Session History)
 
+### [2026-11-24 - ถอด `database_scripts/` ออกจาก Git Tracking + ลบ Hardcoded API Keys/URLs ทั้งหมด]
+- ตรวจสอบ Git tracking และประวัติ commit ทั้งหมด ไม่พบ `service_role` / `sb_secret_` / `.env` / LINE/Telegram token หลุดขึ้น Git
+- พบค่า fallback ที่เขียนฝังไว้ 3 ตัว (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_GOOGLE_APPS_SCRIPT_URL`) ใน 6 ไฟล์ (`src/services/supabaseClient.js`, `src/services/syncService.js`, `src/App.jsx`, `src/Artists.jsx`, `src/Staff.jsx`, `scripts/migrate_sheets_to_supabase.cjs`) จึงลบออกทั้งหมดให้รับจาก Environment Variables เท่านั้น
+- เพิ่ม `database_scripts/` ใน `.gitignore` และรัน `git rm -r --cached database_scripts` เพื่อถอดทั้ง 23 ไฟล์ออกจาก Git tracking โดยคงไฟล์ในเครื่องไว้ให้รันเทสและอ้างอิงในเครื่องได้ตามปกติ (รอผู้ใช้ commit & push เองตามนโยบาย Git)
+
 ### [2026-11-24 - Zero-Knowledge Staff Password Reset Link + QR System (`?reset_token=rst_...`), Anping Sidebar Engine (`80px` <-> `256px`), Cross-Device Sync & Zero-Egress Hardening]
 - **1. Zero-Knowledge Staff Password Reset Link + QR System (`?reset_token=rst_...`) & Consolidated SQL Script**:
   - เพิ่มสคริปต์ฐานข้อมูล [`database_scripts/add_password_reset_system.sql`](file:///D:/WebappDreame/Flower2U/database_scripts/add_password_reset_system.sql) และสคริปต์รันจบในครั้งเดียว [`database_scripts/run_all_updates_once.sql`](file:///D:/WebappDreame/Flower2U/database_scripts/run_all_updates_once.sql) (`public.staff_password_resets` เก็บเฉพาะ SHA-256 `token_hash`, อายุลิงก์ 15 นาที TTL, ฟังก์ชันใช้ได้ครั้งเดียวแบบ atomic `consume_staff_reset_token`, ซิงก์รหัสผ่าน bcrypt ไปยัง `auth.users`, และรวมการอัปเดตโครงสร้างตารางล่าสุดครบในไฟล์เดียว) คู่กับฟังก์ชัน `createStaffResetTokenSync` / `validateStaffResetTokenSync` / `consumeStaffResetTokenSync` ใน [`src/services/syncService.js`](file:///D:/WebappDreame/Flower2U/src/services/syncService.js) (พร้อมระบบสำรอง SHA-256 ฝั่งเครื่องเมื่อเจอ `PGRST202`) และชุดทดสอบ [`tests/passwordResetSystem.test.cjs`](file:///D:/WebappDreame/Flower2U/tests/passwordResetSystem.test.cjs)
