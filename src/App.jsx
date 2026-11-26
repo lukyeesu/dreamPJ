@@ -1977,23 +1977,39 @@ const App = () => {
                 updateIfChanged(setAuthorizedUsers, data.appCredentials, 'nexus_authorized_users');
 
                 // Sync current logged-in user profile with latest data from server
-                const currentLocalProfile = localStorage.getItem('nexus_profile');
-                if (currentLocalProfile) {
-                    const currentObj = JSON.parse(currentLocalProfile);
-                    const updatedUser = data.appCredentials.find(u => u.username.toLowerCase() === currentObj.username.toLowerCase());
+                const currentStoredProfile = localStorage.getItem('nexus_profile') || sessionStorage.getItem('nexus_profile');
+                if (currentStoredProfile) {
+                    const currentObj = JSON.parse(currentStoredProfile);
+                    const updatedUser = data.appCredentials.find(u => (u.username || '').toLowerCase() === (currentObj.username || '').toLowerCase());
                     
                     if (updatedUser) {
-                        if (updatedUser.image !== currentObj.image || updatedUser.name !== currentObj.name || updatedUser.role !== currentObj.role) {
+                        const nextAllowedPages = Array.isArray(updatedUser.allowedPages)
+                            ? updatedUser.allowedPages
+                            : (updatedUser.role !== currentObj.role ? undefined : currentObj.allowedPages);
+                        const hasProfileChanged = (
+                            updatedUser.image !== currentObj.image ||
+                            updatedUser.name !== currentObj.name ||
+                            updatedUser.role !== currentObj.role ||
+                            updatedUser.email !== currentObj.email ||
+                            updatedUser.phone !== currentObj.phone ||
+                            JSON.stringify(nextAllowedPages) !== JSON.stringify(currentObj.allowedPages)
+                        );
+                        if (hasProfileChanged) {
                             const newProfile = {
                                 ...currentObj,
                                 name: updatedUser.name,
                                 role: updatedUser.role,
                                 email: updatedUser.email,
                                 phone: updatedUser.phone,
-                                image: updatedUser.image
+                                image: updatedUser.image,
+                                allowedPages: nextAllowedPages
                             };
                             setUserProfile(newProfile);
-                            localStorage.setItem('nexus_profile', JSON.stringify(newProfile));
+                            const serialized = JSON.stringify(newProfile);
+                            const hasLocal = Boolean(localStorage.getItem('nexus_profile'));
+                            const hasSession = Boolean(sessionStorage.getItem('nexus_profile'));
+                            if (hasLocal || !hasSession) localStorage.setItem('nexus_profile', serialized);
+                            if (hasSession) sessionStorage.setItem('nexus_profile', serialized);
                         }
                     }
                 }
@@ -2276,6 +2292,51 @@ const App = () => {
           }
         });
 
+        const applyRealtimeStaffProfile = (staffRow) => {
+          const liveProfile = userProfileRef.current;
+          if (!liveProfile || !staffRow) return;
+          const curStaffCode = liveProfile.staffCode || liveProfile.id;
+          const curUsername = (liveProfile.username || '').toLowerCase();
+          const targetStaffCode = staffRow.staff_code || staffRow.id;
+          const targetUsername = (staffRow.username || '').toLowerCase();
+          const isMatch = (targetStaffCode && String(targetStaffCode) === String(curStaffCode)) ||
+                          (targetUsername && targetUsername === curUsername);
+          if (!isMatch) return;
+
+          const nextRole = staffRow.role || liveProfile.role;
+          const nextName = staffRow.full_name || staffRow.name || liveProfile.name;
+          const nextEmail = staffRow.email ?? liveProfile.email;
+          const nextPhone = staffRow.phone ?? liveProfile.phone;
+          const nextImage = staffRow.profile_image_url || staffRow.avatar_url || staffRow.image || liveProfile.image;
+          const nextAllowedPages = Array.isArray(staffRow.allowed_pages)
+            ? staffRow.allowed_pages
+            : (nextRole !== liveProfile.role ? undefined : liveProfile.allowedPages);
+
+          const hasChanged = (
+            nextRole !== liveProfile.role ||
+            nextName !== liveProfile.name ||
+            nextEmail !== liveProfile.email ||
+            nextPhone !== liveProfile.phone ||
+            nextImage !== liveProfile.image ||
+            JSON.stringify(nextAllowedPages) !== JSON.stringify(liveProfile.allowedPages)
+          );
+          if (!hasChanged) return;
+
+          const nextProfile = {
+            ...liveProfile,
+            role: nextRole,
+            name: nextName,
+            email: nextEmail,
+            phone: nextPhone,
+            image: nextImage,
+            allowedPages: nextAllowedPages
+          };
+          setUserProfile(nextProfile);
+          const serialized = JSON.stringify(nextProfile);
+          if (localStorage.getItem('nexus_profile')) localStorage.setItem('nexus_profile', serialized);
+          if (sessionStorage.getItem('nexus_profile')) sessionStorage.setItem('nexus_profile', serialized);
+        };
+
         // เปิดรับ Realtime Roles & Permissions ข้ามอุปกรณ์
         const unsubRoles = typeof subscribeToRolesRealtime === 'function'
           ? subscribeToRolesRealtime((newMatrix) => {
@@ -2316,6 +2377,8 @@ const App = () => {
                   }
                   return prev;
                 });
+              } else if (msg.type === 'STAFF_UPDATED' && msg.staff) {
+                applyRealtimeStaffProfile(msg.staff);
               } else if (msg.type === 'RECORD_DELETED' && msg.id) {
                 if (msg.table === 'projects') {
                   applyProjectsData([], [msg.id]);
@@ -2372,9 +2435,16 @@ const App = () => {
             if (isSuspended) {
               console.warn('🚨 Realtime ban detected from server. Purging all storage and kicking immediately.');
               await handleLogout('บัญชีของคุณถูกระงับการใช้งานโดยผู้ดูแลระบบ');
+            } else {
+              applyRealtimeStaffProfile(staffRow);
             }
           }
         });
+
+        const handleLocalStaffUpdated = (e) => {
+          if (e?.detail) applyRealtimeStaffProfile(e.detail);
+        };
+        window.addEventListener('f2u_staff_updated', handleLocalStaffUpdated);
 
         const onStorage = (e) => {
           if (e.key === 'nexus_shop_info' && e.newValue) {
@@ -2407,6 +2477,7 @@ const App = () => {
         return () => {
           window.removeEventListener('focus', onFocus);
           window.removeEventListener('storage', onStorage);
+          window.removeEventListener('f2u_staff_updated', handleLocalStaffUpdated);
           if (kickBc) kickBc.close();
           if (typeof unsubLocalSync === 'function') unsubLocalSync();
           if (typeof unsubRoles === 'function') unsubRoles();

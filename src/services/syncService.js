@@ -1117,6 +1117,9 @@ export function broadcastRecordDeleted(table, id) {
   } catch (e) {}
 }
 
+let activeRolesChannel = null;
+let activeStaffChannel = null;
+
 // 4.3 ระบบกระจายสัญญาณการปรับปรุงสิทธิ์บทบาทแบบ Real-Time (เมนูเด้งขึ้นทันทีไม่ต้องกดรีเฟรช)
 export function broadcastPermissionsUpdated(permissions) {
   if (!permissions) return;
@@ -1135,12 +1138,44 @@ export function broadcastPermissionsUpdated(permissions) {
   try {
     const client = getActiveClient();
     if (client) {
-      const ch = client.channel('flower2u_global_sync');
+      const ch = activeRolesChannel || client.channel('realtime-roles-channel');
       if (typeof ch?.send === 'function') {
         ch.send({
           type: 'broadcast',
           event: 'PERMISSIONS_UPDATED',
           payload: { permissions }
+        }).catch(() => {});
+      }
+    }
+  } catch (e) {}
+}
+
+// 4.3b ระบบกระจายสัญญาณการปรับปรุงข้อมูล/บทบาทพนักงานแบบ Real-Time
+export function broadcastStaffUpdated(staffData) {
+  if (!staffData) return;
+
+  const cleanStaff = stripStaffPassword(staffData);
+
+  // 1. แจ้งเตือนภายในหน้าต่างปัจจุบัน
+  try {
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('f2u_staff_updated', { detail: cleanStaff }));
+    }
+  } catch (_) {}
+
+  // 2. กระจายสัญญาณข้ามแท็บผ่าน Persistent Singleton BroadcastChannel + CustomEvent
+  emitLocalSyncMessage({ type: 'STAFF_UPDATED', staff: cleanStaff });
+
+  // 3. กระจายสัญญาณข้ามอุปกรณ์ผ่าน Supabase Realtime Broadcast
+  try {
+    const client = getActiveClient();
+    if (client) {
+      const ch = activeStaffChannel || client.channel('realtime-staff-monitor');
+      if (typeof ch?.send === 'function') {
+        ch.send({
+          type: 'broadcast',
+          event: 'STAFF_UPDATED',
+          payload: { staff: cleanStaff }
         }).catch(() => {});
       }
     }
@@ -1210,7 +1245,10 @@ export function subscribeToRolesRealtime(onRolesUpdate) {
     )
     .subscribe();
 
+  activeRolesChannel = channel;
+
   return () => {
+    if (activeRolesChannel === channel) activeRolesChannel = null;
     try {
       client.removeChannel(channel);
     } catch (e) {}
@@ -3497,6 +3535,7 @@ export async function saveStaffSync(staffData) {
     }
 
     await db.staff.put(payload);
+    broadcastStaffUpdated(payload);
     return payload;
   } catch (err) {
     console.error('Error saving staff:', err);
@@ -3866,6 +3905,7 @@ export function subscribeToStaffRealtime(onStaffUpdate) {
           const eventType = payload.eventType;
           const cleanNew = payload.new ? stripStaffPassword(payload.new) : null;
           const cleanOld = payload.old ? stripStaffPassword(payload.old) : null;
+          let enrichedNew = cleanNew;
 
           if (eventType === 'DELETE') {
             const deletedId = cleanOld?.id || cleanOld?.staff_code;
@@ -3873,44 +3913,117 @@ export function subscribeToStaffRealtime(onStaffUpdate) {
               await db.staff?.delete?.(deletedId).catch(() => {});
             }
           } else if ((eventType === 'INSERT' || eventType === 'UPDATE') && cleanNew) {
-            const staffId = cleanNew.id || cleanNew.staff_code;
+            if (cleanNew.role_id && !cleanNew.role) {
+              try {
+                const { data: roleRow } = await client
+                  .from('roles')
+                  .select('id,name,label,code,allowed_pages')
+                  .eq('id', cleanNew.role_id)
+                  .maybeSingle();
+                if (roleRow) {
+                  enrichedNew = {
+                    ...cleanNew,
+                    role: roleRow.name || cleanNew.role,
+                    role_label: roleRow.label || roleRow.name || cleanNew.role_label,
+                    role_code: roleRow.code || cleanNew.role_code,
+                    allowed_pages: roleRow.allowed_pages || cleanNew.allowed_pages
+                  };
+                }
+              } catch (_) {}
+            }
+
+            const staffId = enrichedNew.id || enrichedNew.staff_code;
             if (staffId && db.staff?.put) {
               const prev = (await db.staff?.get?.(staffId).catch(() => null)) || {};
               const mergedStaff = {
                 ...stripStaffPassword(prev),
                 id: staffId,
-                username: cleanNew.username ?? prev.username ?? '',
+                username: enrichedNew.username ?? prev.username ?? '',
                 staff_code: staffId,
-                name: cleanNew.full_name || cleanNew.name || prev.name || cleanNew.nickname || cleanNew.username || '',
-                nickname: cleanNew.nickname ?? prev.nickname ?? '',
-                email: cleanNew.email ?? prev.email ?? '',
-                phone: cleanNew.phone ?? prev.phone ?? '',
-                citizen_id: cleanNew.citizen_id ?? prev.citizen_id ?? '',
-                birth_date: cleanNew.birth_date ?? prev.birth_date ?? '',
-                address: cleanNew.address ?? prev.address ?? '',
-                emergency_contact: cleanNew.emergency_contact ?? prev.emergency_contact ?? '',
-                avatar_url: sanitizeRemoteImageUrl(cleanNew.profile_image_url ?? cleanNew.avatar_url ?? prev.avatar_url ?? ''),
-                is_active: cleanNew.is_active !== undefined ? cleanNew.is_active : (prev.is_active ?? true),
-                banned_until: cleanNew.banned_until !== undefined ? cleanNew.banned_until : (prev.banned_until ?? null),
-                is_banned_permanent: cleanNew.is_banned_permanent !== undefined ? Boolean(cleanNew.is_banned_permanent) : Boolean(prev.is_banned_permanent),
-                ban_reason: cleanNew.ban_reason !== undefined ? (cleanNew.ban_reason || '') : (prev.ban_reason || '')
+                name: enrichedNew.full_name || enrichedNew.name || prev.name || enrichedNew.nickname || enrichedNew.username || '',
+                nickname: enrichedNew.nickname ?? prev.nickname ?? '',
+                email: enrichedNew.email ?? prev.email ?? '',
+                phone: enrichedNew.phone ?? prev.phone ?? '',
+                citizen_id: enrichedNew.citizen_id ?? prev.citizen_id ?? '',
+                birth_date: enrichedNew.birth_date ?? prev.birth_date ?? '',
+                address: enrichedNew.address ?? prev.address ?? '',
+                emergency_contact: enrichedNew.emergency_contact ?? prev.emergency_contact ?? '',
+                role_id: enrichedNew.role_id ?? prev.role_id ?? null,
+                role: enrichedNew.role ?? prev.role ?? '',
+                role_label: enrichedNew.role_label ?? prev.role_label ?? '',
+                role_code: enrichedNew.role_code ?? prev.role_code ?? '',
+                ...(enrichedNew.allowed_pages ? { allowed_pages: enrichedNew.allowed_pages } : {}),
+                avatar_url: sanitizeRemoteImageUrl(enrichedNew.profile_image_url ?? enrichedNew.avatar_url ?? prev.avatar_url ?? ''),
+                is_active: enrichedNew.is_active !== undefined ? enrichedNew.is_active : (prev.is_active ?? true),
+                banned_until: enrichedNew.banned_until !== undefined ? enrichedNew.banned_until : (prev.banned_until ?? null),
+                is_banned_permanent: enrichedNew.is_banned_permanent !== undefined ? Boolean(enrichedNew.is_banned_permanent) : Boolean(prev.is_banned_permanent),
+                ban_reason: enrichedNew.ban_reason !== undefined ? (enrichedNew.ban_reason || '') : (prev.ban_reason || '')
               };
               await db.staff.put(mergedStaff).catch(() => {});
             }
           }
 
-          if (onStaffUpdate && (cleanNew || cleanOld)) {
-            onStaffUpdate(cleanNew || cleanOld, eventType, cleanOld);
+          if (onStaffUpdate && (enrichedNew || cleanOld)) {
+            onStaffUpdate(enrichedNew || cleanOld, eventType, cleanOld);
           }
         } catch (err) {
           console.warn('Staff realtime update notice:', err);
         }
       }
     )
+    .on(
+      'broadcast',
+      { event: 'STAFF_UPDATED' },
+      async ({ payload }) => {
+        try {
+          const cleanStaff = payload?.staff ? stripStaffPassword(payload.staff) : null;
+          if (!cleanStaff) return;
+
+          const staffId = cleanStaff.id || cleanStaff.staff_code;
+          if (staffId && db.staff?.put) {
+            const prev = (await db.staff?.get?.(staffId).catch(() => null)) || {};
+            const mergedStaff = {
+              ...stripStaffPassword(prev),
+              id: staffId,
+              username: cleanStaff.username ?? prev.username ?? '',
+              staff_code: staffId,
+              name: cleanStaff.full_name || cleanStaff.name || prev.name || cleanStaff.nickname || cleanStaff.username || '',
+              nickname: cleanStaff.nickname ?? prev.nickname ?? '',
+              email: cleanStaff.email ?? prev.email ?? '',
+              phone: cleanStaff.phone ?? prev.phone ?? '',
+              citizen_id: cleanStaff.citizen_id ?? prev.citizen_id ?? '',
+              birth_date: cleanStaff.birth_date ?? prev.birth_date ?? '',
+              address: cleanStaff.address ?? prev.address ?? '',
+              emergency_contact: cleanStaff.emergency_contact ?? prev.emergency_contact ?? '',
+              role_id: cleanStaff.role_id ?? prev.role_id ?? null,
+              role: cleanStaff.role ?? prev.role ?? '',
+              role_label: cleanStaff.role_label ?? prev.role_label ?? '',
+              role_code: cleanStaff.role_code ?? prev.role_code ?? '',
+              ...(cleanStaff.allowed_pages ? { allowed_pages: cleanStaff.allowed_pages } : {}),
+              avatar_url: sanitizeRemoteImageUrl(cleanStaff.profile_image_url ?? cleanStaff.avatar_url ?? prev.avatar_url ?? ''),
+              is_active: cleanStaff.is_active !== undefined ? cleanStaff.is_active : (prev.is_active ?? true),
+              banned_until: cleanStaff.banned_until !== undefined ? cleanStaff.banned_until : (prev.banned_until ?? null),
+              is_banned_permanent: cleanStaff.is_banned_permanent !== undefined ? Boolean(cleanStaff.is_banned_permanent) : Boolean(prev.is_banned_permanent),
+              ban_reason: cleanStaff.ban_reason !== undefined ? (cleanStaff.ban_reason || '') : (prev.ban_reason || '')
+            };
+            await db.staff.put(mergedStaff).catch(() => {});
+          }
+
+          if (onStaffUpdate) onStaffUpdate(cleanStaff, 'UPDATE', null);
+        } catch (err) {
+          console.warn('Staff broadcast update notice:', err);
+        }
+      }
+    )
     .subscribe();
 
+  activeStaffChannel = channel;
+
   return () => {
-    client.removeChannel(channel);
+    if (activeStaffChannel === channel) activeStaffChannel = null;
+    try {
+      client.removeChannel(channel);
+    } catch (e) {}
   };
 }
 
